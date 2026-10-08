@@ -21,4 +21,13 @@ pip install -r requirements.txt
 ### 서버 실행
 uvicorn app.main:app --reload
 
- 
+```
+### 3. FE 패키지 설치
+```bash
+# node.js 설치
+
+# 패키지 설치 명령어
+npm install
+
+# FE 개발환경 실행 명령어
+npm run dev
