@@ -1,0 +1,113 @@
+/* P3: 질문, 상태 및 오류 UX. P1의 Map-first 스타일을 유지하며 덧씌운다. */
+.p3-brand-text {
+  min-width: 0;
+}
+
+.p3-demo-label {
+  display: inline-block !important;
+  flex-shrink: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--page);
+  color: var(--text-secondary) !important;
+  font-size: 10px !important;
+  font-weight: 600;
+  letter-spacing: 0 !important;
+  white-space: nowrap;
+}
+
+.p3-feedback {
+  flex-shrink: 0;
+}
+
+.p3-feedback h3,
+.welcome-card h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.p3-feedback p {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.p3-feedback-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.p3-feedback-group > .card {
+  width: 100%;
+}
+
+.p3-retry {
+  margin-top: 12px;
+  padding: 9px 13px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-1);
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.p3-retry:hover:not(:disabled) {
+  background: var(--page);
+}
+
+.p3-retry:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.p3-previous-result {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.prompt-shell:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--hover-row), 0 8px 35px rgba(0, 0, 0, 0.18);
+}
+
+.prompt-shell input:focus-visible {
+  outline: none;
+}
+
+.prompt-shell button:focus-visible,
+.panel-toggle:focus-visible,
+.panel-close:focus-visible,
+.p3-retry:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 860px) {
+  .p3-demo-label {
+    font-size: 9px !important;
+    padding: 4px 6px;
+  }
+
+  .prompt-shell button {
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 400px) {
+  .p3-brand-text span {
+    display: none;
+  }
+
+  .p3-demo-label {
+    max-width: 74px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}

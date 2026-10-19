@@ -1,0 +1,35 @@
+/* P4: 기존 Map-first/P3 디자인에 지도 조작 버튼만 추가한다. */
+.p4-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.p4-clear-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* MapLibre의 기본 컨트롤 그룹 안에서 사용하는 원래 범위 복귀 버튼. */
+.maplibregl-ctrl button.p4-reset-view {
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1;
+  color: #303030;
+}
+
+@media (max-width: 460px) {
+  .p4-header-actions {
+    gap: 5px;
+  }
+
+  .p4-header-actions .panel-toggle {
+    padding: 10px 8px;
+    font-size: 11px;
+  }
+
+  .map-first .brand .p3-brand-text {
+    display: none;
+  }
+}

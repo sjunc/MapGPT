@@ -1,0 +1,111 @@
+/* P5: 클릭으로 선택한 지역은 hover와 별개로 유지한다. */
+.p5-selected-row td {
+  background: var(--hover-row);
+}
+
+.ranking tbody tr {
+  cursor: pointer;
+}
+
+.p5-region-button {
+  background: none;
+  border: 0;
+  padding: 2px 0;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.p5-region-button:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.p5-region-button:focus-visible,
+.p5-clear-selection:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.p5-selected-card {
+  border-color: var(--accent);
+}
+
+.p5-selected-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.p5-selected-header h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.p5-clear-selection {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--page);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.p5-selected-metric {
+  background: var(--page);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.p5-selected-metric span {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.p5-selected-metric strong {
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+
+.p5-selected-rank {
+  margin-top: 8px !important;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.p5-detail-list {
+  margin: 12px 0 0;
+}
+
+.p5-detail-list > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  border-top: 1px solid var(--gridline);
+  padding: 8px 0;
+}
+
+.p5-detail-list dt {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.p5-detail-list dd {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
