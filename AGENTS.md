@@ -68,7 +68,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 **Python 3.12 이상의 프로젝트 가상환경을 사용하세요.**
 
-conda 환경 `mapgpt` 또는 저장소 루트의 venv(`.venv`) 중 하나를 쓴다. 의존성은 `pyproject.toml`에 있으며 어느 쪽이든 `pip install -e ".[dev]"`로 설치한다. 만드는 방법은 `README.md`의 "준비"에 있다.
+conda 환경 `mapgpt` 또는 `backend/.venv` 중 하나를 쓴다. 의존성은 `backend/pyproject.toml`에 있으며 `backend/`에서 `pip install -e ".[dev]"`로 설치한다. 만드는 방법은 `backend/README.md`의 "준비"에 있다.
 
 ## 6. 작업 완료 시 커밋 생성
 
@@ -106,32 +106,32 @@ conda 환경 `mapgpt` 또는 저장소 루트의 venv(`.venv`) 중 하나를 쓴
 
 - 현재 범위: 서울특별시, 행정동 단위, 분석 유형 1종(인구 대비 시설 공급 부족). 첫 Use Case는 어린이집이다.
 - 스택: Python 3.12, FastAPI, Pydantic v2, psycopg 3, LangGraph, OpenAI·Ollama, PostgreSQL 17 + PostGIS + pgvector(Docker), React + TypeScript + Vite + MapLibre.
-- 원 요구사항은 `docs/공간 분석 AI Agent 개발 전달 문서.md`다. 요구사항과 다르게 구현하려면 사용자와 합의하고 `docs/design/mvp-design.md` 부록 D에 기록한다.
+- 원 요구사항은 `backend/docs/공간 분석 AI Agent 개발 전달 문서.md`다. 요구사항과 다르게 구현하려면 사용자와 합의하고 `backend/docs/design/mvp-design.md` 부록 D에 기록한다.
 
 ## 8. 구조와 경계 규칙
 
 | 경로 | 역할 |
 |---|---|
-| `app/domain` | 핵심 계약(Pydantic 모델, Enum, 분석 정책). I/O 없음 |
-| `app/agents` | LLM 단계별 프롬프트와 호출 |
-| `app/llm` | LLM·임베딩 어댑터, LLM용 JSON Schema 변환 |
-| `app/catalog` | Dataset 정의, 임베딩 동기화, pgvector 후보 검색 |
-| `app/validation` | 계획·결과 검증 |
-| `app/gis`, `app/executor` | GIS Tool(parameterized SQL), Operation 실행 |
-| `app/workflows` | LangGraph 워크플로, 최종 응답 조립 |
-| `app/repositories` | DB 읽기·쓰기 |
-| `app/data_sources` | 원본을 내부 표준 Dataset으로 적재 |
-| `app/api`, `app/cli.py` | HTTP API, 운영 CLI |
-| `app/db/schema.sql` | DDL |
+| `backend/app/domain` | 핵심 계약(Pydantic 모델, Enum, 분석 정책). I/O 없음 |
+| `backend/app/agents` | LLM 단계별 프롬프트와 호출 |
+| `backend/app/llm` | LLM·임베딩 어댑터, LLM용 JSON Schema 변환 |
+| `backend/app/catalog` | Dataset 정의, 임베딩 동기화, pgvector 후보 검색 |
+| `backend/app/validation` | 계획·결과 검증 |
+| `backend/app/gis`, `backend/app/executor` | GIS Tool(parameterized SQL), Operation 실행 |
+| `backend/app/workflows` | LangGraph 워크플로, 최종 응답 조립 |
+| `backend/app/repositories` | DB 읽기·쓰기 |
+| `backend/app/data_sources` | 원본을 내부 표준 Dataset으로 적재 |
+| `backend/app/api`, `backend/app/cli.py` | HTTP API, 운영 CLI |
+| `backend/app/db/schema.sql` | DDL |
 | `frontend/` | 화면 |
-| `tests/` | `unit`, `integration`(Docker DB), `e2e`(실제 데이터·LLM) |
+| `backend/tests/` | `unit`, `integration`(Docker DB), `e2e`(실제 데이터·LLM) |
 
 다음은 어기지 않는다.
 
 - LLM은 SQL이나 코드를 만들지 않는다. LLM 출력은 Pydantic 스키마와 Plan Validator를 통과한 `AnalysisPlan`이고, 실행은 GIS Tool이 한다.
 - SQL의 테이블·컬럼 이름은 메타데이터로 확인한 뒤 `psycopg.sql.Identifier`로, 값은 파라미터로 넣는다. 문자열로 SQL을 조립하지 않는다.
-- `app/domain`은 I/O를 하지 않고 `app/domain` 밖의 모듈을 import하지 않는다.
-- LangGraph는 `app/workflows`에서만 쓴다.
+- `backend/app/domain`은 I/O를 하지 않고 `backend/app/domain` 밖의 모듈을 import하지 않는다.
+- LangGraph는 `backend/app/workflows`에서만 쓴다.
 - 수치·순위·분석 방법·한계는 코드가 만든다. 화면에 보이는 LLM 문장은 요약, 해석 가정, Operation 라벨, 지원하지 않는 이유뿐이다.
 - 모든 분석 실행은 성공·실패와 관계없이 `analysis.run`에 기록한다.
 - 화면은 LLM이 만든 문자열을 HTML로 넣지 않는다. 텍스트로 렌더링하거나 이스케이프한다.
@@ -140,8 +140,9 @@ conda 환경 `mapgpt` 또는 저장소 루트의 venv(`.venv`) 중 하나를 쓴
 
 ```bash
 conda activate mapgpt           # venv라면 .venv 활성화 (README.md 준비)
+cd backend
 pip install -e ".[dev]"
-npm --prefix frontend install
+npm --prefix ../frontend install
 docker compose up -d --build     # PostgreSQL + PostGIS + pgvector
 python -m app.cli init-db        # 스키마 적용 (반복 실행 가능)
 python scripts/check.py          # 작업 후 검증 (macOS·Windows 공통)
@@ -150,8 +151,8 @@ python scripts/check.py          # 작업 후 검증 (macOS·Windows 공통)
 - **작업을 마치면 `python scripts/check.py`로 검증하고 통과를 확인한다.** ruff 린트·포맷, pytest(unit + integration), 화면 타입 검사·빌드를 차례로 실행하고, 하나라도 실패하면 종료 코드 1로 끝난다. 실패를 남긴 채 끝내지 않으며, 고칠 수 없으면 실패한 단계와 이유를 보고한다.
 - integration 테스트는 Docker DB의 `mapgpt_test`를 쓴다(없으면 자동 생성). 검증 스크립트는 DB에 연결하지 못하면 skip 대신 실패로 처리한다. `pytest`를 직접 돌릴 때는 skip을 통과로 보고하지 않는다.
 - Claude Code에서는 `.claude/settings.json`의 Stop 훅이 작업을 끝낼 때 같은 검증을 자동으로 실행한다(코드 경로에 변경이 있을 때만). 실패하면 한 번 더 고치게 하고, 그래도 실패하면 사용자에게 경고를 남긴다. 훅이 프로젝트 파이썬(conda 환경 `mapgpt` 또는 `.venv`)을 찾지 못하면 `MAPGPT_PYTHON` 환경 변수(예: `.claude/settings.local.json`의 `env`)에 경로를 지정한다.
-- ruff 설정은 `pyproject.toml`에 있다. 바꾼 파일만 포맷하고, 관계없는 파일의 포맷은 바꾸지 않는다.
-- 데이터 적재(`download`, `ingest`)와 API·화면 실행 방법은 `README.md`에 있다.
+- ruff 설정은 `backend/pyproject.toml`에 있다. 바꾼 파일만 포맷하고, 관계없는 파일의 포맷은 바꾸지 않는다.
+- 데이터 적재(`download`, `ingest`)와 API·화면 실행 방법은 `backend/README.md`에 있다.
 - `pytest -m e2e`는 적재된 개발 DB와 실제 LLM이 필요하다. 로컬 LLM으로 돌릴 때는 `.env`를 고치지 말고 환경 변수로 덮어쓴다. 예: `LLM_PROVIDER=ollama OLLAMA_MODEL=qwen3.5:9b OLLAMA_REASONING_EFFORT=none pytest -m e2e` (thinking 모델은 `none`으로 꺼야 실용적인 속도가 나온다).
 - 프롬프트나 LLM 단계를 바꾸면 가짜 LLM을 쓰는 unit·integration 테스트만으로는 부족하다. 실제 모델로 확인한다. 모델마다 실수 양상이 다르다.
 
@@ -159,18 +160,18 @@ python scripts/check.py          # 작업 후 검증 (macOS·Windows 공통)
 
 | 바꾸는 것 | 함께 할 일 |
 |---|---|
-| API 응답 모델 (`app/api/schemas.py`, `app/domain/results.py`, `app/domain/state.py`의 `WorkflowError`) | `frontend/src/types.ts`를 함께 고친다. 타입 코드 생성이 없다 |
-| 워크플로 단계 (`WorkflowStep`) | `app/workflows/analysis_workflow.py`의 `_STEPS`와 엣지, `frontend/src/components/ErrorPanel.tsx`의 `STEP_NAMES` |
-| DB 스키마 (`app/db/schema.sql`) | `CREATE ... IF NOT EXISTS`라 기존 DB의 테이블 변경은 반영되지 않는다. 개발 DB를 바꾸는 방법은 사용자와 정한다. 테스트 DB는 테스트 세션마다 새로 만들어진다 |
-| Dataset 메타데이터 (`app/catalog/definitions.py`) | `python -m app.cli ingest <dataset>`으로 카탈로그와 검색 임베딩을 갱신한다. 하지 않으면 분석이 `CATALOG_INDEX_STALE`로 멈춘다 |
-| 프롬프트 (`app/agents/prompts.py`) | 실제 모델로 확인한다. 모델·Enum 타입 필드(`$ref`)의 description은 LLM용 스키마에서 빠지므로, 모델이 지켜야 할 규칙은 프롬프트에 적는다 |
-| 새 Operation | `docs/agent-design-overview.md` 14장의 순서를 따른다 |
-| 동작·계약·설계 결정 | `docs/design/mvp-design.md` 부록 D에 기록하고, 관련 문서(개요, 전달 문서)를 갱신한다 |
+| API 응답 모델 (`backend/app/api/schemas.py`, `backend/app/domain/results.py`, `backend/app/domain/state.py`의 `WorkflowError`) | `frontend/src/types.ts`를 함께 고친다. 타입 코드 생성이 없다 |
+| 워크플로 단계 (`WorkflowStep`) | `backend/app/workflows/analysis_workflow.py`의 `_STEPS`와 엣지, `frontend/src/components/ErrorPanel.tsx`의 `STEP_NAMES` |
+| DB 스키마 (`backend/app/db/schema.sql`) | `CREATE ... IF NOT EXISTS`라 기존 DB의 테이블 변경은 반영되지 않는다. 개발 DB를 바꾸는 방법은 사용자와 정한다. 테스트 DB는 테스트 세션마다 새로 만들어진다 |
+| Dataset 메타데이터 (`backend/app/catalog/definitions.py`) | `python -m app.cli ingest <dataset>`으로 카탈로그와 검색 임베딩을 갱신한다. 하지 않으면 분석이 `CATALOG_INDEX_STALE`로 멈춘다 |
+| 프롬프트 (`backend/app/agents/prompts.py`) | 실제 모델로 확인한다. 모델·Enum 타입 필드(`$ref`)의 description은 LLM용 스키마에서 빠지므로, 모델이 지켜야 할 규칙은 프롬프트에 적는다 |
+| 새 Operation | `backend/docs/agent-design-overview.md` 14장의 순서를 따른다 |
+| 동작·계약·설계 결정 | `backend/docs/design/mvp-design.md` 부록 D에 기록하고, 관련 문서(개요, 전달 문서)를 갱신한다 |
 
 ## 11. 비용·보안·외부 반영 (팀 공통)
 
-- `.env`의 값(API 키 등)을 출력·기록·커밋하지 않는다. 필요하면 키 이름과 설정 여부만 말한다. 사용자의 `.env`는 고치지 않는다.
-- 원본 데이터(`data/`)는 커밋하지 않는다. 용량과 라이선스(어린이집은 공공누리 제4유형) 때문이다.
+- `backend/.env`의 값(API 키 등)을 출력·기록·커밋하지 않는다. 필요하면 키 이름과 설정 여부만 말한다. 사용자의 `.env`는 고치지 않는다.
+- 원본 데이터(`backend/data/`)는 커밋하지 않는다. 용량과 라이선스(어린이집은 공공누리 제4유형) 때문이다.
 - OpenAI LLM을 호출하는 실행(분석 실행, e2e, 프롬프트 검증 등)은 사용자에게 먼저 확인한다. 검증은 가능하면 로컬 LLM(Ollama)으로 한다. 검색 임베딩(분석 1회당 1번, `embed-catalog`)은 비용이 매우 작아 확인 없이 쓴다.
 - `git push`, PR 생성, 외부 서비스 게시는 사용자가 요청할 때만 한다.
 - 개발 DB의 데이터를 지우거나 테이블을 다시 만드는 작업은 사용자에게 먼저 확인한다.
@@ -179,14 +180,14 @@ python scripts/check.py          # 작업 후 검증 (macOS·Windows 공통)
 
 | 작업 | 먼저 읽을 곳 |
 |---|---|
-| 처음 참여 | `README.md`, `docs/agent-design-overview.md` 1~3장 |
-| 에이전트 흐름·프롬프트·검증 | `docs/agent-design-overview.md` 3장 |
-| API·실행 모델·운영 | `docs/backend-handoff.md` 2·4·5·9장 |
-| 화면 | `docs/agent-design-overview.md` 7장, `docs/frontend-handoff.md` 2장 |
-| 데이터 적재·DB 구조 | `docs/data-handoff.md` 2·3·6장 |
-| 자주 하는 변경의 수정 위치 | `docs/agent-design-overview.md` 14장 |
-| 설계 결정의 이유와 변경 이력 | `docs/design/mvp-design.md` 부록 D |
-| 원 요구사항 | `docs/공간 분석 AI Agent 개발 전달 문서.md` (설계 원칙 2번, Analysis Plan 10번, 워크플로 25번, 확장 31~37번) |
+| 처음 참여 | `backend/README.md`, `backend/docs/agent-design-overview.md` 1~3장 |
+| 에이전트 흐름·프롬프트·검증 | `backend/docs/agent-design-overview.md` 3장 |
+| API·실행 모델·운영 | `backend/docs/backend-handoff.md` 2·4·5·9장 |
+| 화면 | `backend/docs/agent-design-overview.md` 7장, `frontend/docs/frontend-handoff.md` 2장 |
+| 데이터 적재·DB 구조 | `backend/docs/data-handoff.md` 2·3·6장 |
+| 자주 하는 변경의 수정 위치 | `backend/docs/agent-design-overview.md` 14장 |
+| 설계 결정의 이유와 변경 이력 | `backend/docs/design/mvp-design.md` 부록 D |
+| 원 요구사항 | `backend/docs/공간 분석 AI Agent 개발 전달 문서.md` (설계 원칙 2번, Analysis Plan 10번, 워크플로 25번, 확장 31~37번) |
 
 문서와 코드가 다르면 코드를 기준으로 하고, 문서를 고치거나 사용자에게 알린다.
 

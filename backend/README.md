@@ -79,7 +79,7 @@ uvicorn app.api.main:app --reload
 ```
 
 ```bash
-cd frontend && npm install && npm run dev
+cd ../frontend && npm install && npm run dev
 ```
 
 브라우저에서 http://localhost:5173 을 엽니다. 터미널에서 바로 실행할 수도 있습니다.

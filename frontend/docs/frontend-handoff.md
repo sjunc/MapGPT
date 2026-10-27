@@ -10,7 +10,7 @@
 2. 아직 없는 것과 개발 쪽 의견 (제안)
 3. 프론트엔드 담당자가 결정해 줄 사항 (결정)
 
-화면의 구조와 동작(컴포넌트, 상태 흐름, 지도 렌더링)은 [에이전트 설계 개요 7장](agent-design-overview.md#7-프론트엔드)에 자세히 있어 여기서는 반복하지 않는다. 권장안은 개발 쪽 의견이며 결정은 담당자가 한다.
+화면의 구조와 동작(컴포넌트, 상태 흐름, 지도 렌더링)은 [에이전트 설계 개요 7장](../../backend/docs/agent-design-overview.md#7-프론트엔드)에 자세히 있어 여기서는 반복하지 않는다. 권장안은 개발 쪽 의견이며 결정은 담당자가 한다.
 
 ## 요약
 
@@ -46,7 +46,7 @@
 | 개발 서버 | `:5173`. `/api`를 FastAPI `:8000`으로 프록시한다(타임아웃 300초) |
 | 로컬 검증 환경 | Node 23.11, npm 10.9. README는 Node 20 이상으로 안내한다 |
 
-파일별 역할은 [개요 문서 7.2절](agent-design-overview.md#72-디렉터리-구조)에 있다. 크기는 다음과 같다.
+파일별 역할은 [개요 문서 7.2절](../../backend/docs/agent-design-overview.md#72-디렉터리-구조)에 있다. 크기는 다음과 같다.
 
 | 파일 | 줄 수 |
 |---|---|
@@ -71,7 +71,7 @@ npm run typecheck   # tsc --noEmit
 npm run build       # 타입 검사 후 frontend/dist에 빌드
 ```
 
-API 서버와 데이터 준비는 [README](../README.md)와 [백엔드 담당자 전달 문서 3.3절](backend-handoff.md#33-실행-방법)에 있다.
+API 서버와 데이터 준비는 [README](../../backend/README.md)와 [백엔드 담당자 전달 문서 3.3절](../../backend/docs/backend-handoff.md#33-실행-방법)에 있다.
 
 ### 1.3 빌드 결과
 
@@ -100,7 +100,7 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
 
 | API | 화면에서 쓰는 곳 |
 |---|---|
-| `POST /api/analyses` | 분석 요청 ([api.ts](../frontend/src/api.ts)) |
+| `POST /api/analyses` | 분석 요청 ([api.ts](../src/api.ts)) |
 | `GET /api/analyses/{run_id}` | "실행 기록" 링크로 원본 JSON을 새 탭에 연다 |
 | `GET /api/datasets`, `GET /api/health` | 쓰지 않는다 |
 
@@ -115,7 +115,7 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
 
 ### 2.2 타입 동기화
 
-[frontend/src/types.ts](../frontend/src/types.ts)는 백엔드의 `app/api/schemas.py`, `app/domain/results.py`, `app/domain/state.py`를 손으로 옮긴 것이다. 코드 생성이 없으므로 한쪽을 바꾸면 다른 쪽도 함께 바꿔야 한다. FastAPI가 `/openapi.json`을 제공하므로 타입 생성 도구로 바꿀 수 있다(F10). 다만 `GET /api/analyses/{run_id}`는 응답 스키마가 느슨하다.
+[frontend/src/types.ts](../src/types.ts)는 백엔드의 `app/api/schemas.py`, `app/domain/results.py`, `app/domain/state.py`를 손으로 옮긴 것이다. 코드 생성이 없으므로 한쪽을 바꾸면 다른 쪽도 함께 바꿔야 한다. FastAPI가 `/openapi.json`을 제공하므로 타입 생성 도구로 바꿀 수 있다(F10). 다만 `GET /api/analyses/{run_id}`는 응답 스키마가 느슨하다.
 
 ### 2.3 화면이 지켜야 할 것
 
@@ -208,7 +208,7 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
 지금은 응답이 올 때까지 경과 시간과 고정된 단계 목록만 보여준다.
 - 백엔드가 비동기 실행으로 바뀌면 `run_id`를 바로 받는다.
 - 그 뒤로는 폴링(`GET /api/analyses/{run_id}`)이나 SSE로 실제 단계 진행을 받아 보여줄 수 있다.
-- 백엔드 쪽 권장안은 [백엔드 담당자 전달 문서 8.1절](backend-handoff.md#81-비동기-실행과-진행-상황-먼저)에 있다.
+- 백엔드 쪽 권장안은 [백엔드 담당자 전달 문서 8.1절](../../backend/docs/backend-handoff.md#81-비동기-실행과-진행-상황-먼저)에 있다.
 - 취소 버튼도 이 구조 위에서 만든다.
 
 ### 5.2 결과 URL과 새로고침 (지금 바로 가능)
@@ -230,7 +230,7 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
   - `REGION_NOT_SUPPORTED`: "현재는 서울만 분석할 수 있습니다"
   - `UNIT_NOT_SUPPORTED`: "행정동 단위만 지원합니다"
 - 지원하는 질문 예시도 보여주면 좋다.
-- 코드별 의미는 [개요 문서 3.7절](agent-design-overview.md#37-실패-코드-모음-workflowerrorcode)과 [10.2절](agent-design-overview.md#102-자주-보는-오류)에 있다.
+- 코드별 의미는 [개요 문서 3.7절](../../backend/docs/agent-design-overview.md#37-실패-코드-모음-workflowerrorcode)과 [10.2절](../../backend/docs/agent-design-overview.md#102-자주-보는-오류)에 있다.
 
 ### 5.5 접근성과 입력 장치
 
@@ -284,25 +284,25 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
 
 | 내용 | 위치 |
 |---|---|
-| 화면 구성, 요청, 진행 표시 | [frontend/src/App.tsx](../frontend/src/App.tsx) |
-| API 호출 | [frontend/src/api.ts](../frontend/src/api.ts) |
-| 응답 타입 | [frontend/src/types.ts](../frontend/src/types.ts) |
-| 지도 | [frontend/src/components/ChoroplethMap.tsx](../frontend/src/components/ChoroplethMap.tsx) |
-| 범례 | [frontend/src/components/Legend.tsx](../frontend/src/components/Legend.tsx) |
-| 순위 표 | [frontend/src/components/RankingTable.tsx](../frontend/src/components/RankingTable.tsx) |
-| 데이터·방법·가정·한계 | [frontend/src/components/ResultDetails.tsx](../frontend/src/components/ResultDetails.tsx) |
-| 오류 | [frontend/src/components/ErrorPanel.tsx](../frontend/src/components/ErrorPanel.tsx) |
-| 색 램프, 배경지도, 값 포맷, 결측 사유 | [frontend/src/theme.ts](../frontend/src/theme.ts) |
-| 레이아웃·색 토큰 | [frontend/src/styles.css](../frontend/src/styles.css) |
-| 개발 서버·프록시 | [frontend/vite.config.ts](../frontend/vite.config.ts) |
-| 백엔드 응답 모델 | [app/api/schemas.py](../app/api/schemas.py), [app/domain/results.py](../app/domain/results.py), [app/domain/state.py](../app/domain/state.py) |
+| 화면 구성, 요청, 진행 표시 | [frontend/src/App.tsx](../src/App.tsx) |
+| API 호출 | [frontend/src/api.ts](../src/api.ts) |
+| 응답 타입 | [frontend/src/types.ts](../src/types.ts) |
+| 지도 | [frontend/src/components/ChoroplethMap.tsx](../src/components/ChoroplethMap.tsx) |
+| 범례 | [frontend/src/components/Legend.tsx](../src/components/Legend.tsx) |
+| 순위 표 | [frontend/src/components/RankingTable.tsx](../src/components/RankingTable.tsx) |
+| 데이터·방법·가정·한계 | [frontend/src/components/ResultDetails.tsx](../src/components/ResultDetails.tsx) |
+| 오류 | [frontend/src/components/ErrorPanel.tsx](../src/components/ErrorPanel.tsx) |
+| 색 램프, 배경지도, 값 포맷, 결측 사유 | [frontend/src/theme.ts](../src/theme.ts) |
+| 레이아웃·색 토큰 | [frontend/src/styles.css](../src/styles.css) |
+| 개발 서버·프록시 | [frontend/vite.config.ts](../vite.config.ts) |
+| 백엔드 응답 모델 | [app/api/schemas.py](../../backend/app/api/schemas.py), [app/domain/results.py](../../backend/app/domain/results.py), [app/domain/state.py](../../backend/app/domain/state.py) |
 
 ### 7.2 관련 문서
 
-- [에이전트 설계 개요](agent-design-overview.md): 7장 화면 구조와 동작, 3.7절 오류 코드, 6.3절 API 응답 예시
-- [백엔드 담당자 전달 문서](backend-handoff.md): API 계약, 실행 모델, 비동기 실행(B1), 화면 서빙(B8)
-- [데이터 담당자 전달 문서](data-handoff.md): 데이터 출처와 라이선스, 지오코딩 검토(D16)
-- [개발 전달 문서](공간%20분석%20AI%20Agent%20개발%20전달%20문서.md): 원 요구사항. 결과 출력은 22번, 지도 출력은 23번
+- [에이전트 설계 개요](../../backend/docs/agent-design-overview.md): 7장 화면 구조와 동작, 3.7절 오류 코드, 6.3절 API 응답 예시
+- [백엔드 담당자 전달 문서](../../backend/docs/backend-handoff.md): API 계약, 실행 모델, 비동기 실행(B1), 화면 서빙(B8)
+- [데이터 담당자 전달 문서](../../backend/docs/data-handoff.md): 데이터 출처와 라이선스, 지오코딩 검토(D16)
+- [개발 전달 문서](../../backend/docs/공간%20분석%20AI%20Agent%20개발%20전달%20문서.md): 원 요구사항. 결과 출력은 22번, 지도 출력은 23번
 
 ### 7.3 외부 자료 (2026-10 확인)
 

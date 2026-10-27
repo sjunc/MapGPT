@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-FRONTEND = ROOT / "frontend"
+FRONTEND = ROOT.parent / "frontend"
 TAIL_LINES = 40  # 실패한 단계에서 보여줄 마지막 출력 줄 수
 
 

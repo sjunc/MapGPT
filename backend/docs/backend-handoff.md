@@ -108,7 +108,7 @@ state = AnalysisWorkflow(llm, pool, embedder).run(question)  # -> AgentState
 | [docker-compose.yml](../docker-compose.yml), [docker/postgres/Dockerfile](../docker/postgres/Dockerfile) | DB 컨테이너 (PostGIS 이미지에 pgvector 추가) |
 | [pyproject.toml](../pyproject.toml) | Python 의존성 (하한만 지정) |
 | [.env.example](../.env.example) | 설정 예시 |
-| [frontend/vite.config.ts](../frontend/vite.config.ts) | 화면 개발 서버, `/api` 프록시 |
+| [frontend/vite.config.ts](../../frontend/vite.config.ts) | 화면 개발 서버, `/api` 프록시 |
 
 ### 3.3 실행 방법
 
@@ -127,7 +127,7 @@ uvicorn app.api.main:app --reload    # API :8000, API 문서 :8000/docs
 ```
 
 ```bash
-cd frontend && npm install && npm run dev   # 화면 :5173, /api는 :8000으로 프록시
+cd ../frontend && npm install && npm run dev   # 화면 :5173, /api는 :8000으로 프록시
 ```
 
 FastAPI가 만드는 API 문서(`/docs`, `/redoc`, `/openapi.json`)를 그대로 쓸 수 있다.
@@ -172,11 +172,11 @@ API 테스트([tests/integration/test_api.py](../tests/integration/test_api.py))
 - **헬스 체크:** DB 연결만 실제로 확인하고, LLM·임베딩은 설정값만 보여준다.
 - **응답 크기:** 성공 응답은 행정동 427개의 GeoJSON을 포함해 JSON으로 약 590KB다. 지금은 압축하지 않는다.
 - **오류 형식:**
-  - `errors[]`의 각 항목은 `{step, code, message, issues[]}`이다. 화면은 `step`을 단계 이름으로 바꿔 보여준다([ErrorPanel.tsx](../frontend/src/components/ErrorPanel.tsx)).
+  - `errors[]`의 각 항목은 `{step, code, message, issues[]}`이다. 화면은 `step`을 단계 이름으로 바꿔 보여준다([ErrorPanel.tsx](../../frontend/src/components/ErrorPanel.tsx)).
   - 오류 코드 목록은 에이전트 설계 개요 3.7절, 증상별 조치는 10.2절에 있다.
   - 성공 응답의 전체 예시는 같은 문서 6.3절에 있다.
 - **화면과의 짝:**
-  - 화면의 타입([frontend/src/types.ts](../frontend/src/types.ts))은 `app/api/schemas.py`, `app/domain/results.py`, `app/domain/state.py`를 손으로 옮긴 것이다.
+  - 화면의 타입([frontend/src/types.ts](../../frontend/src/types.ts))은 `app/api/schemas.py`, `app/domain/results.py`, `app/domain/state.py`를 손으로 옮긴 것이다.
   - 코드 생성을 쓰지 않으므로, 응답 형식을 바꾸면 화면 타입도 함께 바꿔야 한다.
 - **화면 요청 방식:**
   - 화면은 `POST`를 한 번 보내고 응답을 기다린다.
@@ -415,12 +415,12 @@ GET  /api/analyses/{run_id}/events → 단계 이벤트 (SSE, 선택)
 | DB 이미지 | [docker/postgres/Dockerfile](../docker/postgres/Dockerfile), [docker-compose.yml](../docker-compose.yml) |
 | CLI | [app/cli.py](../app/cli.py) |
 | API 테스트 | [tests/integration/test_api.py](../tests/integration/test_api.py) |
-| 화면의 API 호출·타입 | [frontend/src/api.ts](../frontend/src/api.ts), [frontend/src/types.ts](../frontend/src/types.ts) |
+| 화면의 API 호출·타입 | [frontend/src/api.ts](../../frontend/src/api.ts), [frontend/src/types.ts](../../frontend/src/types.ts) |
 
 ### 11.2 관련 문서
 
 - [에이전트 설계 개요](agent-design-overview.md): 전체 구조, 단계별 동작, 오류 코드, 디버깅
 - [데이터 담당자 전달 문서](data-handoff.md): DB 구조와 관계도, 적재 방식, 데이터 결정 사항 D1~D24
-- [프론트엔드 담당자 전달 문서](frontend-handoff.md): 화면이 쓰는 API, 진행 상황 표시(F3), 결과 URL(F4), 타입 동기화(F10)
+- [프론트엔드 담당자 전달 문서](../../frontend/docs/frontend-handoff.md): 화면이 쓰는 API, 진행 상황 표시(F3), 결과 URL(F4), 타입 동기화(F10)
 - [설계 문서](design/mvp-design.md)
 - [개발 전달 문서](공간%20분석%20AI%20Agent%20개발%20전달%20문서.md): 원 요구사항. Provenance는 24번, 워크플로는 25번, 백엔드 기술 방향은 26번

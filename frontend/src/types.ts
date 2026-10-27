@@ -1,4 +1,4 @@
-// 백엔드 app/api/schemas.py · app/domain/results.py 와 같은 계약
+// 백엔드 backend/app/api/schemas.py · backend/app/domain/results.py 와 같은 계약
 import type { FeatureCollection, MultiPolygon } from "geojson";
 
 export type MetricValue = number | null;

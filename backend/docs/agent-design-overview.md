@@ -2,7 +2,7 @@
 
 > 팀 공유용 문서 · 기준: 2026-10-09, `main` 커밋 `0958c83`
 >
-> 구현된 코드를 기준으로 정리했습니다. 더 자세한 설계와 변경 이력은 [MVP 설계안](design/mvp-design.md), 데이터 수집·적재의 현황과 향후 방향은 [데이터 담당자 전달 문서](data-handoff.md), 백엔드 운영 과제는 [백엔드 담당자 전달 문서](backend-handoff.md), 화면의 향후 과제는 [프론트엔드 담당자 전달 문서](frontend-handoff.md), 요구사항 원문은 [개발 전달 문서](공간%20분석%20AI%20Agent%20개발%20전달%20문서.md), 실행 명령 요약은 [README](../README.md)에 있습니다.
+> 구현된 코드를 기준으로 정리했습니다. 더 자세한 설계와 변경 이력은 [MVP 설계안](design/mvp-design.md), 데이터 수집·적재의 현황과 향후 방향은 [데이터 담당자 전달 문서](data-handoff.md), 백엔드 운영 과제는 [백엔드 담당자 전달 문서](backend-handoff.md), 화면의 향후 과제는 [프론트엔드 담당자 전달 문서](../../frontend/docs/frontend-handoff.md), 요구사항 원문은 [개발 전달 문서](공간%20분석%20AI%20Agent%20개발%20전달%20문서.md), 실행 명령 요약은 [README](../README.md)에 있습니다.
 
 **목차**
 
@@ -872,7 +872,7 @@ frontend/
 
 `types.ts`는 백엔드 계약을 손으로 옮긴 것입니다. `FinalResponse`나 `WorkflowError`를 바꾸면 함께 고쳐야 합니다.
 
-지도 라이브러리 결정(MapLibre와 카카오맵), 첫 분석 주제에 묶인 문구, 아직 없는 기능과 프론트엔드 담당자가 결정할 사항은 [프론트엔드 담당자 전달 문서](frontend-handoff.md)에 있습니다.
+지도 라이브러리 결정(MapLibre와 카카오맵), 첫 분석 주제에 묶인 문구, 아직 없는 기능과 프론트엔드 담당자가 결정할 사항은 [프론트엔드 담당자 전달 문서](../../frontend/docs/frontend-handoff.md)에 있습니다.
 
 ---
 
@@ -895,7 +895,7 @@ frontend/
 pytest                    # unit + integration
 pytest -m e2e             # .env의 LLM으로 실행 (LLM 비용 없이 돌리려면 아래처럼 Ollama 지정)
 LLM_PROVIDER=ollama OLLAMA_MODEL=qwen3.5:9b OLLAMA_REASONING_EFFORT=none pytest -m e2e
-cd frontend && npm run typecheck
+cd ../frontend && npm run typecheck
 ```
 
 ### 8.2 개발 규칙 (AGENTS.md 요약)
@@ -905,7 +905,7 @@ cd frontend && npm run typecheck
 - Python 가상환경은 conda `mapgpt` 또는 venv(`.venv`)를 씁니다. 의존성은 `pyproject.toml`에 있습니다.
 - 작업이 끝나면 diff를 검토하고 `python scripts/check.py`(린트·포맷, unit·integration 테스트, 화면 타입 검사·빌드)로 검증한 뒤 **한국어 커밋 메시지**로 커밋합니다. Claude Code에서는 Stop 훅이 이 검증을 자동으로 실행합니다. 요청 하나에 커밋 하나가 기본입니다.
 - 포맷과 린트(ruff)는 위 검증에 포함됩니다. 설정(줄 길이 120, E·W·F·B 규칙, 긴 문자열 E501 제외)은 `pyproject.toml`에 있습니다.
-- 프로젝트 경계 규칙, 함께 고쳐야 하는 것, 비용·보안·외부 반영 규칙 전체는 [AGENTS.md](../AGENTS.md) 7~12장에 있습니다.
+- 프로젝트 경계 규칙, 함께 고쳐야 하는 것, 비용·보안·외부 반영 규칙 전체는 [AGENTS.md](../../AGENTS.md) 7~12장에 있습니다.
 
 ---
 
@@ -925,7 +925,7 @@ python -m app.cli ingest all         # 끝나면 검색 임베딩도 동기화�
 
 ```bash
 uvicorn app.api.main:app --reload    # API :8000
-cd frontend && npm install && npm run dev   # 화면 http://localhost:5173
+cd ../frontend && npm install && npm run dev   # 화면 http://localhost:5173
 ```
 
 ```bash
