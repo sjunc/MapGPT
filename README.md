@@ -110,3 +110,5 @@ pytest -m e2e       # 실제 적재 데이터 + 실제 LLM·OpenAI 임베딩으�
 | 어린이집 | 서울 열린데이터광장 `ChildCareInfo` (OA-20300) | 수집일 기준 | **공공누리 제4유형 (출처표시·상업적 이용금지·변경금지)** |
 
 어린이집 데이터는 상업적 이용이 금지되어 있습니다. 상업 서비스에 쓰려면 이용 조건을 따로 확인해야 합니다. 배경지도는 [OpenFreeMap](https://openfreemap.org) (© OpenMapTiles, OpenStreetMap)입니다.
+
+.
