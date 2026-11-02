@@ -13,6 +13,7 @@ from psycopg_pool import ConnectionPool
 from app.catalog.catalog import sync_catalog_embeddings
 from app.config import Settings, get_settings
 from app.data_sources import ingest
+from app.data_sources.auto_csv import AutoCsvError, discover_csv_groups, ingest_discovered_csvs
 from app.data_sources.adapters import admdongkor, mois_population, seoul_childcare
 from app.db import connect, init_schema
 from app.domain.catalog import DatasetMetadata
@@ -85,6 +86,8 @@ def main(argv: list[str] | None = None) -> None:
     ingest_parser = commands.add_parser("ingest", help="원본을 내부 표준 Dataset으로 적재")
     ingest_parser.add_argument("dataset", choices=["all", "emd_boundary", "population_by_age", "daycare_facility"])
     ingest_parser.add_argument("--refresh", action="store_true", help="어린이집 API 캐시를 무시하고 다시 수집")
+    commands.add_parser("inspect-files", help="data/raw CSV를 표본 검사하고 동일 스키마 파일을 그룹화")
+    commands.add_parser("ingest-files", help="data/raw의 대용량 CSV를 자동 발견해 PostGIS와 카탈로그에 적재")
     embed_parser = commands.add_parser("embed-catalog", help="Dataset 검색용 카탈로그 임베딩 갱신 (pgvector)")
     embed_parser.add_argument("--refresh", action="store_true", help="변경 여부와 관계없이 모두 다시 임베딩")
     analyze_parser = commands.add_parser("analyze", help="자연어 질문을 분석 워크플로로 실행")
@@ -101,6 +104,18 @@ def main(argv: list[str] | None = None) -> None:
         ):
             path = ingest.download(url, raw / name)
             print(f"{path.name}: {path.stat().st_size:,} bytes")
+        return
+    if args.command == "inspect-files":
+        try:
+            profiles = discover_csv_groups(raw)
+        except AutoCsvError as error:
+            raise SystemExit(str(error)) from error
+        for profile in profiles:
+            print(
+                f"[{profile.dataset_id}] {len(profile.files)}개 파일, {profile.encoding}, {len(profile.columns)}개 컬럼"
+            )
+            print(f"  파일: {', '.join(path.name for path in profile.files)}")
+            print(f"  컬럼: {', '.join(profile.columns)}")
         return
     if args.command == "analyze":
         try:
@@ -120,6 +135,17 @@ def main(argv: list[str] | None = None) -> None:
                 _sync_embeddings(conn, settings, args.refresh)
             except EmbeddingError as error:
                 raise SystemExit(str(error)) from error
+        elif args.command == "ingest-files":
+            try:
+                for metadata in ingest_discovered_csvs(conn, raw):
+                    _report(metadata)
+            except AutoCsvError as error:
+                raise SystemExit(str(error)) from error
+            try:
+                _sync_embeddings(conn, settings, refresh=False)
+            except EmbeddingError as error:
+                print(f"카탈로그 임베딩을 갱신하지 못했습니다: {error}")
+                print("  Dataset 검색 전에 python -m app.cli embed-catalog 를 실행하세요")
         elif args.command == "ingest":
             targets = (
                 ["emd_boundary", "population_by_age", "daycare_facility"] if args.dataset == "all" else [args.dataset]

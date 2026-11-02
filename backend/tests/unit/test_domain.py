@@ -11,6 +11,7 @@ from app.domain.operations import (
     RankOperation,
 )
 from app.catalog.definitions import SEOUL, TRUSTED_DATASETS
+from app.agents.prompts import interpret_prompt
 from app.domain.enums import SpatialLevel
 from app.domain.plan import AnalysisPlan, DatasetFilter, Region, analysis_units
 from app.domain.state import DatasetSelection, Explanation, InterpretedQuery
@@ -161,6 +162,13 @@ def test_llm_schema_expresses_operations_as_any_of_with_enum_tags():
 def test_analysis_units_come_from_polygon_datasets_covering_the_region():
     datasets = TRUSTED_DATASETS.values()
 
-    assert analysis_units(datasets, SEOUL) == [SpatialLevel.EMD]
-    assert analysis_units(datasets, Region(name="서울특별시", level="sido")) == [SpatialLevel.EMD]
-    assert analysis_units(datasets, Region(name="부산광역시", level="sido")) == []
+    assert analysis_units(datasets, SEOUL) == [SpatialLevel.SIDO, SpatialLevel.SIGUNGU, SpatialLevel.EMD]
+    expected = [SpatialLevel.SIDO, SpatialLevel.SIGUNGU, SpatialLevel.EMD]
+    assert analysis_units(datasets, Region(name="서울특별시", level="sido")) == expected
+    assert analysis_units(datasets, Region(name="부산광역시", level="sido")) == expected
+
+
+def test_interpret_prompt_uses_finest_unit_when_question_omits_unit():
+    system, _ = interpret_prompt("대구에서 상가가 많은 곳은?", [(SEOUL, [SpatialLevel.SIGUNGU, SpatialLevel.EMD])])
+
+    assert "가장 세밀한 단위(emd > sigungu > sido 순)" in system

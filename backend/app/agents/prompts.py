@@ -26,7 +26,11 @@ def _policy_text() -> str:
     return "\n".join(lines)
 
 
-def interpret_prompt(question: str, coverage: list[tuple[RegionRef, list[SpatialLevel]]]) -> tuple[str, str]:
+def interpret_prompt(
+    question: str,
+    coverage: list[tuple[RegionRef, list[SpatialLevel]]],
+    retry_reason: str | None = None,
+) -> tuple[str, str]:
     available = "\n".join(
         f"- {region.name} ({region.level}): {', '.join(_level(u) for u in units) or '분석 가능한 단위 없음'}"
         for region, units in coverage
@@ -43,12 +47,21 @@ def interpret_prompt(question: str, coverage: list[tuple[RegionRef, list[Spatial
 {available or "- (없음)"}
 
 [규칙]
-1. 질문이 위 분석 유형으로 표현되지 않으면 intent, region, analysis_unit을 null로 두고 unsupported_reason에 이유를 쓴다.
-2. region은 분석할 지역 자체다. region.name은 공식 명칭으로 쓰고 (예: '서울' → '서울특별시'), region.level은 그 지역 자체의 행정 단위다 (예: 서울특별시 → sido). 결과를 나눌 단위는 region.level이 아니라 analysis_unit에 쓴다. 사용자가 말한 지역을 다른 지역으로 바꾸지 않는다.
-3. analysis_unit은 결과를 보여줄 공간 단위다 (예: '동별' → emd, '구별' → sigungu). 사용자가 말한 단위를 다른 단위로 바꾸지 않으며, 단위를 말하지 않았으면 그 지역에서 분석 가능한 단위를 쓴다.
-4. assumptions에는 위 분석 정책 정의 외에 질문을 해석하며 추가로 둔 가정만 적는다. 정책 정의를 다시 쓰지 않으며, 없으면 빈 목록으로 둔다.
-5. key_concepts에는 분석에 필요한 데이터 개념을 짧은 명사구로 적는다."""
-    return system, f"질문: {question}"
+1. 지역별 개수·합계·평균·비율·순위 질문은 regional_summary다. 예를 들어 "대구에서 상가 수가 가장 많은 행정동 10곳"은 행정동별 상가 개수를 내림차순으로 비교하는 regional_summary다.
+2. 질문이 위 분석 유형으로 표현되지 않으면 intent, region, analysis_unit을 null로 두고 unsupported_reason에 이유를 쓴다. 표현이 짧거나 구어체라는 이유만으로 지원하지 않는다고 판단하지 않는다.
+3. region은 분석할 지역 자체다. region.name은 공식 명칭으로 쓰고 (예: '서울' → '서울특별시'), region.level은 그 지역 자체의 행정 단위다 (예: 서울특별시 → sido). 결과를 나눌 단위는 region.level이 아니라 analysis_unit에 쓴다. 사용자가 말한 지역을 다른 지역으로 바꾸지 않는다.
+4. analysis_unit은 결과를 보여줄 공간 단위다 (예: '동별' → emd, '구별' → sigungu). 사용자가 말한 단위를 다른 단위로 바꾸지 않는다. '많은 곳'처럼 단위를 말하지 않았으면 그 지역보다 아래에서 분석 가능한 가장 세밀한 단위(emd > sigungu > sido 순)를 쓴다.
+5. assumptions에는 위 분석 정책 정의 외에 질문을 해석하며 추가로 둔 가정만 적는다. 정책 정의를 다시 쓰지 않으며, 없으면 빈 목록으로 둔다.
+6. key_concepts에는 분석에 필요한 데이터 개념을 짧은 명사구로 적는다."""
+    user = f"질문: {question}"
+    if retry_reason:
+        user += (
+            "\n\n[재판정 요청]\n"
+            f"이전 해석은 지원되지 않는다고 판단했다: {retry_reason}\n"
+            "지역별 개수·합계·평균·비율·순위로 표현할 수 있는지 다시 확인하라. "
+            "지원 가능한 해석이 하나라도 있으면 unsupported로 반환하지 말고 해당 intent와 지역·분석 단위를 채워라."
+        )
+    return system, user
 
 
 def _dataset_summary(d: DatasetMetadata) -> dict[str, Any]:
@@ -69,7 +82,7 @@ def select_prompt(interpreted: dict[str, Any], candidates: list[DatasetMetadata]
 
 [규칙]
 1. 후보 목록에 있는 dataset_id만 쓴다.
-2. 분석 단위 경계, 수요(인구), 공급(시설)처럼 계산에 필요한 Dataset은 빠짐없이 고르고, 필요 없는 Dataset은 넣지 않는다.
+2. 분석 단위 경계와 질문의 조건·지표에 필요한 Dataset은 빠짐없이 고르고, 필요 없는 Dataset은 넣지 않는다.
 3. rationale에 각 Dataset을 고른 이유를 짧게 쓴다."""
     user = f"[해석된 질문]\n{_json(interpreted)}\n\n[후보 Dataset]\n{_json([_dataset_summary(d) for d in candidates])}"
     return system, user
@@ -94,8 +107,8 @@ def plan_prompt(
 {_policy_text()}
 
 [Operation 의미]
-- aggregate_by_area: Point Dataset(input)을 Polygon 경계 Dataset(boundary)의 각 단위 안에 있는 개수로 센다 (aggregation=count). 결과는 경계 단위별 값이다.
-- aggregate: Dataset(input)을 group_by 키(분석 단위 경계와 결합되는 join key 1개)별로 aggregation.field를 합계(sum)하거나 개수(count)를 센다.
+- aggregate_by_area: Geometry가 Point인 Dataset(input)만 Polygon 경계 Dataset(boundary)의 각 단위 안에 있는 개수로 센다 (aggregation=count). Geometry가 없거나 Polygon인 Dataset에는 절대 쓰지 않는다.
+- aggregate: Dataset(input)을 group_by 키(분석 단위 경계와 결합되는 join key 1개)별로 aggregation.field를 합계(sum), 평균(avg), 개수(count)로 집계한다. 행정코드가 있고 Geometry가 없는 Dataset은 이 operation을 쓴다. 주민등록 인구수는 population 컬럼을 sum하며 행 개수를 count하지 않는다.
 - calculate_ratio: numerator ÷ denominator × scale. numerator와 denominator는 앞에서 만든 output 이름이다.
 - rank: input(앞에서 만든 output)에 order 방향으로 순위를 매긴다.
 
@@ -122,6 +135,6 @@ def explain_prompt(facts: dict[str, Any]) -> tuple[str, str]:
 
 [규칙]
 1. 결과 JSON에 없는 수치나 사실을 만들지 않는다.
-2. 지표의 의미와 가장 부족한 행정동 몇 곳을 구체적인 수치와 함께 말한다.
+2. 지표의 의미와 질문 방향에 맞는 상위·하위 지역 몇 곳을 구체적인 수치와 함께 말한다.
 3. 중요한 한계(기준 시점 차이, 제외된 데이터 등)가 있으면 한 문장으로 언급한다."""
     return system, f"[분석 결과]\n{_json(facts)}"

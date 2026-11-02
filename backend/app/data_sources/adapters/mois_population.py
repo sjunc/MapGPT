@@ -31,7 +31,7 @@ def _decode(raw: bytes) -> str:
     raise ValueError("인구 CSV 인코딩을 판별할 수 없습니다 (utf-8 / cp949 아님)")
 
 
-def read_population(path: Path, sido_code: str) -> list[PopulationRecord]:
+def read_population(path: Path, sido_code: str | None = None) -> list[PopulationRecord]:
     reader = csv.reader(io.StringIO(_decode(path.read_bytes())))
     header = next(reader)
     index = {name: i for i, name in enumerate(header)}
@@ -51,7 +51,7 @@ def read_population(path: Path, sido_code: str) -> list[PopulationRecord]:
     records: list[PopulationRecord] = []
     for row in reader:
         adm_cd = row[index["행정기관코드"]]
-        if not adm_cd.startswith(sido_code):
+        if sido_code is not None and not adm_cd.startswith(sido_code):
             continue
         reference_date = date.fromisoformat(row[index["기준연월"]])
         by_age = {age: sum(_to_int(row[i]) for i in cols) for age, cols in age_columns.items()}

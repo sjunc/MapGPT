@@ -1,4 +1,4 @@
-from app.catalog.definitions import SEOUL, TRUSTED_DATASETS
+from app.catalog.definitions import NATIONAL_EMD_BOUNDARY, SEOUL, TRUSTED_DATASETS
 from app.domain.enums import SpatialLevel
 from app.domain.results import BoundaryStats, ExecutionResult, OperationLog, UnitRow
 from app.validation.result_validator import validate_result
@@ -110,6 +110,17 @@ def test_unit_count_is_compared_with_expected_count():
 
     assert _codes(_result(rows), datasets=_datasets(feature_count=20))[0] == ["UNIT_COUNT_MISMATCH"]
     assert _codes(_result(rows), datasets=_datasets(feature_count=11))[1] == ["UNIT_COUNT_MISMATCH"]
+
+
+def test_national_boundary_does_not_compare_country_count_for_sido_subset():
+    rows = [_row(i) for i in range(10)]
+    national = NATIONAL_EMD_BOUNDARY.model_copy(
+        update={"spatial": NATIONAL_EMD_BOUNDARY.spatial.model_copy(update={"feature_count": 3_500, "bbox": BBOX})}
+    )
+    result = _result(rows).model_copy(update={"unit_dataset": "national_emd_boundary"})
+    datasets = {**_datasets(), "national_emd_boundary": national}
+
+    assert _codes(result, datasets=datasets) == ([], ["UNIT_COUNT_CHECK_SKIPPED"])
 
 
 def test_unmatched_keys_and_unassigned_points_are_warnings():

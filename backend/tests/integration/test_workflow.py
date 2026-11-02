@@ -91,6 +91,55 @@ def test_plan_that_stays_invalid_is_never_executed(pool, catalog, conn):
     assert get_run(conn, state.run_id)["status"] == "failed"
 
 
+def test_invalid_regional_summary_uses_validated_metadata_fallback(pool, catalog):
+    data = load_plan_dict()
+    data.update(
+        intent="regional_summary",
+        datasets=["population_by_age", "emd_boundary"],
+        filters=[],
+        operations=[
+            {
+                "type": "aggregate_by_area",
+                "input": "population_by_age",
+                "boundary": "emd_boundary",
+                "aggregation": "count",
+                "output": "population_total",
+                "label": "인구수",
+            },
+            {
+                "type": "rank",
+                "input": "population_total",
+                "order": "desc",
+                "output": "population_rank",
+                "label": "인구수 순위",
+            },
+        ],
+        output={"map_type": "choropleth", "metric": "population_total", "ranking": {"enabled": True, "limit": 10}},
+    )
+    invalid = AnalysisPlan.model_validate(data)
+    llm = daycare_llm(
+        interpreted=[
+            interpreted(
+                intent="regional_summary",
+                restated_question="서울특별시에서 인구가 많은 행정동",
+                key_concepts=["인구수"],
+                assumptions=[],
+            )
+        ],
+        selection=[DatasetSelection(datasets=["population_by_age", "emd_boundary"], rationale="인구와 경계")],
+        plans=[invalid],
+    )
+
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("서울에서 인구가 많은 행정동을 알려줘")
+
+    assert state.status == RunStatus.SUCCEEDED, state.errors
+    assert [attempt.validation.ok for attempt in state.plan_history] == [False, False, True]
+    assert state.analysis_plan.operations[0].type == "aggregate"
+    assert state.analysis_plan.operations[0].aggregation.field == "population"
+    assert state.final_response.metric.label == "인구수"
+    assert any("최소 집계 계획" in assumption for assumption in state.final_response.assumptions)
+
+
 def test_plan_schema_failure_counts_as_invalid_plan(pool, catalog):
     llm = daycare_llm(plans=[LLMOutputError("AnalysisPlan 스키마 불일치"), load_plan()])
 
@@ -127,8 +176,7 @@ def test_plan_that_changes_the_interpretation_is_rejected(pool, catalog):
             ),
             "UNSUPPORTED_QUESTION",
         ),
-        (interpreted(region="부산광역시"), "REGION_NOT_SUPPORTED"),
-        (interpreted(analysis_unit="sigungu"), "UNIT_NOT_SUPPORTED"),
+        (interpreted(region="부산광역시"), "UNIT_NOT_SUPPORTED"),
         (LLMError("OpenAI 호출 실패: 401"), "LLM_FAILED"),
     ],
 )
@@ -141,6 +189,41 @@ def test_interpretation_failures_stop_before_planning(pool, catalog, conn, inter
     assert (state.errors[0].step, state.errors[0].code) == (WorkflowStep.INTERPRET_QUERY, code)
     assert llm.prompts_for(AnalysisPlan) == []
     assert get_run(conn, state.run_id)["status"] == "failed"
+
+
+def test_unsupported_interpretation_is_retried_before_stopping(pool, catalog):
+    unsupported = InterpretedQuery.model_validate(
+        {
+            "intent": None,
+            "unsupported_reason": "분석 유형이 지원되지 않음",
+            "region": None,
+            "analysis_unit": None,
+            "restated_question": "서울에서 어린이집이 부족한 곳",
+            "key_concepts": [],
+            "assumptions": [],
+        }
+    )
+    llm = daycare_llm(interpreted=[unsupported, interpreted()])
+
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run(QUESTION)
+
+    assert state.status == RunStatus.SUCCEEDED, state.errors
+    prompts = llm.prompts_for(InterpretedQuery)
+    assert len(prompts) == 2
+    assert "[재판정 요청]" in prompts[1]
+    assert "분석 유형이 지원되지 않음" in prompts[1]
+
+
+def test_incomplete_interpretation_is_retried(pool, catalog):
+    incomplete = interpreted().model_copy(update={"region": None, "analysis_unit": None})
+    llm = daycare_llm(interpreted=[incomplete, interpreted()])
+
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run(QUESTION)
+
+    assert state.status == RunStatus.SUCCEEDED, state.errors
+    prompts = llm.prompts_for(InterpretedQuery)
+    assert len(prompts) == 2
+    assert "분석 유형·지역·분석 단위 중 일부를 해석하지 못함" in prompts[1]
 
 
 def test_interpretation_prompt_lists_analysis_units_per_region(pool, catalog):
@@ -160,18 +243,44 @@ def test_region_with_wrong_level_fails_showing_both_levels(pool, catalog):
 
     state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run(QUESTION)
 
-    assert (state.errors[0].step, state.errors[0].code) == (WorkflowStep.INTERPRET_QUERY, "REGION_NOT_SUPPORTED")
-    assert state.errors[0].message == "'서울특별시'(emd) 데이터가 없습니다. 분석 가능한 지역: 서울특별시(sido)"
+    assert (state.errors[0].step, state.errors[0].code) == (WorkflowStep.INTERPRET_QUERY, "UNIT_NOT_SUPPORTED")
+    assert state.errors[0].message == "'서울특별시'에는 행정동(emd) 단위 경계 데이터가 없습니다. 분석 가능한 단위: 없음"
 
 
 def test_unit_without_boundary_data_fails_with_available_units(pool, catalog):
     llm = daycare_llm(interpreted=[interpreted(analysis_unit="sigungu")])
 
-    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run(QUESTION)
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("서울특별시 구별 어린이집 공급 부족을 알려줘")
 
     assert state.errors[0].message == (
         "'서울특별시'에는 시군구(sigungu) 단위 경계 데이터가 없습니다. 분석 가능한 단위: 행정동(emd)"
     )
+
+
+def test_unspecified_unit_uses_finest_available_boundary(pool, catalog):
+    llm = daycare_llm(interpreted=[interpreted(analysis_unit="sigungu")])
+
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("서울에서 어린이집이 부족한 곳을 알려줘")
+
+    assert state.status == RunStatus.SUCCEEDED, state.errors
+    assert state.interpreted_query.analysis_unit == "emd"
+    assert state.analysis_plan.analysis_unit == "emd"
+
+
+def test_dataset_selection_adds_boundary_matching_analysis_unit(pool, catalog):
+    llm = daycare_llm(
+        selection=[
+            DatasetSelection(
+                datasets=["population_by_age", "daycare_facility"],
+                rationale="수요와 공급 데이터만 선택",
+            )
+        ]
+    )
+
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run(QUESTION)
+
+    assert state.status == RunStatus.SUCCEEDED, state.errors
+    assert state.selected_datasets == ["population_by_age", "daycare_facility", "emd_boundary"]
 
 
 class FailingEmbedder(FakeEmbedder):

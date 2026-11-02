@@ -14,7 +14,10 @@ from app.domain.catalog import (
 from app.domain.enums import DataType, GeometryType, SemanticType, SpatialLevel
 
 SEOUL = RegionRef(name="서울특별시", level=SpatialLevel.SIDO, code="11")
+KOREA = RegionRef(name="대한민국", level=SpatialLevel.COUNTRY, code="KR")
 MOIS_ADM_CD = "mois_adm_cd"  # 행정안전부 10자리 행정기관코드
+MOIS_SIGUNGU_CD = "mois_sigungu_cd"
+MOIS_SIDO_CD = "mois_sido_cd"
 
 
 def _column(
@@ -69,11 +72,90 @@ EMD_BOUNDARY = DatasetMetadata(
     join_keys=[_ADM_CD_KEY],
 )
 
+NATIONAL_EMD_BOUNDARY = EMD_BOUNDARY.model_copy(
+    update={
+        "dataset_id": "national_emd_boundary",
+        "title": "대한민국 행정동 경계",
+        "description": (
+            "대한민국 전국 행정동 단위 경계 Polygon. 전국 또는 시도·시군구 범위에서 점 데이터를 "
+            "행정동별로 공간 집계하고 Choropleth 지도를 만들 때 사용한다."
+        ),
+        "spatial": EMD_BOUNDARY.spatial.model_copy(update={"coverage": KOREA}),
+    }
+)
+
+SIGUNGU_BOUNDARY = DatasetMetadata(
+    dataset_id="sigungu_boundary",
+    title="대한민국 시군구 경계",
+    description="전국 행정동 경계를 시군구 코드로 합쳐 만든 시군구 단위 경계 Polygon.",
+    category="boundary",
+    semantic_tags=["시군구", "경계", "행정구역", "공간 단위", "polygon"],
+    provider=EMD_BOUNDARY.provider,
+    source=EMD_BOUNDARY.source,
+    license=EMD_BOUNDARY.license,
+    spatial=SpatialMetadata(
+        level=SpatialLevel.SIGUNGU,
+        geometry_type=GeometryType.MULTIPOLYGON,
+        crs="EPSG:4326",
+        coverage=KOREA,
+    ),
+    temporal=TemporalMetadata(reference_date=None, update_cycle="irregular"),
+    columns=[
+        _column(
+            "sigungu_cd",
+            "시군구 코드 (5자리)",
+            DataType.STRING,
+            SemanticType.ADMINISTRATIVE_CODE,
+        ),
+        _column("unit_nm", "시군구 이름", DataType.STRING, SemanticType.ADMINISTRATIVE_NAME),
+        _column("sido_cd", "시도 코드 (2자리)", DataType.STRING, SemanticType.SIDO_CODE),
+        _column("sido_nm", "시도 이름", DataType.STRING, SemanticType.SIDO_NAME),
+        _column("geom", "시군구 경계 MultiPolygon", DataType.GEOMETRY, SemanticType.GEOMETRY),
+    ],
+    join_keys=[
+        JoinKey(
+            field="sigungu_cd",
+            semantic_type=SemanticType.ADMINISTRATIVE_CODE,
+            code_system=MOIS_SIGUNGU_CD,
+        )
+    ],
+)
+
+SIDO_BOUNDARY = DatasetMetadata(
+    dataset_id="sido_boundary",
+    title="대한민국 시도 경계",
+    description="전국 행정동 경계를 시도 코드로 합쳐 만든 시도 단위 경계 Polygon.",
+    category="boundary",
+    semantic_tags=["시도", "경계", "행정구역", "공간 단위", "polygon"],
+    provider=EMD_BOUNDARY.provider,
+    source=EMD_BOUNDARY.source,
+    license=EMD_BOUNDARY.license,
+    spatial=SpatialMetadata(
+        level=SpatialLevel.SIDO,
+        geometry_type=GeometryType.MULTIPOLYGON,
+        crs="EPSG:4326",
+        coverage=KOREA,
+    ),
+    temporal=TemporalMetadata(reference_date=None, update_cycle="irregular"),
+    columns=[
+        _column("sido_cd", "시도 코드 (2자리)", DataType.STRING, SemanticType.ADMINISTRATIVE_CODE),
+        _column("unit_nm", "시도 이름", DataType.STRING, SemanticType.ADMINISTRATIVE_NAME),
+        _column("geom", "시도 경계 MultiPolygon", DataType.GEOMETRY, SemanticType.GEOMETRY),
+    ],
+    join_keys=[
+        JoinKey(
+            field="sido_cd",
+            semantic_type=SemanticType.ADMINISTRATIVE_CODE,
+            code_system=MOIS_SIDO_CD,
+        )
+    ],
+)
+
 POPULATION_BY_AGE = DatasetMetadata(
     dataset_id="population_by_age",
     title="행정동별 연령별 주민등록 인구",
     description=(
-        "서울특별시 행정동 단위의 1세 단위 연령별 주민등록 인구(남녀 합계). 연령 조건으로 필터한 뒤 "
+        "대한민국 전국 행정동 단위의 1세 단위 연령별 주민등록 인구(남녀 합계). 연령 조건으로 필터한 뒤 "
         "행정동 코드 기준으로 합계하면 특정 연령대 인구(수요)를 구할 수 있다."
     ),
     category="population",
@@ -81,7 +163,7 @@ POPULATION_BY_AGE = DatasetMetadata(
     provider="행정안전부",
     source="https://www.data.go.kr/data/15097972/fileData.do",
     license="공공데이터포털 이용허락범위 제한 없음",
-    spatial=SpatialMetadata(level=SpatialLevel.EMD, geometry_type=None, crs=None, coverage=SEOUL),
+    spatial=SpatialMetadata(level=SpatialLevel.EMD, geometry_type=None, crs=None, coverage=KOREA),
     temporal=TemporalMetadata(reference_date=None, update_cycle="monthly"),
     columns=[
         _ADM_CD,
@@ -130,5 +212,13 @@ DAYCARE_FACILITY = DatasetMetadata(
 )
 
 TRUSTED_DATASETS: dict[str, DatasetMetadata] = {
-    d.dataset_id: d for d in (EMD_BOUNDARY, POPULATION_BY_AGE, DAYCARE_FACILITY)
+    d.dataset_id: d
+    for d in (
+        EMD_BOUNDARY,
+        NATIONAL_EMD_BOUNDARY,
+        SIGUNGU_BOUNDARY,
+        SIDO_BOUNDARY,
+        POPULATION_BY_AGE,
+        DAYCARE_FACILITY,
+    )
 }

@@ -187,7 +187,10 @@ class _PlanChecker:
             self.error(
                 "FIELD_UNKNOWN", f"'{op.input}'에 '{op.aggregation.field}' 컬럼이 없습니다", f"{path}.aggregation"
             )
-        elif op.aggregation.function == AggregationFunction.SUM and column.data_type not in _NUMERIC:
+        elif (
+            op.aggregation.function in (AggregationFunction.SUM, AggregationFunction.AVG)
+            and column.data_type not in _NUMERIC
+        ):
             self.error("FIELD_NOT_NUMERIC", f"'{column.name}'은 숫자 컬럼이 아닙니다", f"{path}.aggregation")
 
     def check_join_key(self, metadata: DatasetMetadata, field: str, path: str) -> None:
@@ -251,6 +254,10 @@ class _PlanChecker:
     def check_policy(self) -> None:
         policy = POLICIES.get(self.plan.intent)
         if policy is None:
+            return
+        if not policy.enforce_ratio_policy:
+            return
+        if not policy.enforce_ratio_policy:
             return
         metric = self.plan.output.metric
         ratio = next(

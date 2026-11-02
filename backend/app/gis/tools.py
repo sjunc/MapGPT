@@ -30,7 +30,11 @@ from app.gis.filter_sql import FilterCompileError, compile_filter
 
 QUANTILE_CLASSES = 5
 _REGION_NAME_COLUMN = {SpatialLevel.SIDO: SemanticType.SIDO_NAME, SpatialLevel.SIGUNGU: SemanticType.SIGUNGU_NAME}
-_SQL_AGGREGATES = {AggregationFunction.COUNT: "count", AggregationFunction.SUM: "sum"}
+_SQL_AGGREGATES = {
+    AggregationFunction.COUNT: "count",
+    AggregationFunction.SUM: "sum",
+    AggregationFunction.AVG: "avg",
+}
 
 
 class GisToolError(RuntimeError):
@@ -123,18 +127,33 @@ def get_boundary(conn: psycopg.Connection, metadata: DatasetMetadata, region: Re
         raise GisToolError("NOT_POLYGON", f"'{metadata.dataset_id}'는 Polygon Dataset이 아닙니다")
     srid = _srid(metadata)
     name_column = metadata.column_with(SemanticType.ADMINISTRATIVE_NAME)
-    region_column = metadata.column_with(_REGION_NAME_COLUMN.get(region.level))
-    if not metadata.join_keys or name_column is None or region_column is None or metadata.geometry_column is None:
+    if region.level == SpatialLevel.COUNTRY:
+        region_column = None
+    elif region.level == metadata.spatial.level:
+        region_column = name_column
+    else:
+        region_column = metadata.column_with(_REGION_NAME_COLUMN.get(region.level))
+    if (
+        not metadata.join_keys
+        or name_column is None
+        or (region.level != SpatialLevel.COUNTRY and region_column is None)
+        or metadata.geometry_column is None
+    ):
         raise GisToolError(
             "BOUNDARY_METADATA_INCOMPLETE", f"'{metadata.dataset_id}'에 단위 키·이름·지역 컬럼 정보가 없습니다"
         )
     key_field = metadata.join_keys[0].field
-    parent_column = metadata.column_with(SemanticType.SIGUNGU_NAME)
-
-    view = replace(
-        get_dataset(conn, metadata),
-        filter=FilterCondition(field=region_column.name, operator=FilterOperator.EQ, value=region.name),
+    parent_semantic = (
+        SemanticType.SIGUNGU_NAME if metadata.spatial.level == SpatialLevel.EMD else SemanticType.SIDO_NAME
     )
+    parent_column = metadata.column_with(parent_semantic)
+
+    view = get_dataset(conn, metadata)
+    if region_column is not None:
+        view = replace(
+            view,
+            filter=FilterCondition(field=region_column.name, operator=FilterOperator.EQ, value=region.name),
+        )
     where, params = view.where()
     key, geom = sql.Identifier(key_field), sql.Identifier(metadata.geometry_column.name)
     parent = sql.Identifier(parent_column.name) if parent_column else sql.NULL
@@ -269,7 +288,7 @@ def aggregate(
             raise GisToolError("FIELD_UNKNOWN", f"'{metadata.dataset_id}'에 '{column_name}' 컬럼이 없습니다")
     if function not in _SQL_AGGREGATES:
         raise GisToolError("UNSUPPORTED_AGGREGATION", f"'{function}' 집계는 지원하지 않습니다")
-    if function == AggregationFunction.SUM and metadata.column(field_name).data_type not in (
+    if function in (AggregationFunction.SUM, AggregationFunction.AVG) and metadata.column(field_name).data_type not in (
         DataType.INTEGER,
         DataType.FLOAT,
     ):

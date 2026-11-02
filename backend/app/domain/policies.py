@@ -16,6 +16,7 @@ class IntentPolicy(StrictModel):
     interpretation: str
     definitions: list[str]
     limitations: list[str]
+    enforce_ratio_policy: bool = True
 
 
 POLICIES: dict[AnalysisIntent, IntentPolicy] = {
@@ -38,5 +39,21 @@ POLICIES: dict[AnalysisIntent, IntentPolicy] = {
             "행정동 경계를 넘어 다른 동의 시설을 이용하는 행태는 반영하지 않는다.",
             "수요 인구가 적은 행정동은 시설 1개 차이로도 지표가 크게 변한다.",
         ],
+    ),
+    AnalysisIntent.REGIONAL_SUMMARY: IntentPolicy(
+        intent=AnalysisIntent.REGIONAL_SUMMARY,
+        title="지역별 일반 통계",
+        description=(
+            "등록된 Dataset을 질문 조건으로 필터하고 지역별 개수·합계·평균·비율을 계산해 비교하거나 순위를 매긴다."
+        ),
+        ratio_scale=1,
+        rank_order=SortOrder.DESC,
+        interpretation="질문에서 지정한 지표의 지역별 상대적 크기를 나타낸다.",
+        definitions=[],
+        limitations=[
+            "자동 발견 Dataset의 컬럼 의미는 표본과 값 패턴으로 추론하므로 원본 제공기관의 정의와 다를 수 있다.",
+            "신뢰 기준을 통과하지 못한 행정구역 코드와 좌표는 분석에 사용하지 않는다.",
+        ],
+        enforce_ratio_policy=False,
     ),
 }

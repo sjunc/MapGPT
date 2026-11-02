@@ -24,7 +24,17 @@ from psycopg_pool import ConnectionPool
 from app.agents import steps
 from app.catalog.catalog import CatalogIndexError, DatasetCatalog
 from app.domain.catalog import DatasetMetadata
-from app.domain.enums import SPATIAL_LEVEL_NAMES, RunStatus, Severity, SpatialLevel, WorkflowStep
+from app.domain.enums import (
+    SPATIAL_LEVEL_NAMES,
+    AnalysisIntent,
+    DataType,
+    GeometryType,
+    RunStatus,
+    SemanticType,
+    Severity,
+    SpatialLevel,
+    WorkflowStep,
+)
 from app.domain.plan import AnalysisPlan, analysis_units, resolve_region
 from app.domain.results import ValidationIssue, ValidationReport
 from app.domain.state import AgentState, DatasetHit, DatasetSearch, InterpretedQuery, PlanAttempt, WorkflowError
@@ -113,9 +123,17 @@ class AnalysisWorkflow:
 
 def _interpret_query(state: AgentState, ctx: _RunContext, update: Update) -> None:
     datasets = ctx.catalog.list_all()
-    regions = list({d.spatial.coverage.name: d.spatial.coverage for d in datasets if d.spatial.coverage}.values())
+    regions = ctx.catalog.list_regions()
     coverage = [(region, analysis_units(datasets, region)) for region in regions]
     interpreted = _llm_call(steps.interpret_query, ctx.llm, state.question, coverage)
+    if interpreted.intent is None or interpreted.region is None or interpreted.analysis_unit is None:
+        interpreted = _llm_call(
+            steps.interpret_query,
+            ctx.llm,
+            state.question,
+            coverage,
+            interpreted.unsupported_reason or "분석 유형·지역·분석 단위 중 일부를 해석하지 못함",
+        )
     update["interpreted_query"] = interpreted
     if interpreted.intent is None:
         raise WorkflowFailure("UNSUPPORTED_QUESTION", interpreted.unsupported_reason or "지원하지 않는 분석 질문입니다")
@@ -130,6 +148,9 @@ def _interpret_query(state: AgentState, ctx: _RunContext, update: Update) -> Non
         )
     # 경계 데이터가 없는 단위는 계획을 만들어도 검증에서 실패하므로 LLM을 더 부르기 전에 끝낸다.
     units = analysis_units(datasets, interpreted.region)
+    if units and not _explicit_analysis_unit(state.question):
+        interpreted = interpreted.model_copy(update={"analysis_unit": units[-1]})
+        update["interpreted_query"] = interpreted
     if interpreted.analysis_unit not in units:
         available = ", ".join(_unit_name(u) for u in units) or "없음"
         raise WorkflowFailure(
@@ -137,6 +158,14 @@ def _interpret_query(state: AgentState, ctx: _RunContext, update: Update) -> Non
             f"'{interpreted.region.name}'에는 {_unit_name(interpreted.analysis_unit)} 단위 경계 데이터가 없습니다. "
             f"분석 가능한 단위: {available}",
         )
+
+
+def _explicit_analysis_unit(question: str) -> bool:
+    normalized = question.replace(" ", "")
+    return any(
+        token in normalized
+        for token in ("행정동", "읍면동", "동별", "시군구", "구·군", "구군", "구별", "군별", "시도별")
+    )
 
 
 def _select_datasets(state: AgentState, ctx: _RunContext, update: Update) -> None:
@@ -161,7 +190,19 @@ def _select_datasets(state: AgentState, ctx: _RunContext, update: Update) -> Non
     unknown = [d for d in selection.datasets if d not in candidate_ids]
     if unknown or not selection.datasets:
         raise WorkflowFailure("INVALID_DATASET_SELECTION", f"후보에 없는 Dataset을 선택했습니다: {unknown}")
-    update["selected_datasets"] = list(dict.fromkeys(selection.datasets))
+    selected = list(dict.fromkeys(selection.datasets))
+    boundary_ids = {dataset.dataset_id for dataset in candidates if dataset.is_polygon}
+    compatible_boundaries = [
+        dataset.dataset_id
+        for dataset in candidates
+        if dataset.is_polygon
+        and dataset.spatial.level == interpreted.analysis_unit
+        and resolve_region(interpreted.region, dataset.spatial.coverage)
+    ]
+    if compatible_boundaries:
+        selected = [dataset_id for dataset_id in selected if dataset_id not in boundary_ids]
+        selected.append(compatible_boundaries[0])
+    update["selected_datasets"] = selected
 
 
 def _build_analysis_plan(state: AgentState, ctx: _RunContext, update: Update) -> None:
@@ -188,6 +229,31 @@ def _build_analysis_plan(state: AgentState, ctx: _RunContext, update: Update) ->
 def _validate_plan(state: AgentState, ctx: _RunContext, update: Update) -> None:
     report = validate_plan(state.analysis_plan, _candidates(state), state.selected_datasets)
     report.issues.extend(_consistency_issues(state.interpreted_query, state.analysis_plan))
+    if not report.ok and len(state.plan_history) + 1 >= MAX_PLAN_ATTEMPTS:
+        fallback = _fallback_regional_summary_plan(state, _candidates(state))
+        if fallback is not None:
+            fallback_report = validate_plan(fallback, _candidates(state), state.selected_datasets)
+            fallback_report.issues.extend(_consistency_issues(state.interpreted_query, fallback))
+            if fallback_report.ok:
+                fallback_interpretation = state.interpreted_query.model_copy(
+                    update={
+                        "assumptions": [
+                            *state.interpreted_query.assumptions,
+                            "LLM 계획이 검증을 통과하지 못해 메타데이터 기반 최소 집계 계획을 사용",
+                        ]
+                    }
+                )
+                update.update(
+                    interpreted_query=fallback_interpretation,
+                    analysis_plan=fallback,
+                    plan_validation=fallback_report,
+                    plan_history=[
+                        *state.plan_history,
+                        PlanAttempt(plan=state.analysis_plan, validation=report),
+                        PlanAttempt(plan=fallback, validation=fallback_report),
+                    ],
+                )
+                return
     _record_plan_attempt(state, update, state.analysis_plan, report)
 
 
@@ -198,6 +264,106 @@ def _record_plan_attempt(
     update.update(analysis_plan=plan, plan_validation=report, plan_history=history)
     if not report.ok and len(history) >= MAX_PLAN_ATTEMPTS:
         raise WorkflowFailure("PLAN_INVALID", "검증을 통과하는 분석 계획을 만들지 못했습니다", report.errors)
+
+
+def _fallback_regional_summary_plan(state: AgentState, datasets: dict[str, DatasetMetadata]) -> AnalysisPlan | None:
+    interpreted = state.interpreted_query
+    if interpreted.intent != AnalysisIntent.REGIONAL_SUMMARY:
+        return None
+    boundary = next(
+        (
+            datasets[dataset_id]
+            for dataset_id in state.selected_datasets
+            if dataset_id in datasets
+            and datasets[dataset_id].is_polygon
+            and datasets[dataset_id].spatial.level == interpreted.analysis_unit
+        ),
+        None,
+    )
+    if boundary is None:
+        return None
+    sources = [
+        datasets[dataset_id]
+        for dataset_id in state.selected_datasets
+        if dataset_id in datasets and dataset_id != boundary.dataset_id
+    ]
+    operation: dict[str, Any] | None = None
+    metric = "regional_value"
+    label = "지역별 값"
+    source: DatasetMetadata | None = None
+    point = next((dataset for dataset in sources if dataset.spatial.geometry_type == GeometryType.POINT), None)
+    if point is not None:
+        source = point
+        metric = "feature_count"
+        label = f"{point.title} 개수"
+        operation = {
+            "type": "aggregate_by_area",
+            "input": point.dataset_id,
+            "boundary": boundary.dataset_id,
+            "aggregation": "count",
+            "output": metric,
+            "label": label,
+        }
+    else:
+        boundary_systems = {key.code_system for key in boundary.join_keys}
+        for dataset in sources:
+            join_key = next(
+                (
+                    key
+                    for key in dataset.join_keys
+                    if key.code_system in boundary_systems and dataset.spatial.level == interpreted.analysis_unit
+                ),
+                None,
+            )
+            measure = next(
+                (
+                    column
+                    for semantic_type in (SemanticType.POPULATION, SemanticType.MEASURE)
+                    for column in dataset.columns
+                    if column.semantic_type == semantic_type and column.data_type in (DataType.INTEGER, DataType.FLOAT)
+                ),
+                None,
+            )
+            if join_key is None or measure is None:
+                continue
+            source = dataset
+            metric = "population_total" if measure.semantic_type == SemanticType.POPULATION else "regional_value"
+            label = "인구수" if measure.semantic_type == SemanticType.POPULATION else measure.description
+            operation = {
+                "type": "aggregate",
+                "input": dataset.dataset_id,
+                "group_by": [join_key.field],
+                "aggregation": {"field": measure.name, "function": "sum"},
+                "output": metric,
+                "label": label,
+            }
+            break
+    if source is None or operation is None:
+        return None
+    return AnalysisPlan.model_validate(
+        {
+            "intent": interpreted.intent,
+            "region": interpreted.region,
+            "analysis_unit": interpreted.analysis_unit,
+            "datasets": [source.dataset_id, boundary.dataset_id],
+            "filters": [],
+            "operations": [
+                operation,
+                {
+                    "type": "rank",
+                    "input": metric,
+                    "order": "desc",
+                    "output": f"{metric}_rank",
+                    "label": f"{label} 순위",
+                },
+            ],
+            "output": {
+                "map_type": "choropleth",
+                "metric": metric,
+                "ranking": {"enabled": True, "limit": 10},
+            },
+        }
+    )
 
 
 # ── 결정론적 GIS 실행 단계 (하나의 읽기 전용 트랜잭션) ─────────────────────

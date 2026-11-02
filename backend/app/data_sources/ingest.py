@@ -10,7 +10,15 @@ from typing import Any
 import psycopg
 from psycopg import sql
 
-from app.catalog.definitions import DAYCARE_FACILITY, EMD_BOUNDARY, POPULATION_BY_AGE, SEOUL
+from app.catalog.definitions import (
+    DAYCARE_FACILITY,
+    EMD_BOUNDARY,
+    NATIONAL_EMD_BOUNDARY,
+    POPULATION_BY_AGE,
+    SEOUL,
+    SIDO_BOUNDARY,
+    SIGUNGU_BOUNDARY,
+)
 from app.data_sources.adapters import admdongkor, mois_population, seoul_childcare
 from app.data_sources.adapters.seoul_childcare import FacilityRecord
 from app.domain.catalog import DatasetMetadata
@@ -34,9 +42,9 @@ def download(url: str, destination: Path) -> Path:
 
 
 def ingest_boundary(conn: psycopg.Connection, path: Path) -> DatasetMetadata:
-    records = admdongkor.read_boundaries(path, SEOUL.code)
+    records = admdongkor.read_boundaries(path)
     if not records:
-        raise IngestError(f"{SEOUL.name} 행정동 경계가 없습니다: {path.name}")
+        raise IngestError(f"전국 행정동 경계가 없습니다: {path.name}")
 
     with conn.transaction():
         conn.execute(
@@ -52,24 +60,58 @@ def ingest_boundary(conn: psycopg.Connection, path: Path) -> DatasetMetadata:
                 ],
             )
         repaired = conn.execute("SELECT count(*) FROM stage_boundary WHERE NOT ST_IsValid(geom)").fetchone()[0]
-        conn.execute("TRUNCATE datasets.emd_boundary")
         conn.execute(
-            "INSERT INTO datasets.emd_boundary "
+            "TRUNCATE datasets.emd_boundary, datasets.national_emd_boundary, "
+            "datasets.sigungu_boundary, datasets.sido_boundary"
+        )
+        conn.execute(
+            "INSERT INTO datasets.national_emd_boundary "
             "SELECT adm_cd, adm_nm, sido_cd, sido_nm, sigungu_cd, sigungu_nm, "
             "ST_Multi(ST_CollectionExtract(ST_MakeValid(geom), 3)) FROM stage_boundary"
         )
-        notes = [f"유효하지 않은 경계 Geometry {repaired}개를 ST_MakeValid로 보정"] if repaired else []
-        metadata = _with_load_stats(
-            conn, EMD_BOUNDARY, admdongkor.reference_date_from_name(path), notes, spatial_table="emd_boundary"
+        conn.execute(
+            "INSERT INTO datasets.emd_boundary SELECT * FROM datasets.national_emd_boundary WHERE sido_cd = %s",
+            (SEOUL.code,),
         )
-        upsert_dataset(conn, metadata)
+        conn.execute(
+            """
+            INSERT INTO datasets.sigungu_boundary
+            SELECT sigungu_cd, min(sigungu_nm), min(sido_cd), min(sido_nm),
+                   ST_Multi(ST_CollectionExtract(ST_UnaryUnion(ST_Collect(geom)), 3))
+            FROM datasets.national_emd_boundary
+            GROUP BY sigungu_cd
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO datasets.sido_boundary
+            SELECT sido_cd, min(sido_nm),
+                   ST_Multi(ST_CollectionExtract(ST_UnaryUnion(ST_Collect(geom)), 3))
+            FROM datasets.national_emd_boundary
+            GROUP BY sido_cd
+            """
+        )
+        notes = [f"유효하지 않은 경계 Geometry {repaired}개를 ST_MakeValid로 보정"] if repaired else []
+        reference_date = admdongkor.reference_date_from_name(path)
+        metadata = _with_load_stats(conn, EMD_BOUNDARY, reference_date, notes, spatial_table="emd_boundary")
+        national = _with_load_stats(
+            conn,
+            NATIONAL_EMD_BOUNDARY,
+            reference_date,
+            notes,
+            spatial_table="national_emd_boundary",
+        )
+        sigungu = _with_load_stats(conn, SIGUNGU_BOUNDARY, reference_date, notes, spatial_table="sigungu_boundary")
+        sido = _with_load_stats(conn, SIDO_BOUNDARY, reference_date, notes, spatial_table="sido_boundary")
+        for item in (metadata, national, sigungu, sido):
+            upsert_dataset(conn, item)
     return metadata
 
 
 def ingest_population(conn: psycopg.Connection, path: Path) -> DatasetMetadata:
-    records = mois_population.read_population(path, SEOUL.code)
+    records = mois_population.read_population(path)
     if not records:
-        raise IngestError(f"{SEOUL.name} 인구 레코드가 없습니다: {path.name}")
+        raise IngestError(f"전국 인구 레코드가 없습니다: {path.name}")
     reference_dates = {r.reference_date for r in records}
     if len(reference_dates) != 1:
         raise IngestError(f"인구 기준일이 하나가 아닙니다: {sorted(reference_dates)}")

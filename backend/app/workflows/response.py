@@ -101,8 +101,8 @@ def explanation_facts(response: FinalResponse, plan: AnalysisPlan, result: Execu
         "ranking_top": [
             {
                 "rank": item.rank,
-                "자치구": item.parent_name,
-                "행정동": item.unit_name,
+                "상위 지역": item.parent_name,
+                "분석 단위": item.unit_name,
                 "value": round(item.value, 2),
                 "components": {
                     labels[name]: value for name, value in item.values.items() if name != plan.output.metric
@@ -163,7 +163,7 @@ def _method(plan: AnalysisPlan, datasets: Mapping[str, DatasetMetadata], result:
                 "포함되는지 판정)해 단위별 개수를 셈. 경계선 위의 점은 한 단위에만 배정"
             )
         elif isinstance(op, AggregateOperation):
-            kind = "합계" if op.aggregation.function == "sum" else "개수"
+            kind = {"sum": "합계", "avg": "평균", "count": "개수"}[op.aggregation.function]
             steps.append(
                 f"{op.label}({op.output}): {title(op.input)}의 {op.aggregation.field} {kind}를 "
                 f"{', '.join(op.group_by)} 기준으로 집계"

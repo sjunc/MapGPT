@@ -20,6 +20,12 @@ def test_boundary_adapter_keeps_region_and_normalizes_codes():
     assert records[0].geometry["type"] == "MultiPolygon"
 
 
+def test_boundary_adapter_can_keep_all_regions():
+    records = admdongkor.read_boundaries(FIXTURES / "admdongkor_sample.geojson")
+
+    assert len(records) == 3
+
+
 def test_boundary_reference_date_comes_from_version():
     assert admdongkor.reference_date_from_name(Path("HangJeongDong_ver20260701.geojson")) == date(2026, 7, 1)
 
@@ -67,6 +73,22 @@ def test_population_adapter_melts_wide_csv_and_sums_sexes(tmp_path):
     assert {r.adm_cd for r in records} == {"1111000100"}
     assert (by_age[0], by_age[5], by_age[6], by_age[110], by_age[50]) == (7, 1, 7, 2, 0)
     assert records[0].reference_date == date(2026, 9, 30)
+
+
+def test_population_adapter_reads_all_regions_by_default(tmp_path):
+    path = tmp_path / "pop.csv"
+    path.write_bytes(
+        _population_csv(
+            [
+                {"code": "1111000100", "male": {0: 3}, "female": {0: 4}},
+                {"code": "2711000100", "male": {0: 5}, "female": {0: 6}},
+            ]
+        )
+    )
+
+    records = mois_population.read_population(path)
+
+    assert {record.adm_cd[:2] for record in records} == {"11", "27"}
 
 
 def test_population_adapter_rejects_inconsistent_totals(tmp_path):

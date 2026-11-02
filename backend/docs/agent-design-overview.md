@@ -59,11 +59,11 @@
 
 | 항목 | 현재 지원 |
 |---|---|
-| 분석 유형(intent) | `supply_demand_gap` 하나 (수요 인구 대비 시설 공급 부족) |
-| 지역 | 서울특별시 |
-| 분석 단위 | 행정동(`emd`) |
-| 데이터 | 행정동 경계, 행정동별 연령별 인구, 어린이집 위치 (Trusted Dataset 3종) |
-| 연산(Operation) | `aggregate_by_area`, `aggregate`, `calculate_ratio`, `rank` |
+| 분석 유형(intent) | `supply_demand_gap`, `regional_summary`(자동 발견 Dataset의 지역별 개수·합계·평균·비율·순위) |
+| 지역 | 대한민국 전국(인구·경계는 전국, 기존 어린이집 Use Case는 서울특별시) |
+| 분석 단위 | 시도(`sido`), 시군구(`sigungu`), 행정동(`emd`) |
+| 데이터 | 기존 Trusted Dataset + `data/raw`에서 자동 발견한 CSV Dataset |
+| 연산(Operation) | `aggregate_by_area`, `aggregate`(count/sum/avg), `calculate_ratio`, `rank` |
 | 지도 | Choropleth 5분위 |
 | LLM | OpenAI(Responses API) 또는 로컬 Ollama. `.env`로 전환 |
 | Dataset 검색 | OpenAI 임베딩 + pgvector 코사인 유사도 |
@@ -198,7 +198,7 @@ stateDiagram-v2
 그림에서는 생략했지만 모든 단계에서 END로 가는 실패 엣지가 있습니다. 예상하지 못한 예외는 `INTERNAL_ERROR`로 기록합니다. 그래프가 끝나면 실행기가 `errors` 유무로 `succeeded`/`failed`를 정하고, 성공·실패와 관계없이 Provenance를 저장합니다. 계획 단계의 분기는 라우터 두 개가 정합니다.
 
 - `build_analysis_plan` 뒤: 계획이 나오면 `validate_plan`, 스키마 불일치로 계획이 없으면 다시 `build_analysis_plan`
-- `validate_plan` 뒤: 오류가 없으면 `load_data`, 있으면 다시 `build_analysis_plan`. 두 번째 시도도 실패하면 노드가 `PLAN_INVALID`를 기록하고 END로 갑니다
+- `validate_plan` 뒤: 오류가 없으면 `load_data`, 있으면 다시 `build_analysis_plan`. `regional_summary`의 두 번째 시도도 실패하면 검증된 최소 대체 Plan을 시도하고, 그마저 만들 수 없으면 `PLAN_INVALID`를 기록하고 END로 갑니다
 
 그래프 구조는 코드에서 `ANALYSIS_GRAPH.get_graph().draw_mermaid()`로 바로 그릴 수 있습니다.
 
@@ -221,15 +221,18 @@ LLM 호출 실패(API 오류, 거절, 길이 초과로 잘림, 스키마 불일�
 #### ① interpret_query: 질문 해석
 
 - 코드가 먼저 카탈로그에서 지역(`coverage`)과 지역별 분석 가능 단위를 계산합니다. 분석 가능 단위는 "그 지역을 범위로 가진 Polygon 경계 Dataset의 단위"입니다. 프롬프트에는 `- 서울특별시 (sido): emd(행정동)`처럼 들어갑니다.
-- 프롬프트에는 분석 정책(intent 정의, 해석, 개념 정의), 공간 단위 목록, 지역 목록, 규칙 5개가 들어갑니다.
-  1. 지원하는 분석 유형으로 표현되지 않으면 intent·region·analysis_unit을 null로 두고 이유를 씁니다.
-  2. `region.name`은 공식 명칭('서울' → '서울특별시'), `region.level`은 지역 자체의 단위(서울특별시 → sido)입니다. 결과를 나눌 단위는 `analysis_unit`에 쓰고, 사용자가 말한 지역을 바꾸지 않습니다.
-  3. `analysis_unit`은 결과를 보여줄 단위('동별' → emd, '구별' → sigungu)입니다. 사용자가 말한 단위를 바꾸지 않고, 말하지 않았으면 그 지역에서 분석 가능한 단위를 씁니다.
-  4. assumptions에는 정책 정의를 반복하지 않고, 추가로 둔 가정만 씁니다.
-  5. key_concepts에는 분석에 필요한 데이터 개념을 짧은 명사구로 씁니다(검색어로 쓰임).
+- 프롬프트에는 분석 정책(intent 정의, 해석, 개념 정의), 공간 단위 목록, 지역 목록, 규칙 6개가 들어갑니다.
+  1. 지역별 개수·합계·평균·비율·순위 질문은 `regional_summary`로 해석합니다.
+  2. 지원하는 분석 유형으로 표현되지 않으면 intent·region·analysis_unit을 null로 두고 이유를 씁니다. 짧거나 구어체라는 이유만으로 거절하지 않습니다.
+  3. `region.name`은 공식 명칭('서울' → '서울특별시'), `region.level`은 지역 자체의 단위(서울특별시 → sido)입니다. 결과를 나눌 단위는 `analysis_unit`에 쓰고, 사용자가 말한 지역을 바꾸지 않습니다.
+  4. `analysis_unit`은 결과를 보여줄 단위('동별' → emd, '구별' → sigungu)입니다. 사용자가 말한 단위를 바꾸지 않고, 말하지 않았으면 그 지역에서 분석 가능한 단위를 씁니다.
+  5. assumptions에는 정책 정의를 반복하지 않고, 추가로 둔 가정만 씁니다.
+  6. key_concepts에는 분석에 필요한 데이터 개념을 짧은 명사구로 씁니다(검색어로 쓰임).
 - 출력 `InterpretedQuery`: `intent`, `unsupported_reason`, `region{name, level}`, `analysis_unit`, `restated_question`, `key_concepts`, `assumptions`
+- 첫 해석이 `unsupported`이면 지역별 통계로 표현 가능한지 명시해 한 번 재판정합니다. 재판정도 `unsupported`일 때만 종료합니다.
+- 질문에 `행정동`·`구별`·`시도별` 같은 단위 표현이 없으면 코드가 해당 지역에서 가능한 가장 세밀한 경계 단위로 보정합니다.
 - 검사는 다음 순서로 진행합니다. 계획을 만들기 전에 끝내서 불필요한 LLM 호출을 줄입니다.
-  1. intent가 없으면 `UNSUPPORTED_QUESTION`
+  1. 재판정 후에도 intent가 없으면 `UNSUPPORTED_QUESTION`
   2. 지역이나 단위가 없으면 `INCOMPLETE_INTERPRETATION`
   3. 지역의 이름과 단위가 모두 일치하는 coverage가 없으면 `REGION_NOT_SUPPORTED`. 메시지 예: `'서울특별시'(emd) 데이터가 없습니다. 분석 가능한 지역: 서울특별시(sido)`
   4. 그 지역에 해당 단위의 경계 데이터가 없으면 `UNIT_NOT_SUPPORTED`. 메시지 예: `분석 가능한 단위: 행정동(emd)`
@@ -243,6 +246,7 @@ pgvector는 후보를 찾고, LLM은 최종 선택을 하고, Validator는 실�
 3. 검색어를 임베딩하고 pgvector 코사인 거리로 상위 10개를 고릅니다(`SEARCH_LIMIT = 10`). 지금은 Dataset이 3개라 모두 후보가 되고, 유사도는 순서만 정합니다.
 4. LLM에 후보 요약(제목, 설명, 분류, 태그, 공간·시간 정보, 컬럼 설명)을 주고 `DatasetSelection{datasets, rationale}`을 받습니다.
 5. 선택 원본을 **검사 전에** 기록합니다. 잘못된 선택도 근거와 함께 추적하기 위해서입니다. 후보에 없는 ID를 골랐거나 아무것도 고르지 않았으면 `INVALID_DATASET_SELECTION`입니다. 통과한 선택은 중복을 제거해 `selected_datasets`에 둡니다.
+6. LLM이 분석 단위와 다른 경계를 골랐거나 경계를 빠뜨리면, 코드가 `analysis_unit`과 지역 범위가 일치하는 Polygon 경계 Dataset으로 교체·추가합니다.
 
 실제 실행 기록 예시(`dataset_search`): `daycare_facility` 0.571, `population_by_age` 0.560, `emd_boundary` 0.362
 
@@ -267,7 +271,7 @@ pgvector는 후보를 찾고, LLM은 최종 선택을 하고, Validator는 실�
 - 결과에 따라 다음으로 진행합니다.
   - 오류가 없으면 `load_data`로 갑니다.
   - 첫 시도에 오류가 있으면 피드백과 함께 계획을 다시 만듭니다(`MAX_PLAN_ATTEMPTS = 2`).
-  - 두 번째 시도도 실패하면 `PLAN_INVALID`로 끝나고, `issues`에 오류 목록이 담깁니다.
+  - `regional_summary`의 두 번째 시도도 실패하면 Point 개수 또는 호환 행정코드별 수치 합계로 최소 대체 Plan을 구성합니다. 이 Plan도 같은 Validator를 통과할 때만 실행하며, 만들 수 없으면 `PLAN_INVALID`로 끝납니다.
 - 모든 시도는 `plan_history`에 계획과 검증 결과가 함께 남습니다.
 
 #### ⑤ load_data: 데이터 바인딩
@@ -1038,8 +1042,8 @@ FROM analysis.run GROUP BY 1, 2, 3 ORDER BY 1, 2;
 ### 13.1 현재 한계
 
 - **범위**
-  - 지역은 서울, 단위는 행정동, 분석 유형은 1종, Operation은 4종뿐입니다.
-  - "강남구의 행정동별 …"처럼 서울 안 일부 지역을 묻는 질문은 지역 계층 해석이 없어 지원하지 않습니다.
+  - 전국 시도·시군구·행정동 경계와 일반 지역 통계를 지원하지만, 접근성·네트워크·버퍼처럼 등록되지 않은 Operation은 지원하지 않습니다.
+  - 자동 발견 CSV는 UTF-8/CP949, 단일 헤더 행을 전제로 하며 다중 헤더·Excel·압축 파일은 지원하지 않습니다.
 - **처리 방식**
   - 분석이 동기 HTTP 요청이라 15초~3분이 걸립니다.
   - 진행 상황 스트리밍, 비동기 Job, 취소 기능이 없습니다.

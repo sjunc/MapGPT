@@ -36,6 +36,35 @@ CREATE TABLE IF NOT EXISTS datasets.emd_boundary (
 );
 CREATE INDEX IF NOT EXISTS emd_boundary_geom_idx ON datasets.emd_boundary USING gist (geom);
 
+-- 전국 행정동과 여기서 파생한 시군구·시도 경계
+CREATE TABLE IF NOT EXISTS datasets.national_emd_boundary (
+    adm_cd     text PRIMARY KEY,
+    adm_nm     text NOT NULL,
+    sido_cd    text NOT NULL,
+    sido_nm    text NOT NULL,
+    sigungu_cd text NOT NULL,
+    sigungu_nm text NOT NULL,
+    geom       geometry(MultiPolygon, 4326) NOT NULL
+);
+CREATE INDEX IF NOT EXISTS national_emd_boundary_geom_idx
+    ON datasets.national_emd_boundary USING gist (geom);
+
+CREATE TABLE IF NOT EXISTS datasets.sigungu_boundary (
+    sigungu_cd text PRIMARY KEY,
+    unit_nm    text NOT NULL,
+    sido_cd    text NOT NULL,
+    sido_nm    text NOT NULL,
+    geom       geometry(MultiPolygon, 4326) NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sigungu_boundary_geom_idx ON datasets.sigungu_boundary USING gist (geom);
+
+CREATE TABLE IF NOT EXISTS datasets.sido_boundary (
+    sido_cd text PRIMARY KEY,
+    unit_nm text NOT NULL,
+    geom    geometry(MultiPolygon, 4326) NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sido_boundary_geom_idx ON datasets.sido_boundary USING gist (geom);
+
 -- 내부 표준 Dataset: 행정동별 1세 단위 인구 (long 형식)
 CREATE TABLE IF NOT EXISTS datasets.population_by_age (
     adm_cd         text NOT NULL,

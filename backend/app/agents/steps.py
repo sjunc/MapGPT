@@ -12,9 +12,12 @@ from app.llm.base import StructuredLLM
 
 
 def interpret_query(
-    llm: StructuredLLM, question: str, coverage: list[tuple[RegionRef, list[SpatialLevel]]]
+    llm: StructuredLLM,
+    question: str,
+    coverage: list[tuple[RegionRef, list[SpatialLevel]]],
+    retry_reason: str | None = None,
 ) -> InterpretedQuery:
-    system, user = prompts.interpret_prompt(question, coverage)
+    system, user = prompts.interpret_prompt(question, coverage, retry_reason)
     return llm.generate(system=system, user=user, output_type=InterpretedQuery)
 
 

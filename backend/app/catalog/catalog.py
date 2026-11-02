@@ -8,10 +8,11 @@ from dataclasses import dataclass
 import psycopg
 from psycopg_pool import ConnectionPool
 
-from app.domain.catalog import DatasetMetadata
+from app.domain.catalog import DatasetMetadata, RegionRef
 from app.llm.embeddings import Embedder
 from app.repositories.catalog_repository import (
     embedding_sources,
+    list_boundary_regions,
     list_datasets,
     nearest_datasets,
     upsert_embedding,
@@ -80,6 +81,15 @@ class DatasetCatalog:
     def list_all(self) -> list[DatasetMetadata]:
         with self._pool.connection() as conn:
             return list_datasets(conn)
+
+    def list_regions(self) -> list[RegionRef]:
+        with self._pool.connection() as conn:
+            regions = list_boundary_regions(conn)
+            for dataset in list_datasets(conn):
+                coverage = dataset.spatial.coverage
+                if coverage is not None:
+                    regions.append(coverage)
+        return list({(region.name, region.level): region for region in regions}.values())
 
     def search(self, query: str, limit: int = SEARCH_LIMIT) -> list[ScoredDataset]:
         """검색어 임베딩과 코사인 유사도가 높은 순서로 Dataset 후보를 반환한다 (pgvector)."""

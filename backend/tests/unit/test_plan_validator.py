@@ -157,7 +157,8 @@ def test_region_outside_dataset_coverage_is_rejected():
     data = load_plan_dict()
     data["region"] = {"name": "부산광역시", "level": "sido"}
 
-    assert _codes(data) == ["REGION_NOT_COVERED"] * 3
+    # 전국 인구는 부산을 포함하지만 서울 경계와 어린이집은 포함하지 않는다.
+    assert _codes(data) == ["REGION_NOT_COVERED"] * 2
 
 
 def test_analysis_unit_needs_a_polygon_dataset_at_that_level():

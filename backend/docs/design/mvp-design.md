@@ -235,7 +235,7 @@ class DatasetMetadata(StrictModel):
 | dataset_id | 컬럼 (내부 표준) | join key | spatial |
 |---|---|---|---|
 | `emd_boundary` | `adm_cd`(10자리), `adm_nm`(동명), `sido_cd`, `sido_nm`, `sigungu_cd`, `sigungu_nm`, `geom` | `adm_cd` (administrative_code, mois_adm_cd) | emd / MultiPolygon / EPSG:4326 / 서울특별시 |
-| `population_by_age` | `adm_cd`, `age`(0~110, 110=110세 이상), `population`(남+여), `reference_date` | `adm_cd` (동일) | emd / 지오메트리 없음 / 서울특별시 |
+| `population_by_age` | `adm_cd`, `age`(0~110, 110=110세 이상), `population`(남+여), `reference_date` | `adm_cd` (동일) | emd / 지오메트리 없음 / 대한민국 |
 | `daycare_facility` | `facility_id`(STCODE), `name`, `facility_type`(국공립·민간·가정…), `latitude`, `longitude`, `geom` (기준 시점은 Dataset temporal) | 없음(공간 관계로 결합) | Point / EPSG:4326 / 서울특별시 |
 
 `daycare_facility`의 포함 기준은 운영현황이 '정상' 또는 '재개'이고 좌표 품질 규칙을 통과한 시설이다(13.3). 제외 건수는 `quality_notes`에 기록한다.
@@ -522,7 +522,7 @@ SELECT u.key, count(a.id) FROM units u LEFT JOIN assigned a USING (key) GROUP BY
 | (보완) 분석 단위·지역 | `UNIT_BOUNDARY_MISSING`/`AMBIGUOUS`(analysis_unit의 Polygon Dataset이 정확히 1개), `REGION_NOT_COVERED` (region이 Dataset coverage와 일치) |
 | (보완) 분석 정책 준수 | `POLICY_VIOLATION` (supply_demand_gap: output.metric이 ratio이고 scale=1000, rank=asc) |
 
-**재생성 루프**: Pydantic 파싱 실패나 Plan Validator 오류가 나면 오류 목록을 LLM에 피드백해 **최대 1회** 다시 만든다. 그래도 실패하면 `PLAN_INVALID`로 종료하고 오류 목록을 반환한다.
+**재생성 루프**: Pydantic 파싱 실패나 Plan Validator 오류가 나면 오류 목록을 LLM에 피드백해 **최대 1회** 다시 만든다. `regional_summary`가 그래도 실패하면 메타데이터 기반 최소 대체 Plan을 같은 Validator로 검사해 실행하고, 대체 Plan도 만들 수 없으면 `PLAN_INVALID`로 종료한다.
 
 ---
 
@@ -563,7 +563,7 @@ UI ─POST /api/analyses {question}─▶ API ─▶ AnalysisWorkflow.run(questi
  2 select_datasets      재진술+key_concepts 임베딩 → pgvector 코사인 상위 10개 후보 → LLM(DatasetSelection)
                         → 후보 내 ID인지 확인. 임베딩이 없거나 오래되면 CATALOG_INDEX_STALE로 종료
  3 build_analysis_plan  LLM(AnalysisPlan)      ← 해석 + 선택 Dataset 메타데이터(컬럼/join key/공간/시간) + 정책
- 4 validate_plan        PlanValidator → 오류면 3으로 1회 복귀(피드백), 재실패 시 PLAN_INVALID
+ 4 validate_plan        PlanValidator → 오류면 3으로 1회 복귀(피드백), regional_summary 재실패 시 검증된 최소 대체 Plan, 불가하면 PLAN_INVALID
  5 load_data            get_boundary(emd_boundary, 서울특별시) / get_dataset(population_by_age)
                         + filter_dataset(age between 0~5) / get_dataset(daycare_facility)
  6 execute_operations   aggregate_by_area(count) → daycare_count
@@ -655,7 +655,7 @@ CREATE TABLE analysis.result (
 임베딩 문서(전달 문서 34번)는 제목·설명·분류·태그·지역과 컬럼별 `이름: 설명 (semantic_type)`이다. 적재 통계(feature 수, bbox, 기준일)는 넣지 않으므로 다시 적재해도 임베딩은 바뀌지 않는다. 공간 데이터 자체(Polygon·Point)는 임베딩하지 않는다.
 
 - `emd_boundary`: `sido == "11"`만 남긴다. `adm_cd2` → `adm_cd`, `adm_nm`은 마지막 토큰(동명), `ST_Multi(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(...), 4326)))`.
-- `population_by_age`: cp949로 읽고 서울(`11*`)만 남긴다. 연령별 남+여를 long 형식 `(adm_cd, age, population)`으로 변환한다(110세 이상 → 110). `기준연월` → `reference_date`. 정합성(계 = 연령 합) 검사.
+- `population_by_age`: cp949로 전국 행정동을 읽는다. 연령별 남+여를 long 형식 `(adm_cd, age, population)`으로 변환한다(110세 이상 → 110). `기준연월` → `reference_date`. 정합성(계 = 연령 합) 검사. 어댑터의 선택적 시도 코드 필터는 단위 테스트와 제한 적재에만 사용한다.
 - `daycare_facility`: API를 1,000건 단위로 페이지 수집한다(원본 JSON은 `data/raw/`에 캐시).
 
 ### 13.3 어린이집 좌표 품질 규칙 (적재 시, 결정론적)
@@ -753,6 +753,14 @@ Validation(5)을 LLM 연동(6)보다 먼저 한다. LLM 출력은 처음부터 �
 
 ## 부록 D. 구현 중 변경·보완 사항
 
+- **전국 경계와 자동 CSV 발견(2026-11-02)**: 기존 서울 행정동 경계는 첫 Use Case 호환용으로 유지하고, 같은 원본에서
+  `national_emd_boundary`, `sigungu_boundary`, `sido_boundary`를 적재한다. `inspect-files`는 UTF-8/CP949 CSV를
+  스트리밍 표본 검사하고 동일 헤더 partition을 묶으며, `ingest-files`는 typed table을 트랜잭션에서 교체한다. 좌표는
+  국내 범위와 컬럼 의미가 함께 맞을 때 Point로 만들고, 행정코드는 전국 경계의 실제 코드와 표본 일치율 80% 이상일 때만
+  `unit_key`로 정규화한다. LLM은 자동 생성된 카탈로그에서 Dataset과 typed plan을 선택하되 SQL은 계속 만들지 않는다.
+  원본에 없는 제공기관·라이선스는 추측하지 않고 미확인으로 남긴다. 이는 전달 문서에서 후속 범위로 둔 Dynamic Dataset
+  Discovery를 사용자가 앞당겨 요청한 변경이다.
+
 설계를 따르되 구현과 검증 과정에서 아래를 바꾸거나 보완했다.
 
 | 항목 | 내용 | 이유 |
@@ -776,3 +784,7 @@ Validation(5)을 LLM 연동(6)보다 먼저 한다. LLM 출력은 처음부터 �
 | Dataset 후보 검색 | 카탈로그 전체(dataset_id 순 10개) 대신 pgvector 코사인 유사도 상위 10개(OpenAI `text-embedding-3-small`, HNSW). 검색 기록은 `dataset_search`로 Provenance에 남김. 임베딩이 없거나 다른 모델이거나 임베딩 문서가 현재 메타데이터와 다르면 `CATALOG_INDEX_STALE`로 종료 | 사용자 요청. 전달 문서 30번은 MVP 범위 밖으로 두었지만 33·34번 구조(pgvector는 후보 검색, LLM은 최종 선택, Validator는 검증)를 그대로 적용. 임베딩이 빠진 Dataset이 후보에서 조용히 사라지는 것을 막음 |
 | 해석 프롬프트 region.level | `region.level`은 지역 자체의 행정 단위(서울특별시 → sido)이고 결과를 나눌 단위는 `analysis_unit`이라는 규칙 추가. `REGION_NOT_SUPPORTED` 메시지에 지역 단위를 함께 표시 | gpt-4o-mini가 `region.level`에 분석 단위(emd)를 넣어 해석 10회 중 8회가 `REGION_NOT_SUPPORTED`로 실패(수정 후 10회 모두 sido). 필드 description은 strict 스키마 변환에서 `$ref` 옆 키워드로 제거되므로 프롬프트에 둠 |
 | Workflow 구현 | 직접 작성한 상태 머신(`WorkflowStep → 핸들러` dict) → LangGraph `StateGraph`. 상태는 `AgentState` 그대로, 의존성은 Runtime context, 실패는 `errors` + 조건부 엣지로 END. 외부 인터페이스 `AnalysisWorkflow.run`은 유지 | 사용자 요청. 전달 문서 25번은 LangGraph를 선택 사항으로 두고 Core Domain·GIS가 프레임워크에 종속되지 않을 것을 요구하므로 LangGraph 의존을 `app/workflows`에 한정 |
+| 질문 해석 재판정 | 첫 해석이 `unsupported`이면 지역별 개수·합계·평균·비율·순위 가능성을 명시해 1회 재시도하고, 두 번째도 지원 불가일 때만 종료 | 같은 상가 순위 질문이 성공과 실패를 반복하는 실제 모델 오판을 줄이되, Plan/Result 검증과 결정론적 계산은 유지 |
+| 전국 인구 적재 | `population_by_age`를 서울 코드만 선별하지 않고 원본의 전국 3,619개 행정동 전체로 적재하고 coverage를 대한민국으로 변경 | 전국 경계만 확장되고 인구는 서울로 남아 대구 인구 질문에서 경계 Dataset을 인구처럼 쓰는 잘못된 Plan이 생성되던 불일치 해소 |
+| 분석 단위·경계 보정 | 질문에 단위 표현이 없으면 가능한 가장 세밀한 단위를 선택하고, Dataset 선택 뒤 해당 단위·지역과 맞는 경계를 코드가 추가 | LLM이 같은 질문에서 `emd`와 `sigungu`를 오가거나 해석과 다른 경계를 선택해 Plan 검증이 실패하는 변동 제거 |
+| 지역 통계 대체 Plan | `regional_summary` Plan이 두 번 모두 실패하면 Point 개수 또는 호환 join key별 수치 합계와 내림차순 순위를 메타데이터로 구성하고 다시 검증 | 검증을 제거하거나 수치를 환각하지 않으면서 관련 Dataset으로 계산 가능한 지도를 최대한 반환 |

@@ -13,6 +13,9 @@ _TABLES = (
     "catalog.dataset_embedding",
     "catalog.dataset",
     "datasets.emd_boundary",
+    "datasets.national_emd_boundary",
+    "datasets.sigungu_boundary",
+    "datasets.sido_boundary",
     "datasets.population_by_age",
     "datasets.daycare_facility",
 )

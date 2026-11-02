@@ -27,7 +27,8 @@ def catalog(conn):
     """합성 데이터와, 적재 시 계산되는 통계(기준일·bbox·feature 수)를 채운 카탈로그·검색 임베딩을 등록한다."""
     load_synthetic(conn)
     seoul_units = sum(1 for unit in UNITS if unit[2] == "11")
-    for metadata in TRUSTED_DATASETS.values():
+    for dataset_id in ("emd_boundary", "population_by_age", "daycare_facility"):
+        metadata = TRUSTED_DATASETS[dataset_id]
         temporal = metadata.temporal.model_copy(update={"reference_date": REFERENCE_DATES[metadata.dataset_id]})
         metadata = metadata.model_copy(update={"temporal": temporal})
         if metadata.dataset_id == "emd_boundary":

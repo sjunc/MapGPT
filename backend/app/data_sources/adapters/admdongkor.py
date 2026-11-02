@@ -33,7 +33,7 @@ def reference_date_from_name(path: Path) -> date:
     return date(int(raw[:4]), int(raw[4:6]), int(raw[6:]))
 
 
-def read_boundaries(path: Path, sido_code: str) -> list[BoundaryRecord]:
+def read_boundaries(path: Path, sido_code: str | None = None) -> list[BoundaryRecord]:
     collection = json.loads(path.read_text(encoding="utf-8"))
     if collection.get("type") != "FeatureCollection":
         raise ValueError("행정동 경계 파일이 GeoJSON FeatureCollection이 아닙니다")
@@ -45,7 +45,7 @@ def read_boundaries(path: Path, sido_code: str) -> list[BoundaryRecord]:
     seen: set[str] = set()
     for feature in collection["features"]:
         props = feature["properties"]
-        if props["sido"] != sido_code:
+        if sido_code is not None and props["sido"] != sido_code:
             continue
         adm_cd = props["adm_cd2"]
         if not re.fullmatch(r"\d{10}", adm_cd):

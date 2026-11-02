@@ -1,7 +1,8 @@
 import psycopg
 from psycopg.types.json import Jsonb
 
-from app.domain.catalog import DatasetMetadata
+from app.domain.catalog import DatasetMetadata, RegionRef
+from app.domain.enums import SpatialLevel
 
 
 def upsert_dataset(conn: psycopg.Connection, metadata: DatasetMetadata) -> None:
@@ -18,6 +19,30 @@ def upsert_dataset(conn: psycopg.Connection, metadata: DatasetMetadata) -> None:
 def list_datasets(conn: psycopg.Connection) -> list[DatasetMetadata]:
     rows = conn.execute("SELECT metadata FROM catalog.dataset ORDER BY dataset_id").fetchall()
     return [DatasetMetadata.model_validate(row[0]) for row in rows]
+
+
+def list_boundary_regions(conn: psycopg.Connection) -> list[RegionRef]:
+    """전국 경계에 실제로 존재하는 국가·시도·시군구 목록."""
+    regions: list[RegionRef] = []
+    if conn.execute("SELECT to_regclass('datasets.national_emd_boundary')").fetchone()[0] is None:
+        return regions
+    if conn.execute("SELECT EXISTS (SELECT 1 FROM datasets.national_emd_boundary)").fetchone()[0] is False:
+        return regions
+    regions.append(RegionRef(name="대한민국", level=SpatialLevel.COUNTRY, code="KR"))
+    rows = conn.execute(
+        """
+        SELECT DISTINCT sido_nm, sido_cd, NULL::text, NULL::text
+        FROM datasets.national_emd_boundary
+        UNION ALL
+        SELECT DISTINCT sigungu_nm, sigungu_cd, sido_nm, sido_cd
+        FROM datasets.national_emd_boundary
+        ORDER BY 3 NULLS FIRST, 1
+        """
+    ).fetchall()
+    for name, code, parent_name, _parent_code in rows:
+        level = SpatialLevel.SIGUNGU if parent_name is not None else SpatialLevel.SIDO
+        regions.append(RegionRef(name=name, level=level, code=code))
+    return regions
 
 
 def embedding_sources(conn: psycopg.Connection) -> list[tuple[DatasetMetadata, str | None, str | None]]:

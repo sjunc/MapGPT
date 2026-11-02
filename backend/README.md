@@ -70,6 +70,22 @@ python -m app.cli ingest all      # 경계 → 인구 → 어린이집 순서로
 python -m app.cli embed-catalog             # 바뀐 Dataset만 다시 임베딩 (--refresh: 전부)
 ```
 
+### 대용량 CSV 자동 발견·적재
+
+`data/raw/`에 CSV를 추가하면 전체 파일을 메모리에 올리지 않고 표본을 읽어 인코딩·헤더·타입·좌표를 추론합니다.
+헤더가 같은 지역별 파일은 하나의 논리 Dataset으로 묶습니다. 행정구역 코드는 이름이나 길이만 믿지 않고 전국 경계 코드와
+표본 값의 실제 일치율이 80% 이상일 때만 정규화합니다.
+
+```bash
+python -m app.cli inspect-files  # 읽기 전용: 자동으로 묶일 Dataset과 컬럼 확인
+python -m app.cli ingest-files   # 스트리밍 COPY → PostGIS 적재 → 카탈로그 임베딩 갱신
+```
+
+`ingest-files` 전에 `init-db`, `download`, `ingest emd_boundary`를 실행해 전국 경계를 적재해야 합니다. 자동 발견 Dataset은
+파일명·헤더·값 패턴으로 확인 가능한 정보만 카탈로그에 기록합니다. 제공기관·라이선스처럼 원본에 없는 정보는 만들지 않으며,
+검증된 좌표 또는 행정코드가 없는 Dataset은 공간 분석에 사용하지 않습니다. Dataset 선택과 분석 계획은 기존과 같이 LLM이
+카탈로그를 보고 수행하고, SQL은 코드가 생성합니다.
+
 어린이집은 API로 수집한 원본을 `data/raw/seoul_childcare_YYYYMMDD.json`에 캐시합니다(`--refresh`로 다시 수집). 적재할 때 운영 중(운영현황 '정상'·'재개')인 시설만 남기고, 좌표 품질 규칙(좌표 없음, 다른 자치구 시설과 같은 기본값 좌표, 신고 자치구 밖 좌표)에 걸린 시설을 제외한 뒤 제외 건수를 카탈로그에 기록합니다.
 
 ## 실행

@@ -92,9 +92,18 @@ def validate_result(
     elif not _within(actual_bbox, expected_bbox):
         error("OUT_OF_REGION", f"결과 범위 {actual_bbox}가 '{result.region.name}' 범위 {expected_bbox}를 벗어납니다")
 
-    expected_units = unit_metadata.spatial.feature_count
+    coverage = unit_metadata.spatial.coverage
+    exact_coverage = (
+        coverage is not None and coverage.name == result.region.name and coverage.level == result.region.level
+    )
+    expected_units = unit_metadata.spatial.feature_count if exact_coverage else None
     if expected_units is None:
-        warning("UNIT_COUNT_CHECK_SKIPPED", "예상 행정동 수 정보가 없어 단위 수 검증을 건너뜁니다")
+        reason = (
+            "하위 지역 분석이라 전국 객체 수를 비교할 수 없어"
+            if coverage and not exact_coverage
+            else "예상 단위 수 정보가 없어"
+        )
+        warning("UNIT_COUNT_CHECK_SKIPPED", f"{reason} 단위 수 검증을 건너뜁니다")
     elif abs(len(rows) - expected_units) > expected_units * UNIT_COUNT_TOLERANCE:
         error("UNIT_COUNT_MISMATCH", f"결과 행정동 수 {len(rows)}개가 예상 {expected_units}개와 크게 다릅니다")
     elif len(rows) != expected_units:

@@ -3,15 +3,18 @@ from enum import StrEnum
 
 class AnalysisIntent(StrEnum):
     SUPPLY_DEMAND_GAP = "supply_demand_gap"
+    REGIONAL_SUMMARY = "regional_summary"
 
 
 class SpatialLevel(StrEnum):
+    COUNTRY = "country"
     SIDO = "sido"
     SIGUNGU = "sigungu"
     EMD = "emd"
 
 
 SPATIAL_LEVEL_NAMES: dict[SpatialLevel, str] = {
+    SpatialLevel.COUNTRY: "국가",
     SpatialLevel.SIDO: "시도",
     SpatialLevel.SIGUNGU: "시군구",
     SpatialLevel.EMD: "행정동",
@@ -49,6 +52,11 @@ class SemanticType(StrEnum):
     LONGITUDE = "longitude"
     REFERENCE_DATE = "reference_date"
     GEOMETRY = "geometry"
+    IDENTIFIER = "identifier"
+    CATEGORY = "category"
+    MEASURE = "measure"
+    DATE = "date"
+    TEXT = "text"
 
 
 class FilterOperator(StrEnum):
@@ -76,6 +84,7 @@ class LogicalOperator(StrEnum):
 class AggregationFunction(StrEnum):
     COUNT = "count"
     SUM = "sum"
+    AVG = "avg"
 
 
 class SortOrder(StrEnum):
