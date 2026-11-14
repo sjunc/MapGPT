@@ -257,8 +257,6 @@ class _PlanChecker:
             return
         if not policy.enforce_ratio_policy:
             return
-        if not policy.enforce_ratio_policy:
-            return
         metric = self.plan.output.metric
         ratio = next(
             (op for op in self.plan.operations if isinstance(op, CalculateRatioOperation) and op.output == metric),
