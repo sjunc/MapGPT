@@ -22,7 +22,7 @@ def list_datasets(conn: psycopg.Connection) -> list[DatasetMetadata]:
 
 
 def list_boundary_regions(conn: psycopg.Connection) -> list[RegionRef]:
-    """전국 경계에 실제로 존재하는 국가·시도·시군구 목록."""
+    """전국 경계에 실제로 존재하는 국가·시도·시군구 목록. 시군구 이름은 '시도 시군구'(예: 부산광역시 중구)다."""
     regions: list[RegionRef] = []
     if conn.execute("SELECT to_regclass('datasets.national_emd_boundary')").fetchone()[0] is None:
         return regions
@@ -40,8 +40,11 @@ def list_boundary_regions(conn: psycopg.Connection) -> list[RegionRef]:
         """
     ).fetchall()
     for name, code, parent_name, _parent_code in rows:
-        level = SpatialLevel.SIGUNGU if parent_name is not None else SpatialLevel.SIDO
-        regions.append(RegionRef(name=name, level=level, code=code))
+        if parent_name is None:
+            regions.append(RegionRef(name=name, level=SpatialLevel.SIDO, code=code))
+        else:
+            # 중구·동구처럼 같은 이름의 시군구가 여러 시도에 있으므로 시도 이름을 붙여 고유하게 만든다.
+            regions.append(RegionRef(name=f"{parent_name} {name}", level=SpatialLevel.SIGUNGU, code=code))
     return regions
 
 

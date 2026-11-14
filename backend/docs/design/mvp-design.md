@@ -406,6 +406,7 @@ class InterpretedQuery(StrictModel):        # LLM 출력
     unsupported_reason: str | None
     region: Region | None
     analysis_unit: SpatialLevel | None
+    analysis_unit_specified: bool  # 질문이 결과 단위를 직접 말했는지 (false면 가장 세밀한 단위로 보정)
     restated_question: str                   # 분석 질문 재진술
     key_concepts: list[str]                  # 카탈로그 검색어 (예: 어린이집, 0~5세 인구)
     assumptions: list[str]                   # 해석 과정의 가정
@@ -434,6 +435,7 @@ class AgentState(BaseModel):
     status: RunStatus                        # running | succeeded | failed
     current_step: WorkflowStep | None = None
     interpreted_query: InterpretedQuery | None = None
+    resolved_region: RegionRef | None = None  # 등록 지역과 대조해 확정한 분석 지역 (행정코드로 경계를 거름)
     dataset_search: DatasetSearch | None = None      # 검색어·임베딩 모델·후보별 유사도
     dataset_candidates: list[DatasetMetadata] = []   # LLM이 본 메타데이터를 그대로 기록
     dataset_selection: DatasetSelection | None = None # LLM 선택 원본 (근거 포함, 검사 전에 기록)
@@ -788,3 +790,9 @@ Validation(5)을 LLM 연동(6)보다 먼저 한다. LLM 출력은 처음부터 �
 | 전국 인구 적재 | `population_by_age`를 서울 코드만 선별하지 않고 원본의 전국 3,619개 행정동 전체로 적재하고 coverage를 대한민국으로 변경 | 전국 경계만 확장되고 인구는 서울로 남아 대구 인구 질문에서 경계 Dataset을 인구처럼 쓰는 잘못된 Plan이 생성되던 불일치 해소 |
 | 분석 단위·경계 보정 | 질문에 단위 표현이 없으면 가능한 가장 세밀한 단위를 선택하고, Dataset 선택 뒤 해당 단위·지역과 맞는 경계를 코드가 추가 | LLM이 같은 질문에서 `emd`와 `sigungu`를 오가거나 해석과 다른 경계를 선택해 Plan 검증이 실패하는 변동 제거 |
 | 지역 통계 대체 Plan | `regional_summary` Plan이 두 번 모두 실패하면 Point 개수 또는 호환 join key별 수치 합계와 내림차순 순위를 메타데이터로 구성하고 다시 검증 | 검증을 제거하거나 수치를 환각하지 않으면서 관련 Dataset으로 계산 가능한 지도를 최대한 반환 |
+| 지역 확정 (2026-11-14) | 해석한 지역을 등록 지역(Dataset coverage, 전국 경계의 시도·시군구)과 대조해 하나로 정하고 행정코드를 `AgentState.resolved_region`에 기록. 시군구 이름은 '시도 시군구'로 고유하게 만들고, 경계는 이름 대신 이 코드로 거른다. 여러 곳에 맞으면 `REGION_AMBIGUOUS` | 전국 경계에서 '중구'를 고르면 서울·부산 등 5곳의 행정동이 한 분석에 섞였고, LLM이 '부산광역시중구'로 쓰면 `REGION_NOT_FOUND`가 났음. 시도 coverage Dataset(서울 어린이집 등)의 하위 시군구 분석은 여전히 범위 밖 |
+| 분석 단위 판정 (2026-11-14) | 키워드 목록 대신 LLM이 `analysis_unit_specified`로 질문에 결과 단위가 있는지 판단하고, false일 때만 가장 세밀한 단위로 보정 | '자치구 중', '가장 많은 구는?', '시도 중', '시·도별'에서 사용자가 말한 단위를 행정동으로 덮어썼음 (qwen3.5:9b에서 자치구 질문이 행정동 순위로 나옴) |
+| 결합 실패 경고 범위 (2026-11-14) | `UNMATCHED_KEYS`는 분석 지역 코드로 시작하는 코드만 알림 (결합 키가 행안부 계층 코드라는 전제) | 전국 인구로 서울을 분석하면 다른 시도 코드 3,192개가 결합 실패로 한계에 붙었음 |
+| 자동 CSV 적재 보완 (2026-11-14) | 코드 컬럼이 여럿이면 가장 세밀한 단위 선택, 적재 전 모든 행으로 타입 확정(nan·inf는 숫자로 보지 않음), 헤더 셀 공백 정리, 좌표를 모든 행에서 한국 범위로 검사, coverage·bbox를 적재된 값으로 계산, 시도명·시군구명·행정동명 의미 유형 지정 | 시도코드가 앞에 있으면 시도 단위로 등록됐고, 표본 뒤 'B1' 하나로 적재 전체가 실패했으며, 헤더 공백만으로 실패하고, 서울·부산 데이터가 대한민국 범위로 기록되는 등 메타데이터가 실제와 달랐음 |
+| 인구·경계 불일치 노트 (2026-11-14) | 인구 적재 시 전국 경계에 없는 행정동 코드 수·인구를 품질 노트로 기록 | 경계(2026-07-01판)와 인구(2026-09-30) 기준 시점 차이로 62개 행정동(약 26만 명)이 경고 없이 분석에서 빠졌음 |
+| 자동 Dataset 한계 문구 (2026-11-14) | 자동 발견 Dataset 한계를 `regional_summary` 정책이 아니라 그 Dataset을 쓴 분석에만 붙임 | 기존 Dataset만 쓴 지역 통계에도 자동 발견 한계가 표시됐음 |

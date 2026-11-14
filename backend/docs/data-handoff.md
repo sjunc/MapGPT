@@ -114,7 +114,7 @@ Dataset 테이블끼리는 외래키가 없다. 표 데이터는 경계와 같�
 | `provider`, `source`, `license` | 제공기관, 출처, 라이선스 | 정적 정의 |
 | `spatial.level` | 공간 단위(`sido`, `sigungu`, `emd`). 점 데이터는 비어 있다 | 정적 정의 |
 | `spatial.geometry_type`, `spatial.crs` | Point, Polygon, MultiPolygon 구분과 좌표계 (예: EPSG:4326) | 정적 정의 |
-| `spatial.coverage` | 대상 지역 (현재 모두 서울특별시, 코드 11) | 정적 정의 |
+| `spatial.coverage` | 대상 지역 (서울 Dataset은 서울특별시 11, 전국 경계·인구는 대한민국 KR, 자동 발견 CSV는 적재된 코드·좌표로 계산) | 정적 정의 (자동 발견은 적재 시 계산) |
 | `spatial.bbox`, `spatial.feature_count` | 범위, 공간 객체 수 | 적재 시 계산 |
 | `temporal.reference_date` | 기준 시점 | 적재 시 결정 |
 | `temporal.update_cycle` | 갱신 주기 | 정적 정의 |
@@ -211,7 +211,7 @@ MapGPT는 자연어 질문을 LLM이 구조화된 분석 계획(Analysis Plan)�
 
 | 단계 | 쓰는 데이터·메타데이터 | 데이터가 틀리면 |
 |---|---|---|
-| 1. 질문 해석 (LLM) | 카탈로그의 `coverage`(분석 가능한 지역), Polygon Dataset의 `spatial.level`(분석 가능한 단위) | 데이터가 없는 지역·단위로 판단해 종료 (`REGION_NOT_SUPPORTED`, `UNIT_NOT_SUPPORTED`) |
+| 1. 질문 해석 (LLM) | 카탈로그의 `coverage`와 전국 경계의 시도·시군구(분석 가능한 지역), Polygon Dataset의 `spatial.level`(분석 가능한 단위) | 데이터가 없는 지역·단위, 여러 곳에 해당하는 지역으로 판단해 종료 (`REGION_NOT_SUPPORTED`, `REGION_AMBIGUOUS`, `UNIT_NOT_SUPPORTED`) |
 | 2. Dataset 후보 검색 (pgvector) | 메타데이터로 만든 문서(제목, 설명, 분류, 태그, 지역, 컬럼 설명과 의미 유형)의 임베딩. 질문과 코사인 유사도가 높은 상위 10개를 고른다 | 설명이 부실하면 후보에서 밀린다. 임베딩이 없거나 메타데이터보다 오래되면 분석을 거부한다 (`CATALOG_INDEX_STALE`) |
 | 3. Dataset 선택·계획 (LLM) | 후보의 메타데이터 전체 (컬럼명, 설명, 타입, 조인 키, 공간, 시간) | 잘못된 컬럼이나 조건으로 계획을 만든다 |
 | 4. 계획 검증 (코드) | 컬럼 존재와 타입, 조인 키의 의미 유형과 코드 체계, 대상 지역, 좌표계, Geometry 종류, 분석 단위 경계 Dataset | 실행 전에 거부한다 (`FIELD_UNKNOWN`, `FIELD_NOT_NUMERIC`, `JOIN_KEY_INCOMPATIBLE`, `REGION_NOT_COVERED`, `CRS_UNSUPPORTED`, `GEOMETRY_TYPE_INVALID`, `UNIT_BOUNDARY_MISSING` 등) |

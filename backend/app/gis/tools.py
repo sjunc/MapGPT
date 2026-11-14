@@ -29,7 +29,7 @@ from app.gis.crs import MAP_OUTPUT_SRID, CrsError, parse_srid, transform_crs
 from app.gis.filter_sql import FilterCompileError, compile_filter
 
 QUANTILE_CLASSES = 5
-_REGION_NAME_COLUMN = {SpatialLevel.SIDO: SemanticType.SIDO_NAME, SpatialLevel.SIGUNGU: SemanticType.SIGUNGU_NAME}
+_REGION_CODE_COLUMN = {SpatialLevel.SIDO: SemanticType.SIDO_CODE, SpatialLevel.SIGUNGU: SemanticType.SIGUNGU_CODE}
 _SQL_AGGREGATES = {
     AggregationFunction.COUNT: "count",
     AggregationFunction.SUM: "sum",
@@ -127,14 +127,16 @@ def get_boundary(conn: psycopg.Connection, metadata: DatasetMetadata, region: Re
         raise GisToolError("NOT_POLYGON", f"'{metadata.dataset_id}'는 Polygon Dataset이 아닙니다")
     srid = _srid(metadata)
     name_column = metadata.column_with(SemanticType.ADMINISTRATIVE_NAME)
+    key_field = metadata.join_keys[0].field if metadata.join_keys else None
+    # 중구·동구처럼 이름이 같은 지역이 여러 시도에 있으므로, 이름이 아니라 확정된 행정코드로 거른다.
     if region.level == SpatialLevel.COUNTRY:
         region_column = None
     elif region.level == metadata.spatial.level:
-        region_column = name_column
+        region_column = metadata.column(key_field) if key_field else None
     else:
-        region_column = metadata.column_with(_REGION_NAME_COLUMN.get(region.level))
+        region_column = metadata.column_with(_REGION_CODE_COLUMN.get(region.level))
     if (
-        not metadata.join_keys
+        key_field is None
         or name_column is None
         or (region.level != SpatialLevel.COUNTRY and region_column is None)
         or metadata.geometry_column is None
@@ -142,7 +144,6 @@ def get_boundary(conn: psycopg.Connection, metadata: DatasetMetadata, region: Re
         raise GisToolError(
             "BOUNDARY_METADATA_INCOMPLETE", f"'{metadata.dataset_id}'에 단위 키·이름·지역 컬럼 정보가 없습니다"
         )
-    key_field = metadata.join_keys[0].field
     parent_semantic = (
         SemanticType.SIGUNGU_NAME if metadata.spatial.level == SpatialLevel.EMD else SemanticType.SIDO_NAME
     )
@@ -152,7 +153,7 @@ def get_boundary(conn: psycopg.Connection, metadata: DatasetMetadata, region: Re
     if region_column is not None:
         view = replace(
             view,
-            filter=FilterCondition(field=region_column.name, operator=FilterOperator.EQ, value=region.name),
+            filter=FilterCondition(field=region_column.name, operator=FilterOperator.EQ, value=region.code),
         )
     where, params = view.where()
     key, geom = sql.Identifier(key_field), sql.Identifier(metadata.geometry_column.name)

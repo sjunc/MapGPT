@@ -4,7 +4,7 @@ import math
 from collections.abc import Mapping
 
 from app.domain.catalog import DatasetMetadata
-from app.domain.enums import AggregationFunction, SemanticType, Severity
+from app.domain.enums import AggregationFunction, SemanticType, Severity, SpatialLevel
 from app.domain.operations import AggregateByAreaOperation, AggregateOperation, CalculateRatioOperation
 from app.domain.plan import AnalysisPlan
 from app.domain.results import ExecutionResult, ValidationIssue, ValidationReport
@@ -109,11 +109,16 @@ def validate_result(
     elif len(rows) != expected_units:
         warning("UNIT_COUNT_MISMATCH", f"결과 행정동 수 {len(rows)}개가 예상 {expected_units}개와 다릅니다")
 
+    # 전국 Dataset을 지역 단위로 분석하면 다른 지역 코드는 결합되지 않는 것이 정상이다. 결합 키는 행안부
+    # 계층 코드(시도 2·시군구 5·행정동 10자리)이므로, 분석 지역 코드로 시작하는 코드만 결합 실패로 알린다.
+    region_prefix = "" if result.region.level == SpatialLevel.COUNTRY else result.region.code
     for name, unmatched in result.unmatched_keys.items():
-        warning(
-            "UNMATCHED_KEYS",
-            f"'{name}' 계산에 쓰인 코드 {len(unmatched)}개가 분석 단위 경계에 없어 제외: {unmatched[:_EXAMPLES]}",
-        )
+        inside = [key for key in unmatched if key.startswith(region_prefix)]
+        if inside:
+            warning(
+                "UNMATCHED_KEYS",
+                f"'{name}' 계산에 쓰인 코드 {len(inside)}개가 분석 단위 경계에 없어 제외: {inside[:_EXAMPLES]}",
+            )
     for log in result.operations:
         unassigned = log.stats.get("unassigned_points", 0)
         if unassigned:

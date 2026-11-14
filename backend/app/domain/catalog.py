@@ -5,6 +5,8 @@ from pydantic import Field
 from app.domain.base import StrictModel
 from app.domain.enums import DataType, GeometryType, SemanticType, SpatialLevel
 
+AUTO_DISCOVERED_CATEGORY = "auto_discovered"  # CSV 자동 발견으로 등록한 Dataset의 category
+
 
 class ColumnMetadata(StrictModel):
     name: str

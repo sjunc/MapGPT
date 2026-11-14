@@ -50,10 +50,13 @@ POLICIES: dict[AnalysisIntent, IntentPolicy] = {
         rank_order=SortOrder.DESC,
         interpretation="질문에서 지정한 지표의 지역별 상대적 크기를 나타낸다.",
         definitions=[],
-        limitations=[
-            "자동 발견 Dataset의 컬럼 의미는 표본과 값 패턴으로 추론하므로 원본 제공기관의 정의와 다를 수 있다.",
-            "신뢰 기준을 통과하지 못한 행정구역 코드와 좌표는 분석에 사용하지 않는다.",
-        ],
+        limitations=[],
         enforce_ratio_policy=False,
     ),
 }
+
+# 자동 발견(CSV) Dataset을 쓴 분석에만 붙이는 한계. 분석 유형과 관계없이 Dataset에 따라 정해진다.
+AUTO_DATASET_LIMITATIONS = [
+    "자동 발견 Dataset의 컬럼 의미는 표본과 값 패턴으로 추론하므로 원본 제공기관의 정의와 다를 수 있다.",
+    "신뢰 기준을 통과하지 못한 행정구역 코드와 좌표는 분석에 사용하지 않는다.",
+]

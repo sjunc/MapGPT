@@ -35,7 +35,7 @@ from app.domain.enums import (
     SpatialLevel,
     WorkflowStep,
 )
-from app.domain.plan import AnalysisPlan, analysis_units, resolve_region
+from app.domain.plan import AnalysisPlan, Region, analysis_units, match_regions, resolve_region
 from app.domain.results import ValidationIssue, ValidationReport
 from app.domain.state import AgentState, DatasetHit, DatasetSearch, InterpretedQuery, PlanAttempt, WorkflowError
 from app.executor.operation_executor import ExecutionContext, execute_operations, prepare_context
@@ -50,6 +50,7 @@ from app.workflows.response import compose_response, explanation_facts
 logger = logging.getLogger(__name__)
 
 MAX_PLAN_ATTEMPTS = 2  # 최초 생성 + 검증 오류 피드백 후 재생성 1회
+REGION_EXAMPLES = 20  # 지역을 찾지 못했을 때 안내할 분석 가능 지역 수 (전국 경계가 있으면 270여 곳)
 
 Update = dict[str, Any]  # 노드가 돌려주는 AgentState 부분 갱신
 
@@ -139,16 +140,32 @@ def _interpret_query(state: AgentState, ctx: _RunContext, update: Update) -> Non
         raise WorkflowFailure("UNSUPPORTED_QUESTION", interpreted.unsupported_reason or "지원하지 않는 분석 질문입니다")
     if interpreted.region is None or interpreted.analysis_unit is None:
         raise WorkflowFailure("INCOMPLETE_INTERPRETATION", "분석 지역 또는 분석 단위를 해석하지 못했습니다")
-    if not any(resolve_region(interpreted.region, r) for r in regions):
+    matches = match_regions(interpreted.region, regions)
+    if len(matches) > 1:
+        names = ", ".join(region.name for region in sorted(matches, key=lambda region: region.code))
+        raise WorkflowFailure(
+            "REGION_AMBIGUOUS",
+            f"'{interpreted.region.name}'에 해당하는 지역이 여러 곳입니다: {names}. 시도를 함께 적어 주세요",
+        )
+    if not matches:
         # 지역은 이름과 단위가 모두 맞아야 하므로 둘 다 보여준다 (예: '서울특별시'(emd) vs 서울특별시(sido)).
-        supported = ", ".join(f"{r.name}({r.level})" for r in regions)
+        supported = [f"{region.name}({region.level})" for region, units in coverage if units]
+        listed = ", ".join(supported[:REGION_EXAMPLES]) or "없음"
+        if len(supported) > REGION_EXAMPLES:
+            listed += f" 외 {len(supported) - REGION_EXAMPLES}곳"
         raise WorkflowFailure(
             "REGION_NOT_SUPPORTED",
-            f"'{interpreted.region.name}'({interpreted.region.level}) 데이터가 없습니다. 분석 가능한 지역: {supported}",
+            f"'{interpreted.region.name}'({interpreted.region.level}) 데이터가 없습니다. 분석 가능한 지역: {listed}",
         )
+    # 이후 단계(계획·실행)는 확정한 공식 이름을 쓰고, 경계는 그 행정코드로 거른다.
+    region = matches[0]
+    interpreted = interpreted.model_copy(update={"region": Region(name=region.name, level=region.level)})
+    update["interpreted_query"] = interpreted
+    update["resolved_region"] = region
     # 경계 데이터가 없는 단위는 계획을 만들어도 검증에서 실패하므로 LLM을 더 부르기 전에 끝낸다.
     units = analysis_units(datasets, interpreted.region)
-    if units and not _explicit_analysis_unit(state.question):
+    # 질문이 단위를 말하지 않았을 때만 가장 세밀한 단위로 정한다. 말했는지는 표현이 다양해 LLM이 판단한다.
+    if units and not interpreted.analysis_unit_specified:
         interpreted = interpreted.model_copy(update={"analysis_unit": units[-1]})
         update["interpreted_query"] = interpreted
     if interpreted.analysis_unit not in units:
@@ -158,14 +175,6 @@ def _interpret_query(state: AgentState, ctx: _RunContext, update: Update) -> Non
             f"'{interpreted.region.name}'에는 {_unit_name(interpreted.analysis_unit)} 단위 경계 데이터가 없습니다. "
             f"분석 가능한 단위: {available}",
         )
-
-
-def _explicit_analysis_unit(question: str) -> bool:
-    normalized = question.replace(" ", "")
-    return any(
-        token in normalized
-        for token in ("행정동", "읍면동", "동별", "시군구", "구·군", "구군", "구별", "군별", "시도별")
-    )
 
 
 def _select_datasets(state: AgentState, ctx: _RunContext, update: Update) -> None:
@@ -371,7 +380,7 @@ def _fallback_regional_summary_plan(state: AgentState, datasets: dict[str, Datas
 
 def _load_data(state: AgentState, ctx: _RunContext, update: Update) -> None:
     conn = ctx.gis.begin()
-    ctx.gis.context = _gis_call(prepare_context, conn, state.analysis_plan, _candidates(state))
+    ctx.gis.context = _gis_call(prepare_context, conn, state.analysis_plan, _candidates(state), state.resolved_region)
 
 
 def _execute_operations(state: AgentState, ctx: _RunContext, update: Update) -> None:

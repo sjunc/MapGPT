@@ -127,3 +127,13 @@ def test_unmatched_keys_and_unassigned_points_are_warnings():
     result = _result([_row(i) for i in range(10)], unmatched={"child_population": ["1199999999"]}, unassigned=3)
 
     assert _codes(result) == ([], ["UNMATCHED_KEYS", "UNASSIGNED_POINTS"])
+
+
+def test_unmatched_keys_outside_the_analysis_region_are_not_reported():
+    # 전국 인구로 서울을 분석하면 다른 시도 코드는 결합되지 않는 것이 정상이다.
+    result = _result([_row(i) for i in range(10)], unmatched={"child_population": ["2611000100", "1199999999"]})
+
+    [warning] = validate_result(result, PLAN, _datasets()).warnings
+
+    assert warning.code == "UNMATCHED_KEYS"
+    assert "코드 1개" in warning.message and "2611000100" not in warning.message

@@ -89,7 +89,8 @@ class DatasetCatalog:
                 coverage = dataset.spatial.coverage
                 if coverage is not None:
                     regions.append(coverage)
-        return list({(region.name, region.level): region for region in regions}.values())
+        # 이름은 겹칠 수 있으므로(중구 등) 단위와 행정코드로 중복을 지운다.
+        return list({(region.level, region.code): region for region in regions}.values())
 
     def search(self, query: str, limit: int = SEARCH_LIMIT) -> list[ScoredDataset]:
         """검색어 임베딩과 코사인 유사도가 높은 순서로 Dataset 후보를 반환한다 (pgvector)."""

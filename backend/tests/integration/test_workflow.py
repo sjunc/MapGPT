@@ -1,10 +1,18 @@
+import json
+from datetime import date
+
 import pytest
 
+from app.catalog.catalog import sync_catalog_embeddings
+from app.catalog.definitions import POPULATION_BY_AGE
+from app.data_sources.ingest import ingest_boundary
 from app.domain.enums import RunStatus, WorkflowStep
+from app.domain.policies import AUTO_DATASET_LIMITATIONS
 from app.domain.plan import AnalysisPlan, Region
 from app.domain.state import DatasetSelection, InterpretedQuery
 from app.llm.base import LLMError, LLMOutputError
 from app.llm.embeddings import EmbeddingError
+from app.repositories.catalog_repository import upsert_dataset
 from app.repositories.run_repository import get_run
 from app.workflows.analysis_workflow import AnalysisWorkflow
 from tests.fakes import FakeEmbedder, daycare_llm, interpreted
@@ -176,7 +184,8 @@ def test_plan_that_changes_the_interpretation_is_rejected(pool, catalog):
             ),
             "UNSUPPORTED_QUESTION",
         ),
-        (interpreted(region="부산광역시"), "UNIT_NOT_SUPPORTED"),
+        (interpreted(region="부산광역시"), "REGION_NOT_SUPPORTED"),
+        (interpreted(analysis_unit="sigungu"), "UNIT_NOT_SUPPORTED"),
         (LLMError("OpenAI 호출 실패: 401"), "LLM_FAILED"),
     ],
 )
@@ -243,8 +252,8 @@ def test_region_with_wrong_level_fails_showing_both_levels(pool, catalog):
 
     state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run(QUESTION)
 
-    assert (state.errors[0].step, state.errors[0].code) == (WorkflowStep.INTERPRET_QUERY, "UNIT_NOT_SUPPORTED")
-    assert state.errors[0].message == "'서울특별시'에는 행정동(emd) 단위 경계 데이터가 없습니다. 분석 가능한 단위: 없음"
+    assert (state.errors[0].step, state.errors[0].code) == (WorkflowStep.INTERPRET_QUERY, "REGION_NOT_SUPPORTED")
+    assert state.errors[0].message == "'서울특별시'(emd) 데이터가 없습니다. 분석 가능한 지역: 서울특별시(sido)"
 
 
 def test_unit_without_boundary_data_fails_with_available_units(pool, catalog):
@@ -258,7 +267,7 @@ def test_unit_without_boundary_data_fails_with_available_units(pool, catalog):
 
 
 def test_unspecified_unit_uses_finest_available_boundary(pool, catalog):
-    llm = daycare_llm(interpreted=[interpreted(analysis_unit="sigungu")])
+    llm = daycare_llm(interpreted=[interpreted(analysis_unit="sigungu", analysis_unit_specified=False)])
 
     state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("서울에서 어린이집이 부족한 곳을 알려줘")
 
@@ -325,3 +334,149 @@ def test_result_validation_failure_blocks_map_and_explanation(pool, catalog, con
     assert (state.errors[0].step, state.errors[0].code) == (WorkflowStep.VALIDATE_RESULT, "RESULT_INVALID")
     assert [issue.code for issue in state.errors[0].issues] == ["UNIT_COUNT_MISMATCH"]
     assert state.map_layer is None and state.final_response is None
+
+
+# 시군구 이름이 겹치는 두 시도(서울·부산 '중구')의 전국 경계: (adm_cd, 행정동, 시도, 시도명, 시군구, 시군구명, 범위)
+NATIONAL_UNITS = [
+    ("1114052000", "을지로동", "11", "서울특별시", "11140", "중구", (126.9, 37.5, 127.0, 37.6)),
+    ("2611053000", "중앙동", "26", "부산광역시", "26110", "중구", (129.0, 35.1, 129.1, 35.2)),
+    ("2611054000", "광복동", "26", "부산광역시", "26110", "중구", (129.1, 35.1, 129.2, 35.2)),
+    ("2614051000", "동대신1동", "26", "부산광역시", "26140", "서구", (129.0, 35.0, 129.1, 35.1)),
+]
+NATIONAL_POPULATION = {"1114052000": 100, "2611053000": 300, "2611054000": 200, "2614051000": 400}
+
+
+@pytest.fixture
+def national_catalog(conn, tmp_path):
+    """전국 경계(admdongkor 형식)와 인구를 적재하고 검색 임베딩을 맞춘다."""
+    features = [
+        {
+            "type": "Feature",
+            "properties": {
+                "adm_nm": f"{sido_nm} {sgg_nm} {adm_nm}",
+                "adm_cd2": adm_cd,
+                "sido": sido_cd,
+                "sidonm": sido_nm,
+                "sgg": sgg_cd,
+                "sggnm": sgg_nm,
+            },
+            "geometry": {"type": "MultiPolygon", "coordinates": [[[[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]]]},
+        }
+        for adm_cd, adm_nm, sido_cd, sido_nm, sgg_cd, sgg_nm, (x0, y0, x1, y1) in NATIONAL_UNITS
+    ]
+    path = tmp_path / "HangJeongDong_ver20260701.geojson"
+    path.write_text(json.dumps({"type": "FeatureCollection", "features": features}), encoding="utf-8")
+    ingest_boundary(conn, path)
+    with conn.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO datasets.population_by_age VALUES (%s, 30, %s, '2026-09-30')",
+            list(NATIONAL_POPULATION.items()),
+        )
+    temporal = POPULATION_BY_AGE.temporal.model_copy(update={"reference_date": date(2026, 9, 30)})
+    upsert_dataset(conn, POPULATION_BY_AGE.model_copy(update={"temporal": temporal}))
+    conn.commit()
+    sync_catalog_embeddings(conn, FakeEmbedder())
+
+
+def _population_plan(region: str) -> AnalysisPlan:
+    return AnalysisPlan.model_validate(
+        {
+            "intent": "regional_summary",
+            "region": {"name": region, "level": "sigungu"},
+            "analysis_unit": "emd",
+            "datasets": ["population_by_age", "national_emd_boundary"],
+            "filters": [],
+            "operations": [
+                {
+                    "type": "aggregate",
+                    "input": "population_by_age",
+                    "group_by": ["adm_cd"],
+                    "aggregation": {"field": "population", "function": "sum"},
+                    "output": "population_total",
+                    "label": "인구수",
+                },
+                {
+                    "type": "rank",
+                    "input": "population_total",
+                    "order": "desc",
+                    "output": "population_rank",
+                    "label": "인구수 순위",
+                },
+            ],
+            "output": {
+                "map_type": "choropleth",
+                "metric": "population_total",
+                "ranking": {"enabled": True, "limit": 10},
+            },
+        }
+    )
+
+
+def _regional(region: str) -> InterpretedQuery:
+    return interpreted(
+        intent="regional_summary",
+        restated_question=f"{region} 행정동별 인구 순위",
+        key_concepts=["인구수", "행정동 경계"],
+        assumptions=[],
+    ).model_copy(update={"region": Region(name=region, level="sigungu")})
+
+
+def test_sigungu_sharing_a_name_is_resolved_with_its_province(pool, national_catalog):
+    # 실제 qwen3.5:9b 해석: 시도와 시군구를 붙여 씀
+    llm = daycare_llm(
+        interpreted=[_regional("부산광역시중구")],
+        selection=[DatasetSelection(datasets=["population_by_age", "national_emd_boundary"], rationale="인구와 경계")],
+        plans=[_population_plan("부산광역시 중구")],
+    )
+
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("부산 중구 행정동별 인구 순위")
+
+    assert state.status == RunStatus.SUCCEEDED, state.errors
+    assert (state.resolved_region.name, state.resolved_region.code) == ("부산광역시 중구", "26110")
+    assert [(item.rank, item.unit_name) for item in state.final_response.ranking] == [(1, "중앙동"), (2, "광복동")]
+    # 다른 시도·시군구 인구 코드는 지역 밖이라 빠지는 것이 정상이므로 결합 실패로 알리지 않는다.
+    assert not any("분석 단위 경계에 없어 제외" in note for note in state.final_response.limitations)
+    # 자동 발견 Dataset을 쓰지 않았으므로 그 한계는 붙이지 않는다.
+    assert not set(AUTO_DATASET_LIMITATIONS) & set(state.final_response.limitations)
+    system = next(system for output_type, system, _ in llm.calls if output_type is InterpretedQuery)
+    assert "- 서울특별시 중구 (sigungu): sigungu(시군구), emd(행정동)" in system
+    assert "- 부산광역시 중구 (sigungu): sigungu(시군구), emd(행정동)" in system
+
+
+def test_sigungu_name_shared_by_provinces_stops_with_candidates(pool, national_catalog):
+    llm = daycare_llm(interpreted=[_regional("중구")])
+
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("중구 행정동별 인구 순위")
+
+    assert (state.errors[0].step, state.errors[0].code) == (WorkflowStep.INTERPRET_QUERY, "REGION_AMBIGUOUS")
+    assert "서울특별시 중구, 부산광역시 중구" in state.errors[0].message
+    assert llm.prompts_for(AnalysisPlan) == []
+
+
+@pytest.mark.parametrize(("specified", "expected"), [(True, "sigungu"), (False, "emd")])
+def test_unit_is_replaced_only_when_the_question_did_not_specify_it(pool, national_catalog, specified, expected):
+    # '구별' 같은 정해진 낱말이 없어도('자치구 중') LLM이 단위를 말했다고 판단하면 그 단위를 그대로 쓴다.
+    llm = daycare_llm(
+        interpreted=[
+            interpreted(intent="regional_summary", analysis_unit="sigungu", analysis_unit_specified=specified)
+        ],
+        selection=[DatasetSelection(datasets=["subway_station"], rationale="해석 단계만 확인")],
+    )
+
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("서울 자치구 중 인구가 가장 많은 곳은?")
+
+    assert state.interpreted_query.analysis_unit == expected
+
+
+def test_auto_discovered_dataset_limitations_appear_when_one_is_used(pool, catalog, conn):
+    conn.execute(
+        "UPDATE catalog.dataset SET metadata = jsonb_set(metadata, '{category}', '\"auto_discovered\"') "
+        "WHERE dataset_id = 'daycare_facility'"
+    )
+    conn.commit()
+    sync_catalog_embeddings(conn, FakeEmbedder())
+
+    state = AnalysisWorkflow(daycare_llm(), pool, FakeEmbedder()).run(QUESTION)
+
+    assert state.status == RunStatus.SUCCEEDED, state.errors
+    assert set(AUTO_DATASET_LIMITATIONS) <= set(state.final_response.limitations)

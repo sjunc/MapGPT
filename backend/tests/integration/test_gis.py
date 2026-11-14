@@ -65,7 +65,7 @@ def test_filter_with_no_rows_fails_explicitly(conn, datasets):
 def test_full_plan_execution_matches_hand_computed_answer(conn, datasets):
     plan = load_plan()
     with conn.transaction():
-        ctx = prepare_context(conn, plan, datasets)
+        ctx = prepare_context(conn, plan, datasets, SEOUL)
         result = execute_operations(ctx)
 
     by_key = {row.key: row for row in result.rows}
@@ -102,7 +102,7 @@ def test_points_stored_in_another_crs_are_normalized_before_overlay(conn, datase
 
 def test_choropleth_layer_is_wgs84_geojson_with_quantile_breaks(conn, datasets):
     plan = load_plan()
-    ctx = prepare_context(conn, plan, datasets)
+    ctx = prepare_context(conn, plan, datasets, SEOUL)
     result = execute_operations(ctx)
 
     layer = tools.create_choropleth_layer(

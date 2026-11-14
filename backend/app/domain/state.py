@@ -3,7 +3,7 @@ from datetime import datetime
 from pydantic import Field
 
 from app.domain.base import StrictModel
-from app.domain.catalog import DatasetMetadata
+from app.domain.catalog import DatasetMetadata, RegionRef
 from app.domain.enums import AnalysisIntent, RunStatus, SpatialLevel, WorkflowStep
 from app.domain.plan import AnalysisPlan, Region
 from app.domain.results import (
@@ -22,6 +22,10 @@ class InterpretedQuery(StrictModel):
     unsupported_reason: str | None = Field(description="intent가 null일 때 그 이유, 아니면 null")
     region: Region | None
     analysis_unit: SpatialLevel | None
+    analysis_unit_specified: bool = Field(
+        default=False,
+        description="질문이 결과를 나눌 단위(행정동별, 구별, 자치구 중, 시도별 등)를 직접 말했으면 true, 아니면 false",
+    )
     restated_question: str = Field(description="분석 질문을 명확하게 다시 쓴 문장")
     key_concepts: list[str] = Field(description="필요한 데이터 개념 (예: 어린이집, 0~5세 인구, 행정동 경계)")
     assumptions: list[str] = Field(description="해석 과정에서 둔 가정")
@@ -73,6 +77,7 @@ class AgentState(StrictModel):
     status: RunStatus = RunStatus.RUNNING
     current_step: WorkflowStep | None = None
     interpreted_query: InterpretedQuery | None = None
+    resolved_region: RegionRef | None = None  # 해석한 지역을 등록 지역과 대조해 확정한 지역 (행정코드 포함)
     dataset_search: DatasetSearch | None = None
     dataset_candidates: list[DatasetMetadata] = []
     dataset_selection: DatasetSelection | None = None  # LLM 선택 원본 (근거 포함)

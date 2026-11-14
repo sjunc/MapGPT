@@ -220,21 +220,22 @@ LLM 호출 실패(API 오류, 거절, 길이 초과로 잘림, 스키마 불일�
 
 #### ① interpret_query: 질문 해석
 
-- 코드가 먼저 카탈로그에서 지역(`coverage`)과 지역별 분석 가능 단위를 계산합니다. 분석 가능 단위는 "그 지역을 범위로 가진 Polygon 경계 Dataset의 단위"입니다. 프롬프트에는 `- 서울특별시 (sido): emd(행정동)`처럼 들어갑니다.
-- 프롬프트에는 분석 정책(intent 정의, 해석, 개념 정의), 공간 단위 목록, 지역 목록, 규칙 6개가 들어갑니다.
+- 코드가 먼저 카탈로그에서 지역과 지역별 분석 가능 단위를 계산합니다. 지역은 Dataset의 `coverage`와 전국 경계에 있는 시도·시군구이고, 분석 가능 단위는 "그 지역을 범위로 가진 Polygon 경계 Dataset의 단위"입니다. 프롬프트에는 `- 서울특별시 (sido): emd(행정동)`처럼 들어갑니다. 시군구는 중구·동구처럼 이름이 겹치므로 `- 부산광역시 중구 (sigungu): sigungu(시군구), emd(행정동)`처럼 시도 이름을 붙입니다.
+- 프롬프트에는 분석 정책(intent 정의, 해석, 개념 정의), 공간 단위 목록, 지역 목록, 규칙 7개가 들어갑니다.
   1. 지역별 개수·합계·평균·비율·순위 질문은 `regional_summary`로 해석합니다.
   2. 지원하는 분석 유형으로 표현되지 않으면 intent·region·analysis_unit을 null로 두고 이유를 씁니다. 짧거나 구어체라는 이유만으로 거절하지 않습니다.
-  3. `region.name`은 공식 명칭('서울' → '서울특별시'), `region.level`은 지역 자체의 단위(서울특별시 → sido)입니다. 결과를 나눌 단위는 `analysis_unit`에 쓰고, 사용자가 말한 지역을 바꾸지 않습니다.
-  4. `analysis_unit`은 결과를 보여줄 단위('동별' → emd, '구별' → sigungu)입니다. 사용자가 말한 단위를 바꾸지 않고, 말하지 않았으면 그 지역에서 분석 가능한 단위를 씁니다.
-  5. assumptions에는 정책 정의를 반복하지 않고, 추가로 둔 가정만 씁니다.
-  6. key_concepts에는 분석에 필요한 데이터 개념을 짧은 명사구로 씁니다(검색어로 쓰임).
-- 출력 `InterpretedQuery`: `intent`, `unsupported_reason`, `region{name, level}`, `analysis_unit`, `restated_question`, `key_concepts`, `assumptions`
+  3. `region.name`은 지역 목록의 이름('서울' → '서울특별시', '부산 중구' → '부산광역시 중구'), `region.level`은 지역 자체의 단위(서울특별시 → sido)입니다. 결과를 나눌 단위는 `analysis_unit`에 쓰고, 사용자가 말한 지역을 바꾸지 않습니다. 질문에 시도가 없으면 추측해 붙이지 않습니다.
+  4. `analysis_unit`은 결과를 보여줄 단위('동별' → emd, '구별'·'자치구 중' → sigungu)입니다. 사용자가 말한 단위를 바꾸지 않고, 말하지 않았으면 그 지역에서 분석 가능한 가장 세밀한 단위를 씁니다.
+  5. `analysis_unit_specified`에는 질문이 결과 단위를 직접 말했는지(true/false)를 씁니다.
+  6. assumptions에는 정책 정의를 반복하지 않고, 추가로 둔 가정만 씁니다.
+  7. key_concepts에는 분석에 필요한 데이터 개념을 짧은 명사구로 씁니다(검색어로 쓰임).
+- 출력 `InterpretedQuery`: `intent`, `unsupported_reason`, `region{name, level}`, `analysis_unit`, `analysis_unit_specified`, `restated_question`, `key_concepts`, `assumptions`
 - 첫 해석이 `unsupported`이면 지역별 통계로 표현 가능한지 명시해 한 번 재판정합니다. 재판정도 `unsupported`일 때만 종료합니다.
-- 질문에 `행정동`·`구별`·`시도별` 같은 단위 표현이 없으면 코드가 해당 지역에서 가능한 가장 세밀한 경계 단위로 보정합니다.
+- LLM이 질문에 결과 단위가 없다고 판단하면(`analysis_unit_specified=false`) 코드가 해당 지역에서 가능한 가장 세밀한 경계 단위로 보정합니다. '자치구 중', '가장 많은 구'처럼 표현이 다양해 키워드 목록 대신 LLM이 판단합니다.
 - 검사는 다음 순서로 진행합니다. 계획을 만들기 전에 끝내서 불필요한 LLM 호출을 줄입니다.
   1. 재판정 후에도 intent가 없으면 `UNSUPPORTED_QUESTION`
   2. 지역이나 단위가 없으면 `INCOMPLETE_INTERPRETATION`
-  3. 지역의 이름과 단위가 모두 일치하는 coverage가 없으면 `REGION_NOT_SUPPORTED`. 메시지 예: `'서울특별시'(emd) 데이터가 없습니다. 분석 가능한 지역: 서울특별시(sido)`
+  3. 해석한 지역을 지역 목록과 대조합니다(이름의 공백은 무시하고, 시도는 앞부분만 써도, 시군구는 시도를 빼거나 줄여 써도 찾음). 같은 단위의 지역이 없으면 `REGION_NOT_SUPPORTED`(메시지 예: `'서울특별시'(emd) 데이터가 없습니다. 분석 가능한 지역: 서울특별시(sido)`), '중구'처럼 여러 곳이면 후보를 안내하며 `REGION_AMBIGUOUS`로 멈춥니다. 하나로 정해지면 공식 이름과 행정코드를 `AgentState.resolved_region`에 남기고, 경계는 이름이 아니라 이 코드로 거릅니다.
   4. 그 지역에 해당 단위의 경계 데이터가 없으면 `UNIT_NOT_SUPPORTED`. 메시지 예: `분석 가능한 단위: 행정동(emd)`
 
 #### ② select_datasets: 후보 검색과 선택

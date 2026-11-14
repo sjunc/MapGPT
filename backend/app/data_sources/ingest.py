@@ -124,9 +124,36 @@ def ingest_population(conn: psycopg.Connection, path: Path) -> DatasetMetadata:
             ) as copy:
                 for r in records:
                     copy.write_row((r.adm_cd, r.age, r.population, r.reference_date))
-        metadata = _with_load_stats(conn, POPULATION_BY_AGE, reference_dates.pop(), [])
+        notes = _boundary_mismatch_notes(conn)
+        metadata = _with_load_stats(conn, POPULATION_BY_AGE, reference_dates.pop(), notes)
         upsert_dataset(conn, metadata)
     return metadata
+
+
+def _boundary_mismatch_notes(conn: psycopg.Connection) -> list[str]:
+    """전국 경계에 없는 인구 행정동 코드 (경계와 인구의 기준 시점 차이 등). 경계와 결합되지 않아 분석에서 빠진다."""
+    if not conn.execute("SELECT EXISTS (SELECT 1 FROM datasets.national_emd_boundary)").fetchone()[0]:
+        return []
+    rows = conn.execute(
+        """
+        SELECT left(p.adm_cd, 2), s.unit_nm, count(DISTINCT p.adm_cd), sum(p.population)
+        FROM datasets.population_by_age p
+        LEFT JOIN datasets.sido_boundary s ON s.sido_cd = left(p.adm_cd, 2)
+        WHERE NOT EXISTS (SELECT 1 FROM datasets.national_emd_boundary b WHERE b.adm_cd = p.adm_cd)
+        GROUP BY 1, 2
+        ORDER BY 3 DESC, 1
+        """
+    ).fetchall()
+    if not rows:
+        return []
+    codes = sum(count for _, _, count, _ in rows)
+    people = sum(population for *_, population in rows)
+    by_sido = ", ".join(f"{name or f'시도 코드 {code}'} {count}개" for code, name, count, _ in rows[:3])
+    if len(rows) > 3:
+        by_sido += " 외"
+    return [
+        f"전국 행정동 경계에 없는 행정동 코드 {codes}개(인구 {people:,}명)는 경계와 결합되지 않아 분석에서 빠짐: {by_sido}"
+    ]
 
 
 def screen_facilities(facilities: list[FacilityRecord]) -> tuple[list[FacilityRecord], list[str]]:

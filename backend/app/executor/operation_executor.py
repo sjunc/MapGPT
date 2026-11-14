@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import psycopg
 
-from app.domain.catalog import DatasetMetadata
+from app.domain.catalog import DatasetMetadata, RegionRef
 from app.domain.operations import (
     AggregateByAreaOperation,
     AggregateOperation,
@@ -59,17 +59,19 @@ HANDLERS: dict[str, Callable[[Operation, ExecutionContext], MetricValues]] = {
 
 
 def prepare_context(
-    conn: psycopg.Connection, plan: AnalysisPlan, datasets: Mapping[str, DatasetMetadata]
+    conn: psycopg.Connection, plan: AnalysisPlan, datasets: Mapping[str, DatasetMetadata], region: RegionRef
 ) -> ExecutionContext:
-    """load_data 단계: 분석 단위 경계와 (필터가 적용된) Dataset View를 바인딩한다."""
+    """load_data 단계: 분석 단위 경계와 (필터가 적용된) Dataset View를 바인딩한다.
+
+    region은 해석 단계에서 등록 지역과 대조해 확정한 분석 지역이다. 경계는 이름이 아니라 그 행정코드로 거른다.
+    """
     candidates = unit_boundary_candidates(plan, datasets)
     if len(candidates) != 1:
         raise GisToolError(
             "UNIT_BOUNDARY_MISSING", f"분석 단위 '{plan.analysis_unit}'의 경계 Dataset을 정할 수 없습니다"
         )
     unit_metadata = candidates[0]
-    region = resolve_region(plan.region, unit_metadata.spatial.coverage)
-    if region is None:
+    if resolve_region(plan.region, unit_metadata.spatial.coverage) is None:
         raise GisToolError("REGION_NOT_COVERED", f"'{plan.region.name}'은 '{unit_metadata.dataset_id}' 범위가 아닙니다")
 
     boundary = tools.get_boundary(conn, unit_metadata, region)

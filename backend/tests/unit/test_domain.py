@@ -13,7 +13,8 @@ from app.domain.operations import (
 from app.catalog.definitions import SEOUL, TRUSTED_DATASETS
 from app.agents.prompts import interpret_prompt
 from app.domain.enums import SpatialLevel
-from app.domain.plan import AnalysisPlan, DatasetFilter, Region, analysis_units
+from app.domain.catalog import RegionRef
+from app.domain.plan import AnalysisPlan, DatasetFilter, Region, analysis_units, match_regions
 from app.domain.state import DatasetSelection, Explanation, InterpretedQuery
 from app.llm.schema import to_llm_json_schema
 from tests.support import load_plan, load_plan_dict
@@ -172,3 +173,38 @@ def test_interpret_prompt_uses_finest_unit_when_question_omits_unit():
     system, _ = interpret_prompt("대구에서 상가가 많은 곳은?", [(SEOUL, [SpatialLevel.SIGUNGU, SpatialLevel.EMD])])
 
     assert "가장 세밀한 단위(emd > sigungu > sido 순)" in system
+
+
+REGIONS = [
+    RegionRef(name="대한민국", level=SpatialLevel.COUNTRY, code="KR"),
+    RegionRef(name="서울특별시", level=SpatialLevel.SIDO, code="11"),
+    RegionRef(name="부산광역시", level=SpatialLevel.SIDO, code="26"),
+    RegionRef(name="서울특별시 중구", level=SpatialLevel.SIGUNGU, code="11140"),
+    RegionRef(name="서울특별시 강남구", level=SpatialLevel.SIGUNGU, code="11680"),
+    RegionRef(name="부산광역시 중구", level=SpatialLevel.SIGUNGU, code="26110"),
+]
+
+
+@pytest.mark.parametrize(
+    ("name", "level", "codes"),
+    [
+        ("부산광역시 중구", "sigungu", ["26110"]),
+        ("부산광역시중구", "sigungu", ["26110"]),  # 실제 qwen3.5:9b 해석
+        ("부산 중구", "sigungu", ["26110"]),
+        ("강남구", "sigungu", ["11680"]),
+        ("중구", "sigungu", ["11140", "26110"]),  # 시도 없이는 여러 곳
+        ("서울", "sido", ["11"]),
+        ("대한민국", "country", ["KR"]),
+        ("서울특별시", "emd", []),  # 같은 이름이라도 단위가 다르면 다른 지역
+        ("대구광역시", "sido", []),
+    ],
+)
+def test_match_regions_resolves_interpreted_names_to_registered_regions(name, level, codes):
+    assert [region.code for region in match_regions(Region(name=name, level=level), REGIONS)] == codes
+
+
+def test_interpretation_reports_whether_the_question_named_a_unit():
+    system, _ = interpret_prompt("서울 자치구 중 어린이집이 가장 많은 곳은?", [(SEOUL, [SpatialLevel.SIGUNGU])])
+
+    assert "analysis_unit_specified" in system
+    assert "analysis_unit_specified" in to_llm_json_schema(InterpretedQuery)["required"]

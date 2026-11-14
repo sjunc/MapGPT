@@ -1,7 +1,9 @@
 from pathlib import Path
 
-from app.data_sources.auto_csv import discover_csv_groups
-from app.domain.enums import DataType
+import pytest
+
+from app.data_sources.auto_csv import CsvProfile, _find_code_mapping, _semantic_type, discover_csv_groups
+from app.domain.enums import DataType, SemanticType, SpatialLevel
 
 
 def _write(path: Path, text: str, encoding: str = "utf-8") -> None:
@@ -34,3 +36,44 @@ def test_discovery_supports_cp949_and_separates_schemas(tmp_path):
 
     assert {profile.encoding for profile in profiles} == {"cp949", "utf-8-sig"}
     assert {len(profile.columns) for profile in profiles} == {2, 3}
+
+
+def test_discovery_does_not_treat_nan_or_inf_as_numbers(tmp_path):
+    _write(tmp_path / "측정.csv", "지점,값\nA,1.5\nB,NaN\nC,inf\n")
+
+    [profile] = discover_csv_groups(tmp_path)
+
+    assert profile.data_types == (DataType.STRING, DataType.STRING)
+
+
+def test_code_mapping_prefers_the_finest_matching_level():
+    # 시도·시군구 코드도 100% 일치하지만, 가장 세밀한 행정동 코드를 분석 키로 쓴다.
+    profile = CsvProfile(
+        files=(Path("사업체통계_202609.csv"),),
+        encoding="utf-8-sig",
+        columns=("시도코드", "시군구코드", "행정동코드", "사업체수"),
+        samples=(("11", "11110", "1111051500", "3"), ("26", "26110", "2611051000", "5")),
+        data_types=(DataType.STRING, DataType.STRING, DataType.STRING, DataType.INTEGER),
+    )
+    code_sets = {
+        SpatialLevel.EMD: {"1111051500", "2611051000"},
+        SpatialLevel.SIGUNGU: {"11110", "26110"},
+        SpatialLevel.SIDO: {"11", "26"},
+    }
+
+    mapping = _find_code_mapping(profile, code_sets)
+
+    assert (mapping.source_column, mapping.level, mapping.transform) == ("행정동코드", SpatialLevel.EMD, "identity")
+
+
+@pytest.mark.parametrize(
+    ("column", "expected"),
+    [
+        ("시도명", SemanticType.SIDO_NAME),
+        ("시군구명", SemanticType.SIGUNGU_NAME),
+        ("행정동명", SemanticType.ADMINISTRATIVE_NAME),
+        ("상호명", SemanticType.FACILITY_NAME),
+    ],
+)
+def test_region_name_columns_are_not_facility_names(column, expected):
+    assert _semantic_type(column, DataType.STRING, None) == expected

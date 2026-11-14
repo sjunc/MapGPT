@@ -4,7 +4,7 @@ import statistics
 from collections.abc import Mapping
 from typing import Any
 
-from app.domain.catalog import DatasetMetadata
+from app.domain.catalog import AUTO_DISCOVERED_CATEGORY, DatasetMetadata
 from app.domain.enums import FilterOperator, LogicalOperator, SortOrder
 from app.domain.filters import FilterCondition, FilterExpression
 from app.domain.operations import (
@@ -15,7 +15,7 @@ from app.domain.operations import (
     RankOperation,
 )
 from app.domain.plan import AnalysisPlan
-from app.domain.policies import POLICIES
+from app.domain.policies import AUTO_DATASET_LIMITATIONS, POLICIES
 from app.domain.results import (
     DatasetUsage,
     ExecutionResult,
@@ -83,6 +83,7 @@ def compose_response(
         limitations=_dedupe(
             [
                 *policy.limitations,
+                *(AUTO_DATASET_LIMITATIONS if any(d.category == AUTO_DISCOVERED_CATEGORY for d in used) else []),
                 *_temporal_note(used),
                 *(f"[{d.title}] {note}" for d in used for note in d.quality_notes),
                 *(issue.message for issue in result_validation.warnings),
