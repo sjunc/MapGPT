@@ -269,15 +269,37 @@ def _coordinate_columns(profile: CsvProfile) -> tuple[str, str] | None:
     return (latitude, longitude) if latitude and longitude else None
 
 
-def _ingest_profile(
-    conn: psycopg.Connection, profile: CsvProfile, code_sets: dict[SpatialLevel, set[str]]
-) -> DatasetMetadata:
+@dataclass(frozen=True)
+class LoadedTable:
+    """CSV(같은 헤더의 파일 묶음)를 datasets 스키마 테이블로 적재한 결과."""
+
+    profile: CsvProfile  # 모든 행으로 타입을 확정한 프로파일
+    rows: int
+    coordinates: tuple[str, str] | None  # (위도, 경도) 컬럼
+    mapping: CodeMapping | None
+    located: int | None  # 위치(geom)를 만든 행 수. 좌표가 없으면 None
+    bbox: list[float] | None
+    coverage: RegionRef | None
+    notes: list[str]
+
+
+def load_table(
+    conn: psycopg.Connection,
+    profile: CsvProfile,
+    table_name: str,
+    *,
+    code_sets: dict[SpatialLevel, set[str]] | None = None,
+) -> LoadedTable:
+    """profile의 파일을 datasets.<table_name>으로 교체 적재한다. 호출하는 쪽의 트랜잭션 안에서 실행한다.
+
+    code_sets가 있으면 행정구역 코드 컬럼을 찾아 unit_key로 정규화한다.
+    """
     # 표본으로 추론한 타입은 미리보기용이다. 표본 뒤의 값 때문에 적재가 멈추지 않도록 모든 행으로 확정한다.
     profile = replace(profile, data_types=_scan_types(profile))
-    mapping = _find_code_mapping(profile, code_sets)
+    mapping = _find_code_mapping(profile, code_sets) if code_sets else None
     coordinates = _coordinate_columns(profile)
-    dataset_id = profile.dataset_id
-    loading = f"{dataset_id}__loading"
+    loading = sql.Identifier("datasets", f"{table_name}__loading")
+    table = sql.Identifier("datasets", table_name)
     definitions = [
         sql.SQL("{} {}").format(sql.Identifier(name), sql.SQL(_postgres_type(data_type)))
         for name, data_type in zip(profile.columns, profile.data_types, strict=True)
@@ -285,75 +307,69 @@ def _ingest_profile(
     if mapping:
         definitions.append(sql.SQL("unit_key text"))
 
+    conn.execute(sql.SQL("DROP TABLE IF EXISTS {}").format(loading))
+    conn.execute(sql.SQL("CREATE TABLE {} ({})").format(loading, sql.SQL(", ").join(definitions)))
+    copy_columns = [*profile.columns, *(("unit_key",) if mapping else ())]
+    copy_query = sql.SQL("COPY {} ({}) FROM STDIN").format(
+        loading, sql.SQL(", ").join(map(sql.Identifier, copy_columns))
+    )
+    source = profile.columns.index(mapping.source_column) if mapping else None
+    with conn.cursor() as cursor, cursor.copy(copy_query) as copy:
+        for row in _rows(profile):
+            converted = [_convert(value, data_type) for value, data_type in zip(row, profile.data_types, strict=True)]
+            if mapping:
+                converted.append(mapping.apply(row[source]))
+            copy.write_row(converted)
+    if coordinates:
+        latitude, longitude = map(sql.Identifier, coordinates)
+        conn.execute(sql.SQL("ALTER TABLE {} ADD COLUMN geom geometry(Point, 4326)").format(loading))
+        # 좌표 판정은 표본으로 했으므로, 모든 행에 대해 한국 범위 안인 좌표만 위치로 만든다.
+        conn.execute(
+            sql.SQL(
+                "UPDATE {table} SET geom = ST_SetSRID(ST_MakePoint({lon}, {lat}), 4326) "
+                "WHERE {lon} BETWEEN %s AND %s AND {lat} BETWEEN %s AND %s"
+            ).format(table=loading, lon=longitude, lat=latitude),
+            (*_LONGITUDE_RANGE, *_LATITUDE_RANGE),
+        )
+    conn.execute(sql.SQL("DROP TABLE IF EXISTS {}").format(table))
+    conn.execute(sql.SQL("ALTER TABLE {} RENAME TO {}").format(loading, sql.Identifier(table_name)))
+    if coordinates:
+        conn.execute(
+            sql.SQL("CREATE INDEX {} ON {} USING gist (geom)").format(sql.Identifier(f"{table_name}_geom_idx"), table)
+        )
+    if mapping:
+        conn.execute(
+            sql.SQL("CREATE INDEX {} ON {} (unit_key)").format(sql.Identifier(f"{table_name}_unit_key_idx"), table)
+        )
+
+    count = conn.execute(sql.SQL("SELECT count(*) FROM {}").format(table)).fetchone()[0]
+    notes: list[str] = []
+    located, bbox = None, None
+    if coordinates:
+        latitude, longitude = map(sql.Identifier, coordinates)
+        outside_korea = conn.execute(
+            sql.SQL(
+                "SELECT count(*) FROM {table} WHERE geom IS NULL AND {lon} IS NOT NULL AND {lat} IS NOT NULL"
+            ).format(table=table, lon=longitude, lat=latitude)
+        ).fetchone()[0]
+        if outside_korea:
+            notes.append(f"한국 범위 밖 좌표 {outside_korea:,}건은 위치(geom)를 만들지 않음")
+        located, *extent = conn.execute(
+            sql.SQL(
+                "SELECT count(geom), ST_XMin(ST_Extent(geom)), ST_YMin(ST_Extent(geom)), "
+                "ST_XMax(ST_Extent(geom)), ST_YMax(ST_Extent(geom)) FROM {}"
+            ).format(table)
+        ).fetchone()
+        bbox = extent if located else None
+    coverage, coverage_notes = _coverage(conn, table, by_unit_key=mapping is not None, by_geom=bool(located))
+    return LoadedTable(profile, count, coordinates, mapping, located, bbox, coverage, [*coverage_notes, *notes])
+
+
+def _ingest_profile(
+    conn: psycopg.Connection, profile: CsvProfile, code_sets: dict[SpatialLevel, set[str]]
+) -> DatasetMetadata:
     with conn.transaction():
-        conn.execute(sql.SQL("DROP TABLE IF EXISTS {}").format(sql.Identifier("datasets", loading)))
-        conn.execute(
-            sql.SQL("CREATE TABLE {} ({})").format(sql.Identifier("datasets", loading), sql.SQL(", ").join(definitions))
-        )
-        copy_columns = [*profile.columns, *(("unit_key",) if mapping else ())]
-        copy_query = sql.SQL("COPY {} ({}) FROM STDIN").format(
-            sql.Identifier("datasets", loading), sql.SQL(", ").join(map(sql.Identifier, copy_columns))
-        )
-        source = profile.columns.index(mapping.source_column) if mapping else None
-        with conn.cursor() as cursor, cursor.copy(copy_query) as copy:
-            for row in _rows(profile):
-                converted = [
-                    _convert(value, data_type) for value, data_type in zip(row, profile.data_types, strict=True)
-                ]
-                if mapping:
-                    converted.append(mapping.apply(row[source]))
-                copy.write_row(converted)
-        if coordinates:
-            latitude, longitude = map(sql.Identifier, coordinates)
-            conn.execute(
-                sql.SQL("ALTER TABLE {} ADD COLUMN geom geometry(Point, 4326)").format(
-                    sql.Identifier("datasets", loading)
-                )
-            )
-            # 좌표 판정은 표본으로 했으므로, 모든 행에 대해 한국 범위 안인 좌표만 위치로 만든다.
-            conn.execute(
-                sql.SQL(
-                    "UPDATE {table} SET geom = ST_SetSRID(ST_MakePoint({lon}, {lat}), 4326) "
-                    "WHERE {lon} BETWEEN %s AND %s AND {lat} BETWEEN %s AND %s"
-                ).format(table=sql.Identifier("datasets", loading), lon=longitude, lat=latitude),
-                (*_LONGITUDE_RANGE, *_LATITUDE_RANGE),
-            )
-        conn.execute(sql.SQL("DROP TABLE IF EXISTS {}").format(sql.Identifier("datasets", dataset_id)))
-        conn.execute(
-            sql.SQL("ALTER TABLE {} RENAME TO {}").format(
-                sql.Identifier("datasets", loading), sql.Identifier(dataset_id)
-            )
-        )
-        if coordinates:
-            conn.execute(
-                sql.SQL("CREATE INDEX {} ON {} USING gist (geom)").format(
-                    sql.Identifier(f"{dataset_id}_geom_idx"), sql.Identifier("datasets", dataset_id)
-                )
-            )
-        if mapping:
-            conn.execute(
-                sql.SQL("CREATE INDEX {} ON {} (unit_key)").format(
-                    sql.Identifier(f"{dataset_id}_unit_key_idx"), sql.Identifier("datasets", dataset_id)
-                )
-            )
-        table = sql.Identifier("datasets", dataset_id)
-        count = conn.execute(sql.SQL("SELECT count(*) FROM {}").format(table)).fetchone()[0]
-        notes: list[str] = []
-        located, bbox = None, None
-        if coordinates:
-            latitude, longitude = map(sql.Identifier, coordinates)
-            located, outside, *extent = conn.execute(
-                sql.SQL(
-                    "SELECT count(geom), count(*) FILTER (WHERE geom IS NULL AND {lon} IS NOT NULL AND {lat} IS NOT NULL), "
-                    "ST_XMin(ST_Extent(geom)), ST_YMin(ST_Extent(geom)), ST_XMax(ST_Extent(geom)), ST_YMax(ST_Extent(geom)) "
-                    "FROM {table}"
-                ).format(table=table, lon=longitude, lat=latitude)
-            ).fetchone()
-            bbox = extent if located else None
-            if outside:
-                notes.append(f"한국 범위 밖 좌표 {outside:,}건은 위치(geom)를 만들지 않음")
-        coverage, coverage_notes = _coverage(conn, table, by_unit_key=mapping is not None, by_geom=bool(located))
-        metadata = _metadata(profile, count, coordinates, mapping, coverage, located, bbox, [*coverage_notes, *notes])
+        metadata = _metadata(load_table(conn, profile, profile.dataset_id, code_sets=code_sets))
         upsert_dataset(conn, metadata)
     return metadata
 
@@ -384,16 +400,9 @@ def _coverage(
     return KOREA, [f"포함 시도 {len(sidos)}곳: {', '.join(name for _, name in sidos)}"]
 
 
-def _metadata(
-    profile: CsvProfile,
-    count: int,
-    coordinates: tuple[str, str] | None,
-    mapping: CodeMapping | None,
-    coverage: RegionRef | None,
-    located: int | None,
-    bbox: list[float] | None,
-    extra_notes: list[str],
-) -> DatasetMetadata:
+def _metadata(loaded: LoadedTable) -> DatasetMetadata:
+    """자동 발견 Dataset의 메타데이터: 파일명·헤더·값 패턴으로 확인한 것만 기록한다."""
+    profile, coordinates, mapping = loaded.profile, loaded.coordinates, loaded.mapping
     common = os.path.commonprefix([path.stem for path in profile.files]).rstrip("_ -(")
     title = common or profile.files[0].stem
     columns = [
@@ -431,9 +440,9 @@ def _metadata(
             )
         )
     notes = [
-        f"CSV 자동 발견: {len(profile.files)}개 파일, {profile.encoding}, {count:,}행",
+        f"CSV 자동 발견: {len(profile.files)}개 파일, {profile.encoding}, {loaded.rows:,}행",
         "제공기관·라이선스·컬럼 의미는 파일 자체에서 확인할 수 없어 자동 추론 메타데이터로 등록",
-        *extra_notes,
+        *loaded.notes,
     ]
     if mapping:
         notes.append(
@@ -456,9 +465,9 @@ def _metadata(
             level=mapping.level if mapping else None,
             geometry_type=GeometryType.POINT if coordinates else None,
             crs="EPSG:4326" if coordinates else None,
-            coverage=coverage,
-            bbox=bbox,
-            feature_count=located,
+            coverage=loaded.coverage,
+            bbox=loaded.bbox,
+            feature_count=loaded.located,
         ),
         temporal=TemporalMetadata(reference_date=_reference_date(profile.files), update_cycle=None),
         columns=columns,
