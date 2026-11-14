@@ -110,6 +110,7 @@ class RunStatus(StrEnum):
 class WorkflowStep(StrEnum):
     INTERPRET_QUERY = "interpret_query"
     SELECT_DATASETS = "select_datasets"
+    ACQUIRE_DATA = "acquire_data"
     BUILD_ANALYSIS_PLAN = "build_analysis_plan"
     VALIDATE_PLAN = "validate_plan"
     LOAD_DATA = "load_data"

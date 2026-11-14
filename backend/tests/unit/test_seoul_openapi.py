@@ -32,6 +32,16 @@ def test_fetch_service_reads_every_page(monkeypatch):
     assert len(opener.urls) == 3
 
 
+def test_fetch_service_stops_before_paging_when_over_the_row_limit(monkeypatch):
+    opener = _FakeOpener([{"ID": str(i)} for i in range(5)])
+    monkeypatch.setattr(seoul_openapi.urllib.request, "urlopen", opener)
+    monkeypatch.setattr(seoul_openapi, "PAGE_SIZE", 2)
+
+    with pytest.raises(SeoulApiError, match="한도"):
+        fetch_service("secret-key", "TestPoints", max_rows=4)
+    assert len(opener.urls) == 1
+
+
 def test_fetch_service_reports_api_errors_without_the_key(monkeypatch):
     monkeypatch.setattr(seoul_openapi.urllib.request, "urlopen", _FakeOpener([{"ID": "0"}], code="ERROR-500"))
 

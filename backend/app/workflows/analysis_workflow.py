@@ -23,6 +23,7 @@ from psycopg_pool import ConnectionPool
 
 from app.agents import steps
 from app.catalog.catalog import CatalogIndexError, DatasetCatalog
+from app.data_sources.acquisition import AcquisitionError, DataAcquirer
 from app.domain.catalog import DatasetMetadata
 from app.domain.enums import (
     SPATIAL_LEVEL_NAMES,
@@ -89,13 +90,17 @@ class _RunContext:
     llm: StructuredLLM
     catalog: DatasetCatalog
     gis: _GisSession
+    acquirer: DataAcquirer | None = None  # 없으면 아직 받지 않은 등록 출처를 쓸 수 없다
 
 
 class AnalysisWorkflow:
-    def __init__(self, llm: StructuredLLM, pool: ConnectionPool, embedder: Embedder):
+    def __init__(
+        self, llm: StructuredLLM, pool: ConnectionPool, embedder: Embedder, acquirer: DataAcquirer | None = None
+    ):
         self._llm = llm
         self._pool = pool
         self._catalog = DatasetCatalog(pool, embedder)
+        self._acquirer = acquirer
 
     def run(self, question: str) -> AgentState:
         initial = AgentState(
@@ -107,7 +112,8 @@ class AnalysisWorkflow:
         )
         gis = _GisSession(self._pool)
         try:
-            values = ANALYSIS_GRAPH.invoke(initial, context=_RunContext(llm=self._llm, catalog=self._catalog, gis=gis))
+            context = _RunContext(llm=self._llm, catalog=self._catalog, gis=gis, acquirer=self._acquirer)
+            values = ANALYSIS_GRAPH.invoke(initial, context=context)
         finally:
             gis.release()  # create_map_layer 전에 실패로 끝났을 때
         state = AgentState.model_validate(values)
@@ -212,6 +218,40 @@ def _select_datasets(state: AgentState, ctx: _RunContext, update: Update) -> Non
         selected = [dataset_id for dataset_id in selected if dataset_id not in boundary_ids]
         selected.append(compatible_boundaries[0])
     update["selected_datasets"] = selected
+
+
+def _acquire_data(state: AgentState, ctx: _RunContext, update: Update) -> None:
+    """선택한 Dataset 중 아직 받지 않았거나 다시 받을 때가 된 등록 출처를 계획 전에 받아 적재한다.
+
+    계획·검증·실행은 실제로 적재한 메타데이터(건수·범위·타입)를 보도록 후보 메타데이터를 바꾼다.
+    """
+    candidates = _candidates(state)
+    due = [dataset_id for dataset_id in state.selected_datasets if _needs_acquisition(candidates[dataset_id], ctx)]
+    if not due:
+        return
+    if ctx.acquirer is None:
+        raise WorkflowFailure(
+            "DATA_ACQUISITION_UNAVAILABLE", f"아직 받지 않은 등록 출처를 받을 수집기가 없습니다: {due}"
+        )
+    records = []
+    for dataset_id in due:
+        try:
+            metadata, record = ctx.acquirer.acquire(dataset_id)
+        except AcquisitionError as error:
+            raise WorkflowFailure("DATA_ACQUISITION_FAILED", str(error)) from error
+        candidates[dataset_id] = metadata
+        records.append(record)
+        # 다음 출처에서 실패해도 그 전까지 받은 기록은 남긴다.
+        update["dataset_candidates"] = [candidates[d.dataset_id] for d in state.dataset_candidates]
+        update["data_acquisitions"] = [*state.data_acquisitions, *records]
+
+
+def _needs_acquisition(metadata: DatasetMetadata, ctx: _RunContext) -> bool:
+    if metadata.acquisition is None:
+        return False
+    if ctx.acquirer is None:
+        return metadata.acquisition.fetched_at is None  # 받은 적이 있으면 그 데이터를 그대로 쓴다
+    return ctx.acquirer.needs_acquisition(metadata)
 
 
 def _build_analysis_plan(state: AgentState, ctx: _RunContext, update: Update) -> None:
@@ -432,6 +472,7 @@ StepFunction = Callable[[AgentState, _RunContext, Update], None]
 _STEPS: dict[WorkflowStep, StepFunction] = {
     WorkflowStep.INTERPRET_QUERY: _interpret_query,
     WorkflowStep.SELECT_DATASETS: _select_datasets,
+    WorkflowStep.ACQUIRE_DATA: _acquire_data,
     WorkflowStep.BUILD_ANALYSIS_PLAN: _build_analysis_plan,
     WorkflowStep.VALIDATE_PLAN: _validate_plan,
     WorkflowStep.LOAD_DATA: _load_data,
@@ -490,7 +531,8 @@ def _build_graph() -> CompiledStateGraph:
     graph.add_edge(START, WorkflowStep.INTERPRET_QUERY)
     for step, next_step in [
         (WorkflowStep.INTERPRET_QUERY, WorkflowStep.SELECT_DATASETS),
-        (WorkflowStep.SELECT_DATASETS, WorkflowStep.BUILD_ANALYSIS_PLAN),
+        (WorkflowStep.SELECT_DATASETS, WorkflowStep.ACQUIRE_DATA),
+        (WorkflowStep.ACQUIRE_DATA, WorkflowStep.BUILD_ANALYSIS_PLAN),
         (WorkflowStep.LOAD_DATA, WorkflowStep.EXECUTE_OPERATIONS),
         (WorkflowStep.EXECUTE_OPERATIONS, WorkflowStep.VALIDATE_RESULT),
         (WorkflowStep.VALIDATE_RESULT, WorkflowStep.CREATE_MAP_LAYER),

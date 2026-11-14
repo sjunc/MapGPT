@@ -225,6 +225,7 @@ class DatasetMetadata(StrictModel):
     columns: list[ColumnMetadata]
     join_keys: list[JoinKey]
     quality_notes: list[str] = []    # 적재 품질 기록 (예: "좌표 오류로 N건 제외") → 결과의 한계로 노출
+    acquisition: SourceAcquisition | None = None  # 등록 출처에서 받는 Dataset의 수집 상태 (받은 날짜, 등록 파일 해시)
 ```
 
 - 저장 테이블은 `datasets.<dataset_id>` 규칙을 따르므로 메타데이터에 저장 위치 필드를 두지 않는다. 식별자는 카탈로그에 등록된 이름만 `sql.Identifier`로 사용한다.
@@ -440,6 +441,7 @@ class AgentState(BaseModel):
     dataset_candidates: list[DatasetMetadata] = []   # LLM이 본 메타데이터를 그대로 기록
     dataset_selection: DatasetSelection | None = None # LLM 선택 원본 (근거 포함, 검사 전에 기록)
     selected_datasets: list[str] = []                 # 검사를 통과한 선택 (중복 제거)
+    data_acquisitions: list[DataAcquisition] = []     # 선택 뒤 등록 출처에서 받아 적재한 기록
     analysis_plan: AnalysisPlan | None = None
     plan_history: list[PlanAttempt] = []   # 재생성을 포함한 모든 계획 시도 (plan + 검증 결과)
     plan_validation: ValidationReport | None = None
@@ -564,6 +566,7 @@ UI ─POST /api/analyses {question}─▶ API ─▶ AnalysisWorkflow.run(questi
                         intent=None이면 UNSUPPORTED_QUESTION, 데이터 없는 지역·단위면 REGION/UNIT_NOT_SUPPORTED로 종료
  2 select_datasets      재진술+key_concepts 임베딩 → pgvector 코사인 상위 10개 후보 → LLM(DatasetSelection)
                         → 후보 내 ID인지 확인. 임베딩이 없거나 오래되면 CATALOG_INDEX_STALE로 종료
+ 2-1 acquire_data      선택한 등록 출처가 아직 없거나 오래됐으면 서울 OpenAPI에서 받아 적재 (계획 전에)
  3 build_analysis_plan  LLM(AnalysisPlan)      ← 해석 + 선택 Dataset 메타데이터(컬럼/join key/공간/시간) + 정책
  4 validate_plan        PlanValidator → 오류면 3으로 1회 복귀(피드백), regional_summary 재실패 시 검증된 최소 대체 Plan, 불가하면 PLAN_INVALID
  5 load_data            get_boundary(emd_boundary, 서울특별시) / get_dataset(population_by_age)
@@ -796,3 +799,4 @@ Validation(5)을 LLM 연동(6)보다 먼저 한다. LLM 출력은 처음부터 �
 | 자동 CSV 적재 보완 (2026-11-14) | 코드 컬럼이 여럿이면 가장 세밀한 단위 선택, 적재 전 모든 행으로 타입 확정(nan·inf는 숫자로 보지 않음), 헤더 셀 공백 정리, 좌표를 모든 행에서 한국 범위로 검사, coverage·bbox를 적재된 값으로 계산, 시도명·시군구명·행정동명 의미 유형 지정 | 시도코드가 앞에 있으면 시도 단위로 등록됐고, 표본 뒤 'B1' 하나로 적재 전체가 실패했으며, 헤더 공백만으로 실패하고, 서울·부산 데이터가 대한민국 범위로 기록되는 등 메타데이터가 실제와 달랐음 |
 | 인구·경계 불일치 노트 (2026-11-14) | 인구 적재 시 전국 경계에 없는 행정동 코드 수·인구를 품질 노트로 기록 | 경계(2026-07-01판)와 인구(2026-09-30) 기준 시점 차이로 62개 행정동(약 26만 명)이 경고 없이 분석에서 빠졌음 |
 | 자동 Dataset 한계 문구 (2026-11-14) | 자동 발견 Dataset 한계를 `regional_summary` 정책이 아니라 그 Dataset을 쓴 분석에만 붙임 | 기존 Dataset만 쓴 지역 통계에도 자동 발견 한계가 표시됐음 |
+| 등록 출처 수집 (2026-11-14) | 출처 등록 파일(`backend/sources/*.yaml`, PyYAML `safe_load` + Pydantic 검증)로 승인한 서울 OpenAPI 출처를 카탈로그에 "받기 전" 항목으로 올리고, 선택되면 `acquire_data` 단계가 계획 전에 받아 적재. 등록 출처는 `public_api` 분류이고 컬럼 의미는 등록 파일 값을 쓰며, 대상 지역 밖 좌표는 위치를 만들지 않음. 질문 처리 중 한도 10만 행, 다시 받는 주기 기본 30일, 원본 사본 재사용, 동시 수집은 advisory lock | DB에 없는 데이터를 공공 API로 받아 답하려는 요구. 전달 문서 36번(검증 없이 쓰지 않음)과 데이터 전달 문서 5.3의 선언 파일·신뢰 단계를 따르되, 서울 일반 인증키 하나로 모든 일반 OpenAPI를 부를 수 있어 서울부터 시작. YAML은 데이터 전달 문서의 선언 파일 예시와 같고 데이터 쪽에서 가장 흔한 형식 |

@@ -91,6 +91,21 @@ python -m app.cli ingest-files   # 스트리밍 COPY → PostGIS 적재 → 카�
 
 어린이집은 API로 수집한 원본을 `data/raw/seoul_childcare_YYYYMMDD.json`에 캐시합니다(`--refresh`로 다시 수집). 적재할 때 운영 중(운영현황 '정상'·'재개')인 시설만 남기고, 좌표 품질 규칙(좌표 없음, 다른 자치구 시설과 같은 기본값 좌표, 신고 자치구 밖 좌표)에 걸린 시설을 제외한 뒤 제외 건수를 카탈로그에 기록합니다.
 
+### 등록 출처 (서울 OpenAPI)
+
+DB에 없는 데이터라도 `sources/*.yaml`로 등록해 둔 출처는 분석 중에 필요하면 받아서 씁니다. 등록 파일에는 서울 OpenAPI
+서비스명, 원본 컬럼 → 적재 컬럼 이름과 의미(위도·경도 포함), 대상 지역, 제공기관·라이선스를 적고, 사람이 검토해 커밋합니다.
+
+```bash
+python -m app.cli register-sources          # 등록 파일을 카탈로그에 '받기 전' 항목으로 올림 (검색 임베딩 포함)
+python -m app.cli fetch-source seoul_public_wifi   # 미리 받아 두기 (행 수 한도 없이 새로 받음)
+```
+
+분석에서 받기 전 출처가 선택되면 `acquire_data` 단계가 `SEOUL_OPEN_API_KEY`로 받아 적재한 뒤 계획을 세웁니다. 받은 원본은
+`data/raw/sources/`에 날짜별로 남고, 다시 받을 주기(`refresh_days`, 기본 30일) 안에는 그 사본을 다시 씁니다. 질문 처리 중에는
+`max_rows`(기본 10만 행) 이하만 받으며, 더 큰 출처는 `fetch-source`로 미리 받아 둡니다. 대상 지역 경계 밖에 떨어진 좌표와
+한국 범위 밖 좌표는 위치를 만들지 않고 건수를 품질 노트로 남깁니다. 지금 등록된 출처는 서울시 공공와이파이 위치(OA-20883)입니다.
+
 ## 실행
 
 ```bash
@@ -127,6 +142,7 @@ pytest -m e2e       # 실제 적재 데이터 + 실제 LLM·OpenAI 임베딩으�
 | 행정동 경계 | 통계청 SGIS 기반 [vuski/admdongkor](https://github.com/vuski/admdongkor) `ver20260701` | 2026-07-01 | CC BY 4.0 (출처: 통계청 SGIS) |
 | 연령별 인구 | 행정안전부, [공공데이터포털 15097972](https://www.data.go.kr/data/15097972/fileData.do) | 2026-09-30 | 이용허락범위 제한 없음 |
 | 어린이집 | 서울 열린데이터광장 `ChildCareInfo` (OA-20300) | 수집일 기준 | **공공누리 제4유형 (출처표시·상업적 이용금지·변경금지)** |
+| 공공와이파이 위치 (등록 출처) | 서울 열린데이터광장 `TbPublicWifiInfo` ([OA-20883](https://data.seoul.go.kr/dataList/OA-20883/S/1/datasetView.do)) | 수집일 기준 | 공공누리 제1유형 (출처표시) |
 
 어린이집 데이터는 상업적 이용이 금지되어 있습니다. 상업 서비스에 쓰려면 이용 조건을 따로 확인해야 합니다. 배경지도는 [OpenFreeMap](https://openfreemap.org) (© OpenMapTiles, OpenStreetMap)입니다.
 

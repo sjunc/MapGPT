@@ -6,6 +6,27 @@ from app.domain.base import StrictModel
 from app.domain.enums import DataType, GeometryType, SemanticType, SpatialLevel
 
 AUTO_DISCOVERED_CATEGORY = "auto_discovered"  # CSV 자동 발견으로 등록한 Dataset의 category
+PUBLIC_API_CATEGORY = "public_api"  # 등록 파일로 승인한 외부 API 출처에서 받아 적재하는 Dataset의 category
+
+
+class SourceAcquisition(StrictModel):
+    """등록 파일로 승인한 외부 출처에서 받아 적재하는 Dataset의 수집 상태."""
+
+    source_id: str
+    connector: str
+    service: str
+    fingerprint: str  # 등록 파일 내용 해시. 바뀌면 이미 받은 데이터도 다시 적재한다
+    refresh_days: int
+    fetched_at: date | None = None  # None이면 아직 받지 않은 등록 출처
+    rows: int | None = None
+
+    def is_due(self, today: date, fingerprint: str) -> bool:
+        """아직 받지 않았거나, 다시 받을 주기가 지났거나, 등록 파일이 바뀌었으면 받아야 한다."""
+        return (
+            self.fetched_at is None
+            or (today - self.fetched_at).days >= self.refresh_days
+            or self.fingerprint != fingerprint
+        )
 
 
 class ColumnMetadata(StrictModel):
@@ -58,6 +79,7 @@ class DatasetMetadata(StrictModel):
     columns: list[ColumnMetadata]
     join_keys: list[JoinKey]
     quality_notes: list[str] = []
+    acquisition: SourceAcquisition | None = None  # 등록 출처에서 받아 적재하는 Dataset만 있다
 
     def column(self, name: str) -> ColumnMetadata | None:
         return next((c for c in self.columns if c.name == name), None)

@@ -13,8 +13,10 @@ from psycopg_pool import ConnectionPool
 from app.catalog.catalog import sync_catalog_embeddings
 from app.config import Settings, get_settings
 from app.data_sources import ingest
+from app.data_sources.acquisition import AcquisitionError, DataAcquirer, register_sources
 from app.data_sources.auto_csv import AutoCsvError, discover_csv_groups, ingest_discovered_csvs
 from app.data_sources.adapters import admdongkor, mois_population, seoul_childcare
+from app.data_sources.sources import SourceError, load_sources
 from app.db import connect, init_schema
 from app.domain.catalog import DatasetMetadata
 from app.domain.state import AgentState
@@ -88,6 +90,9 @@ def main(argv: list[str] | None = None) -> None:
     ingest_parser.add_argument("--refresh", action="store_true", help="어린이집 API 캐시를 무시하고 다시 수집")
     commands.add_parser("inspect-files", help="data/raw CSV를 표본 검사하고 동일 스키마 파일을 그룹화")
     commands.add_parser("ingest-files", help="data/raw의 대용량 CSV를 자동 발견해 PostGIS와 카탈로그에 적재")
+    commands.add_parser("register-sources", help="출처 등록 파일(sources/*.yaml)을 카탈로그에 '받기 전' 항목으로 등록")
+    fetch_parser = commands.add_parser("fetch-source", help="등록 출처를 지금 새로 받아 적재 (행 수 한도 없음)")
+    fetch_parser.add_argument("source_id")
     embed_parser = commands.add_parser("embed-catalog", help="Dataset 검색용 카탈로그 임베딩 갱신 (pgvector)")
     embed_parser.add_argument("--refresh", action="store_true", help="변경 여부와 관계없이 모두 다시 임베딩")
     analyze_parser = commands.add_parser("analyze", help="자연어 질문을 분석 워크플로로 실행")
@@ -123,7 +128,19 @@ def main(argv: list[str] | None = None) -> None:
         except (LLMError, EmbeddingError) as error:
             raise SystemExit(str(error)) from error
         with ConnectionPool(settings.database_url, min_size=1, max_size=2) as pool:
-            _print_run(AnalysisWorkflow(llm, pool, embedder).run(args.question))
+            acquirer = DataAcquirer.from_settings(settings, pool, embedder)
+            _print_run(AnalysisWorkflow(llm, pool, embedder, acquirer).run(args.question))
+        return
+    if args.command == "fetch-source":
+        try:
+            embedder = create_embedder(settings)
+            with ConnectionPool(settings.database_url, min_size=1, max_size=2) as pool:
+                acquirer = DataAcquirer.from_settings(settings, pool, embedder)
+                metadata, record = acquirer.acquire(args.source_id, limit_rows=False, refresh=True)
+        except (AcquisitionError, SourceError, EmbeddingError) as error:
+            raise SystemExit(str(error)) from error
+        _report(metadata)
+        print(f"  {record.rows:,}행 중 {record.located:,}행에 위치, {record.duration_ms / 1000:.1f}초")
         return
 
     with connect(settings.database_url) as conn:
@@ -135,6 +152,17 @@ def main(argv: list[str] | None = None) -> None:
                 _sync_embeddings(conn, settings, args.refresh)
             except EmbeddingError as error:
                 raise SystemExit(str(error)) from error
+        elif args.command == "register-sources":
+            try:
+                registered = register_sources(conn, load_sources(settings.sources_dir))
+            except (SourceError, AcquisitionError) as error:
+                raise SystemExit(str(error)) from error
+            print(f"등록 출처 갱신: {', '.join(registered) if registered else '변경 없음'}")
+            try:
+                _sync_embeddings(conn, settings, refresh=False)
+            except EmbeddingError as error:
+                print(f"카탈로그 임베딩을 갱신하지 못했습니다: {error}")
+                print("  Dataset 검색 전에 python -m app.cli embed-catalog 를 실행하세요")
         elif args.command == "ingest-files":
             try:
                 for metadata in ingest_discovered_csvs(conn, raw):

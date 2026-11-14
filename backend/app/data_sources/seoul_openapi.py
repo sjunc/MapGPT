@@ -14,8 +14,13 @@ class SeoulApiError(RuntimeError):
     pass
 
 
-def fetch_service(api_key: str, service: str, timeout: float = 30.0) -> list[dict[str, Any]]:
-    """서비스의 전체 행을 페이지 단위로 받는다. 인증키는 로그·예외 메시지에 남기지 않는다."""
+def fetch_service(
+    api_key: str, service: str, max_rows: int | None = None, timeout: float = 30.0
+) -> list[dict[str, Any]]:
+    """서비스의 전체 행을 페이지 단위로 받는다. 인증키는 로그·예외 메시지에 남기지 않는다.
+
+    첫 페이지에서 확인한 전체 건수가 max_rows보다 많으면 나머지 페이지를 받지 않고 멈춘다.
+    """
     rows: list[dict[str, Any]] = []
     total: int | None = None
     start = 1
@@ -31,6 +36,8 @@ def fetch_service(api_key: str, service: str, timeout: float = 30.0) -> list[dic
         if body["RESULT"]["CODE"] != "INFO-000":
             raise SeoulApiError(f"서울 OpenAPI 오류 {body['RESULT']['CODE']}: {body['RESULT']['MESSAGE']}")
         total = int(body["list_total_count"])
+        if max_rows is not None and total > max_rows:
+            raise SeoulApiError(f"{service} 전체 {total:,}건이 한도 {max_rows:,}건보다 많습니다")
         rows.extend(body["row"])
         start = end + 1
     if len(rows) != total:

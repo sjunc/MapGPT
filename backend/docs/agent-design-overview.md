@@ -183,7 +183,8 @@ LLM이 쓴 문장 중 화면에 그대로 보이는 것은 요약(summary), 해�
 stateDiagram-v2
     [*] --> interpret_query
     interpret_query --> select_datasets
-    select_datasets --> build_analysis_plan
+    select_datasets --> acquire_data
+    acquire_data --> build_analysis_plan
     build_analysis_plan --> validate_plan
     build_analysis_plan --> build_analysis_plan: 스키마 불일치 시 재생성 (최대 1회)
     validate_plan --> build_analysis_plan: 검증 오류 시 피드백 후 재생성 (최대 1회)
@@ -206,6 +207,7 @@ stateDiagram-v2
 |---|---|---|---|---|
 | 1 | `interpret_query` | LLM + 검사 | 질문, 분석 정책, 지역별 분석 가능 단위 → `InterpretedQuery` | `UNSUPPORTED_QUESTION`, `INCOMPLETE_INTERPRETATION`, `REGION_NOT_SUPPORTED`, `UNIT_NOT_SUPPORTED` |
 | 2 | `select_datasets` | pgvector + LLM | 검색어 → 후보(최대 10개) → `DatasetSelection` | `CATALOG_INDEX_STALE`, `EMBEDDING_FAILED`, `INVALID_DATASET_SELECTION` |
+| 2-1 | `acquire_data` | 코드 | 선택한 등록 출처 중 아직 받지 않았거나 다시 받을 때가 된 것 → 받아 적재, `data_acquisitions` | `DATA_ACQUISITION_UNAVAILABLE`, `DATA_ACQUISITION_FAILED` |
 | 3 | `build_analysis_plan` | LLM | 해석 + 선택 Dataset 상세 메타데이터 (+ 이전 오류) → `AnalysisPlan` | `LLM_FAILED` (스키마 불일치는 재생성) |
 | 4 | `validate_plan` | 코드 | Plan + 메타데이터 → `ValidationReport` | `PLAN_INVALID` |
 | 5 | `load_data` | GIS | Plan → 경계 View, 필터를 적용한 Dataset View | `DATASET_TABLE_MISSING`, `DATASET_EMPTY`, `FILTER_EMPTY_RESULT`, `REGION_NOT_FOUND`, `INVALID_GEOMETRY` 등 |
@@ -250,6 +252,17 @@ pgvector는 후보를 찾고, LLM은 최종 선택을 하고, Validator는 실�
 6. LLM이 분석 단위와 다른 경계를 골랐거나 경계를 빠뜨리면, 코드가 `analysis_unit`과 지역 범위가 일치하는 Polygon 경계 Dataset으로 교체·추가합니다.
 
 실제 실행 기록 예시(`dataset_search`): `daycare_facility` 0.571, `population_by_age` 0.560, `emd_boundary` 0.362
+
+#### ②-1 acquire_data: 등록 출처 수집
+
+DB에 없는 데이터라도 출처 등록 파일(`backend/sources/*.yaml`)로 미리 승인해 둔 서울 OpenAPI 출처라면 질문을 처리하면서 받아 씁니다(전달 문서 36번의 첫 단계).
+
+- 등록 출처는 `register-sources`로 카탈로그에 "받기 전" 항목으로 올라가 있어서 ② 검색 후보에 그대로 나옵니다. LLM 출력 형식은 같습니다.
+- 선택한 Dataset 중 아직 받지 않았거나, 다시 받을 주기(`refresh_days`, 기본 30일)가 지났거나, 등록 파일이 바뀐 출처만 받습니다. 주기 안의 원본 사본(`data/raw/sources/`)이 있으면 API를 부르지 않습니다.
+- 받은 행에 등록 파일의 컬럼 매핑을 적용하고 자동 적재기로 검증·적재합니다(모든 행으로 타입 확정, 한국 범위 밖 좌표 제외, 대상 지역 경계 밖 좌표 제외). 컬럼 의미·제목·제공기관·라이선스는 추론하지 않고 등록 파일 값을 씁니다.
+- 질문 처리 중에는 `max_rows`(기본 10만 행) 이하만 받습니다. 더 크면 `DATA_ACQUISITION_FAILED`로 멈추고 `fetch-source`로 미리 받아 두라고 안내합니다.
+- 같은 출처를 두 요청이 동시에 받지 않도록 DB advisory lock을 겁니다. 받은 기록은 `data_acquisitions`에, 수집 시점은 결과의 한계("서울 열린데이터광장 OpenAPI(…)에서 날짜 수집")에 남습니다.
+- 계획·검증·실행은 실제로 적재한 메타데이터(건수·범위·타입)를 봅니다.
 
 #### ③ build_analysis_plan: 분석 계획 생성
 

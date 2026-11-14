@@ -38,7 +38,7 @@
 | 용어 | 뜻 |
 |---|---|
 | 워크플로 | 질문 하나를 처리하는 에이전트의 실행 흐름. LangGraph `StateGraph`로 만든 9단계 그래프다 |
-| 단계 (`WorkflowStep`) | 그래프의 노드. `interpret_query`, `select_datasets`, `build_analysis_plan`, `validate_plan`, `load_data`, `execute_operations`, `validate_result`, `create_map_layer`, `generate_explanation`. 오류 응답의 `step`과 화면의 단계 이름이 이 값을 쓴다 |
+| 단계 (`WorkflowStep`) | 그래프의 노드. `interpret_query`, `select_datasets`, `acquire_data`, `build_analysis_plan`, `validate_plan`, `load_data`, `execute_operations`, `validate_result`, `create_map_layer`, `generate_explanation`. 오류 응답의 `step`과 화면의 단계 이름이 이 값을 쓴다 |
 | `AgentState` | 실행 1회의 상태 전체 (질문, 해석, 후보, 계획 시도, 결과, 오류). 그래프의 상태이자 실행 기록의 형식이다 |
 | 실행 기록 (Provenance) | `analysis.run`에 저장하는 실행 1회의 기록. 성공·실패와 관계없이 남긴다 (개발 전달 문서 24번) |
 | `FinalResponse` | 성공한 분석의 응답. 요약, 지표, 순위, GeoJSON 지도, 방법·가정·한계를 담고 `analysis.result`에 저장한다 |

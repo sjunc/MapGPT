@@ -3,6 +3,7 @@ import type { WorkflowError } from "../types";
 const STEP_NAMES: Record<string, string> = {
   interpret_query: "질문 해석",
   select_datasets: "데이터 선택",
+  acquire_data: "데이터 수집",
   build_analysis_plan: "분석 계획 생성",
   validate_plan: "계획 검증",
   load_data: "데이터 조회",

@@ -283,21 +283,43 @@ class LoadedTable:
     notes: list[str]
 
 
+def profile_file(path: Path) -> CsvProfile:
+    """CSV 파일 하나의 프로파일 (인코딩·헤더·표본·표본 타입)."""
+    encoding, columns, rows = _sample(path)
+    return CsvProfile(
+        files=(path,),
+        encoding=encoding,
+        columns=columns,
+        samples=tuple(rows),
+        data_types=tuple(_infer_type(name, [row[i] for row in rows]) for i, name in enumerate(columns)),
+    )
+
+
 def load_table(
     conn: psycopg.Connection,
     profile: CsvProfile,
     table_name: str,
     *,
     code_sets: dict[SpatialLevel, set[str]] | None = None,
+    coordinates: tuple[str, str] | None = None,
+    region: RegionRef | None = None,
 ) -> LoadedTable:
     """profile의 파일을 datasets.<table_name>으로 교체 적재한다. 호출하는 쪽의 트랜잭션 안에서 실행한다.
 
-    code_sets가 있으면 행정구역 코드 컬럼을 찾아 unit_key로 정규화한다.
+    - code_sets가 있으면 행정구역 코드 컬럼을 찾아 unit_key로 정규화한다 (자동 발견).
+    - coordinates가 없으면 컬럼 이름과 값으로 위경도를 찾는다. 주면 그 컬럼을 쓴다 (등록 출처).
+    - region을 주면 그 시도 경계 밖에 떨어진 좌표는 위치를 만들지 않고, 범위는 그 시도로 둔다.
     """
     # 표본으로 추론한 타입은 미리보기용이다. 표본 뒤의 값 때문에 적재가 멈추지 않도록 모든 행으로 확정한다.
     profile = replace(profile, data_types=_scan_types(profile))
     mapping = _find_code_mapping(profile, code_sets) if code_sets else None
-    coordinates = _coordinate_columns(profile)
+    if coordinates is None:
+        coordinates = _coordinate_columns(profile)
+    else:
+        types = dict(zip(profile.columns, profile.data_types, strict=True))
+        not_numeric = [column for column in coordinates if types.get(column) not in _NUMERIC]
+        if not_numeric:
+            raise AutoCsvError(f"좌표 컬럼에 숫자가 아닌 값이 있습니다: {not_numeric}")
     loading = sql.Identifier("datasets", f"{table_name}__loading")
     table = sql.Identifier("datasets", table_name)
     definitions = [
@@ -352,6 +374,16 @@ def load_table(
                 "SELECT count(*) FROM {table} WHERE geom IS NULL AND {lon} IS NOT NULL AND {lat} IS NOT NULL"
             ).format(table=table, lon=longitude, lat=latitude)
         ).fetchone()[0]
+        if region is not None:
+            outside_region = conn.execute(
+                sql.SQL(
+                    "UPDATE {} t SET geom = NULL FROM datasets.sido_boundary s "
+                    "WHERE s.sido_cd = %s AND t.geom IS NOT NULL AND NOT ST_Intersects(s.geom, t.geom)"
+                ).format(table),
+                (region.code,),
+            ).rowcount
+            if outside_region:
+                notes.append(f"대상 지역({region.name}) 밖 좌표 {outside_region:,}건은 위치(geom)를 만들지 않음")
         if outside_korea:
             notes.append(f"한국 범위 밖 좌표 {outside_korea:,}건은 위치(geom)를 만들지 않음")
         located, *extent = conn.execute(
@@ -361,7 +393,10 @@ def load_table(
             ).format(table)
         ).fetchone()
         bbox = extent if located else None
-    coverage, coverage_notes = _coverage(conn, table, by_unit_key=mapping is not None, by_geom=bool(located))
+    if region is not None:
+        coverage, coverage_notes = region, []
+    else:
+        coverage, coverage_notes = _coverage(conn, table, by_unit_key=mapping is not None, by_geom=bool(located))
     return LoadedTable(profile, count, coordinates, mapping, located, bbox, coverage, [*coverage_notes, *notes])
 
 

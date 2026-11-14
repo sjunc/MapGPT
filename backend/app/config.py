@@ -25,6 +25,7 @@ class Settings(BaseSettings):
 
     seoul_open_api_key: SecretStr | None = None
     raw_data_dir: Path = PROJECT_ROOT / "data" / "raw"
+    sources_dir: Path = PROJECT_ROOT / "sources"  # 외부 출처 등록 파일 (*.yaml)
 
 
 @lru_cache

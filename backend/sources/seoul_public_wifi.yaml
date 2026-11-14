@@ -1,0 +1,28 @@
+# 서울 열린데이터광장 OA-20883 "서울시 공공와이파이 서비스 위치 정보" (서울 OpenAPI TbPublicWifiInfo)
+# 2026-11-14 확인: 26,283건, 좌표는 LAT/LNT(EPSG:4326). 서울 밖 좌표와 (0, 0) 같은 오류 좌표가 일부 있다.
+source_id: seoul_public_wifi
+title: 서울시 공공와이파이 위치
+description: >-
+  서울시와 자치구가 설치한 공공와이파이 AP(접속 장치)의 위치(점). 버스정류소·공원·공공시설 등 설치 장소마다
+  여러 AP가 있을 수 있다. 자치구·행정동별 공공와이파이 수를 세거나 설치 유형별로 비교할 때 사용한다.
+semantic_tags: [공공와이파이, 와이파이, WiFi, 무선인터넷, 통신 기반시설, 생활편의]
+provider: 서울특별시 (디지털도시국 정보통신과)
+source: https://data.seoul.go.kr/dataList/OA-20883/S/1/datasetView.do
+license: 공공누리 제1유형 (출처표시)
+connector: seoul_openapi
+service: TbPublicWifiInfo
+region: 서울특별시
+update_cycle: weekly
+columns:
+  - {source: X_SWIFI_MGR_NO, name: 관리번호, semantic: identifier, description: AP 관리번호}
+  - {source: X_SWIFI_WRDOFC, name: 자치구, semantic: sigungu_name, description: 설치 자치구 이름 (예 서대문구)}
+  - {source: X_SWIFI_MAIN_NM, name: 설치장소명, semantic: facility_name, description: 설치 장소 이름 (예 버스정류소_영천시장)}
+  - {source: X_SWIFI_ADRES1, name: 도로명, semantic: text, description: 설치 장소의 도로명 주소}
+  - {source: X_SWIFI_INSTL_TY, name: 설치유형, semantic: category, description: 설치 유형 (예 5-1. 버스정류소(국비))}
+  - {source: X_SWIFI_INSTL_MBY, name: 설치기관, semantic: category, description: 설치 주체와 통신망 구분}
+  - {source: X_SWIFI_SVC_SE, name: 서비스구분, semantic: category, description: 서비스 구분 (예 과기부WiFi)}
+  - {source: X_SWIFI_CMCWR, name: 망종류, semantic: category, description: 통신망 종류 (예 임대망)}
+  - {source: X_SWIFI_CNSTC_YEAR, name: 설치연도, semantic: date, description: 설치 연도 (예 2021)}
+  - {source: X_SWIFI_INOUT_DOOR, name: 실내외구분, semantic: category, description: 실내 또는 실외}
+  - {source: LAT, name: 위도, semantic: latitude, description: 위도 (EPSG:4326)}
+  - {source: LNT, name: 경도, semantic: longitude, description: 경도 (EPSG:4326)}

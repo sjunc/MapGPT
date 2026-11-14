@@ -11,6 +11,7 @@ from psycopg_pool import ConnectionPool
 
 from app.api.schemas import AnalysisRequest, AnalysisResponse
 from app.config import Settings, get_settings
+from app.data_sources.acquisition import DataAcquirer
 from app.domain.catalog import DatasetMetadata
 from app.llm.base import LLMError, StructuredLLM
 from app.llm.embeddings import Embedder, EmbeddingError
@@ -58,7 +59,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/analyses", response_model=AnalysisResponse)
     def create_analysis(body: AnalysisRequest, pool: Pool, llm: LLM, embedder: Embedding) -> AnalysisResponse:
         """질문을 분석 워크플로로 실행한다. 분석 실패도 run으로 기록되며 status=failed로 반환한다."""
-        state = AnalysisWorkflow(llm, pool, embedder).run(body.question)
+        acquirer = DataAcquirer.from_settings(settings, pool, embedder)
+        state = AnalysisWorkflow(llm, pool, embedder, acquirer).run(body.question)
         return AnalysisResponse(
             run_id=state.run_id, status=state.status, result=state.final_response, errors=state.errors
         )
