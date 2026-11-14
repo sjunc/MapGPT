@@ -1,17 +1,12 @@
 """어린이집 Adapter: 서울 열린데이터광장 OpenAPI ChildCareInfo."""
 
-import json
-import urllib.request
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
+from app.data_sources.seoul_openapi import fetch_service
+
 SERVICE = "ChildCareInfo"
-PAGE_SIZE = 1000  # 서울 OpenAPI 1회 최대 요청 건수
-
-
-class SeoulApiError(RuntimeError):
-    pass
 
 
 @dataclass(frozen=True)
@@ -28,26 +23,7 @@ class FacilityRecord:
 
 def fetch_rows(api_key: str, timeout: float = 30.0) -> list[dict[str, Any]]:
     """전체 원본 행을 페이지 단위로 수집한다. 인증키는 로그·예외 메시지에 남기지 않는다."""
-    rows: list[dict[str, Any]] = []
-    total: int | None = None
-    start = 1
-    while total is None or start <= total:
-        end = start + PAGE_SIZE - 1
-        url = f"http://openapi.seoul.go.kr:8088/{api_key}/json/{SERVICE}/{start}/{end}/"
-        with urllib.request.urlopen(url, timeout=timeout) as response:
-            payload = json.load(response)
-        body = payload.get(SERVICE)
-        if body is None:
-            result = payload.get("RESULT", {})
-            raise SeoulApiError(f"서울 OpenAPI 오류 {result.get('CODE')}: {result.get('MESSAGE')}")
-        if body["RESULT"]["CODE"] != "INFO-000":
-            raise SeoulApiError(f"서울 OpenAPI 오류 {body['RESULT']['CODE']}: {body['RESULT']['MESSAGE']}")
-        total = int(body["list_total_count"])
-        rows.extend(body["row"])
-        start = end + 1
-    if len(rows) != total:
-        raise SeoulApiError(f"수집 건수({len(rows)})가 전체 건수({total})와 다릅니다")
-    return rows
+    return fetch_service(api_key, SERVICE, timeout=timeout)
 
 
 def parse_facilities(rows: list[dict[str, Any]]) -> list[FacilityRecord]:
