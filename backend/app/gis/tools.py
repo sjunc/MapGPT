@@ -261,13 +261,21 @@ def aggregate_by_area(
     )
     values = dict(conn.execute(query, boundary_params + point_params).fetchall())
     assigned = sum(values.values())
+    # 위치(geom)가 없는 행은 경계 밖 점이 아니다. 왜 위치가 없는지는 적재할 때 품질 노트로 남긴다.
+    located = conn.execute(
+        sql.SQL("SELECT count(*) FROM {} WHERE ({}) AND {} IS NOT NULL").format(
+            view.table, point_where, sql.Identifier(geometry_column.name)
+        ),
+        point_params,
+    ).fetchone()[0]
     return MetricValues(
         name=name,
         values=values,
         stats={
             "input_points": view.row_count,
+            "points_without_location": view.row_count - located,
             "assigned_points": assigned,
-            "unassigned_points": view.row_count - assigned,
+            "unassigned_points": located - assigned,
         },
     )
 

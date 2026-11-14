@@ -41,7 +41,12 @@ def test_aggregate_by_area_assigns_each_point_once(conn, datasets):
     result = tools.aggregate_by_area(conn, points, boundary, "count", "daycare_count")
 
     assert result.values == EXPECTED["daycare_count"]
-    assert result.stats == {"input_points": len(POINTS), "assigned_points": len(POINTS) - 1, "unassigned_points": 1}
+    assert result.stats == {
+        "input_points": len(POINTS),
+        "points_without_location": 0,
+        "assigned_points": len(POINTS) - 1,
+        "unassigned_points": 1,
+    }
 
 
 def test_aggregate_sums_filtered_rows_per_group(conn, datasets):

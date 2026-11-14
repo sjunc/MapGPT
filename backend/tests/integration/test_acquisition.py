@@ -187,6 +187,10 @@ def test_pending_source_is_acquired_before_planning(pool, conn, boundary, tmp_pa
     assert f"[시험 시설 위치] 서울 열린데이터광장 OpenAPI(TestPoints)에서 {date.today()} 수집, 6행" in (
         state.final_response.limitations
     )
+    # 위치가 없는 2행(대상 지역 밖·한국 범위 밖)은 품질 노트로 이미 알리므로 '경계 밖 점'으로 세지 않는다.
+    stats = state.execution_results.operations[0].stats
+    assert (stats["points_without_location"], stats["unassigned_points"]) == (2, 0)
+    assert not any("경계 밖의 점" in note for note in state.final_response.limitations)
 
 
 def test_pending_source_without_an_acquirer_stops_with_a_clear_error(pool, conn, boundary):
