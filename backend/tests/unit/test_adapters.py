@@ -1,5 +1,3 @@
-import csv
-import io
 from datetime import date
 from pathlib import Path
 
@@ -7,7 +5,7 @@ import pytest
 
 from app.data_sources.adapters import admdongkor, mois_population, seoul_childcare
 from app.data_sources.ingest import IngestError, screen_facilities
-from tests.support import FIXTURES
+from tests.support import FIXTURES, population_csv
 
 
 def test_boundary_adapter_keeps_region_and_normalizes_codes():
@@ -30,35 +28,10 @@ def test_boundary_reference_date_comes_from_version():
     assert admdongkor.reference_date_from_name(Path("HangJeongDong_ver20260701.geojson")) == date(2026, 7, 1)
 
 
-def _population_csv(rows: list[dict[str, object]]) -> bytes:
-    ages = [f"{a}세" for a in range(110)] + ["110세이상 "]
-    header = ["행정기관코드", "기준연월", "시도명", "시군구명", "읍면동명", "계", "남자", "여자"]
-    header += [f"{a}남자" for a in ages] + [f"{a}여자" for a in ages]
-    buffer = io.StringIO()
-    writer = csv.writer(buffer)
-    writer.writerow(header)
-    for row in rows:
-        male, female = row["male"], row["female"]
-        total = row.get("total", sum(male.values()) + sum(female.values()))
-        values = [
-            row["code"],
-            "2026-09-30",
-            "서울특별시",
-            "가가구",
-            "가동",
-            total,
-            sum(male.values()),
-            sum(female.values()),
-        ]
-        values += [male.get(a, 0) for a in range(111)] + [female.get(a, 0) for a in range(111)]
-        writer.writerow(values)
-    return buffer.getvalue().encode("cp949")
-
-
 def test_population_adapter_melts_wide_csv_and_sums_sexes(tmp_path):
     path = tmp_path / "pop.csv"
     path.write_bytes(
-        _population_csv(
+        population_csv(
             [
                 {"code": "1111000100", "male": {0: 3, 5: 1, 110: 2}, "female": {0: 4, 6: 7}},
                 {"code": "2611000100", "male": {0: 9}, "female": {}},
@@ -78,7 +51,7 @@ def test_population_adapter_melts_wide_csv_and_sums_sexes(tmp_path):
 def test_population_adapter_reads_all_regions_by_default(tmp_path):
     path = tmp_path / "pop.csv"
     path.write_bytes(
-        _population_csv(
+        population_csv(
             [
                 {"code": "1111000100", "male": {0: 3}, "female": {0: 4}},
                 {"code": "2711000100", "male": {0: 5}, "female": {0: 6}},
@@ -93,7 +66,7 @@ def test_population_adapter_reads_all_regions_by_default(tmp_path):
 
 def test_population_adapter_rejects_inconsistent_totals(tmp_path):
     path = tmp_path / "pop.csv"
-    path.write_bytes(_population_csv([{"code": "1111000100", "male": {0: 3}, "female": {}, "total": 4}]))
+    path.write_bytes(population_csv([{"code": "1111000100", "male": {0: 3}, "female": {}, "total": 4}]))
 
     with pytest.raises(ValueError, match="계"):
         mois_population.read_population(path, sido_code="11")
