@@ -6,7 +6,7 @@ DB 없이 Dataset 메타데이터만으로 판정한다. 오류가 하나라도 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from app.domain.catalog import DatasetMetadata
+from app.domain.catalog import DatasetMetadata, RegionRef
 from app.domain.enums import AggregationFunction, DataType, GeometryType, Severity
 from app.domain.operations import (
     AggregateByAreaOperation,
@@ -30,10 +30,18 @@ class _Metric:
 
 
 class _PlanChecker:
-    def __init__(self, plan: AnalysisPlan, datasets: Mapping[str, DatasetMetadata], selected: Sequence[str]):
+    def __init__(
+        self,
+        plan: AnalysisPlan,
+        datasets: Mapping[str, DatasetMetadata],
+        selected: Sequence[str],
+        region: RegionRef | None = None,
+    ):
         self.plan = plan
         self.datasets = datasets
         self.selected = set(selected)
+        # 확정된 지역은 행정코드가 있어 상위 범위 Dataset(예: 서울)에 포함되는지 판단할 수 있다.
+        self.region = region if region is not None else plan.region
         self.issues: list[ValidationIssue] = []
         self.metrics: dict[str, _Metric] = {}
         self.unit_boundary: DatasetMetadata | None = None
@@ -72,7 +80,7 @@ class _PlanChecker:
                 self.error("DATASET_NOT_SELECTED", f"'{dataset_id}'는 선택 단계에서 고른 Dataset이 아닙니다", path)
             metadata = self.datasets[dataset_id]
             coverage = metadata.spatial.coverage
-            if resolve_region(self.plan.region, coverage) is None:
+            if resolve_region(self.region, coverage) is None:
                 where = f"'{coverage.name}'({coverage.level})" if coverage else "지정되지 않은 지역"
                 self.error(
                     "REGION_NOT_COVERED",
@@ -281,6 +289,10 @@ class _PlanChecker:
 
 
 def validate_plan(
-    plan: AnalysisPlan, datasets: Mapping[str, DatasetMetadata], selected: Sequence[str]
+    plan: AnalysisPlan,
+    datasets: Mapping[str, DatasetMetadata],
+    selected: Sequence[str],
+    region: RegionRef | None = None,
 ) -> ValidationReport:
-    return ValidationReport(issues=_PlanChecker(plan, datasets, selected).run())
+    """region은 해석 단계에서 확정한 분석 지역(행정코드 포함)이다. 없으면 계획의 지역 이름으로 판단한다."""
+    return ValidationReport(issues=_PlanChecker(plan, datasets, selected, region).run())

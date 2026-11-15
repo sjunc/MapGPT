@@ -169,7 +169,7 @@ def _interpret_query(state: AgentState, ctx: _RunContext, update: Update) -> Non
     update["interpreted_query"] = interpreted
     update["resolved_region"] = region
     # 경계 데이터가 없는 단위는 계획을 만들어도 검증에서 실패하므로 LLM을 더 부르기 전에 끝낸다.
-    units = analysis_units(datasets, interpreted.region)
+    units = analysis_units(datasets, region)
     # 질문이 단위를 말하지 않았을 때만 가장 세밀한 단위로 정한다. 말했는지는 표현이 다양해 LLM이 판단한다.
     if units and not interpreted.analysis_unit_specified:
         interpreted = interpreted.model_copy(update={"analysis_unit": units[-1]})
@@ -212,7 +212,7 @@ def _select_datasets(state: AgentState, ctx: _RunContext, update: Update) -> Non
         for dataset in candidates
         if dataset.is_polygon
         and dataset.spatial.level == interpreted.analysis_unit
-        and resolve_region(interpreted.region, dataset.spatial.coverage)
+        and resolve_region(state.resolved_region, dataset.spatial.coverage)
     ]
     if compatible_boundaries:
         selected = [dataset_id for dataset_id in selected if dataset_id not in boundary_ids]
@@ -276,12 +276,14 @@ def _build_analysis_plan(state: AgentState, ctx: _RunContext, update: Update) ->
 
 
 def _validate_plan(state: AgentState, ctx: _RunContext, update: Update) -> None:
-    report = validate_plan(state.analysis_plan, _candidates(state), state.selected_datasets)
+    report = validate_plan(state.analysis_plan, _candidates(state), state.selected_datasets, state.resolved_region)
     report.issues.extend(_consistency_issues(state.interpreted_query, state.analysis_plan))
     if not report.ok and len(state.plan_history) + 1 >= MAX_PLAN_ATTEMPTS:
         fallback = _fallback_regional_summary_plan(state, _candidates(state))
         if fallback is not None:
-            fallback_report = validate_plan(fallback, _candidates(state), state.selected_datasets)
+            fallback_report = validate_plan(
+                fallback, _candidates(state), state.selected_datasets, state.resolved_region
+            )
             fallback_report.issues.extend(_consistency_issues(state.interpreted_query, fallback))
             if fallback_report.ok:
                 fallback_interpretation = state.interpreted_query.model_copy(

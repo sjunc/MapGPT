@@ -52,11 +52,30 @@ def unit_boundary_candidates(plan: AnalysisPlan, datasets: Mapping[str, DatasetM
     ]
 
 
+_LEVEL_ORDER = {SpatialLevel.COUNTRY: 0, SpatialLevel.SIDO: 1, SpatialLevel.SIGUNGU: 2, SpatialLevel.EMD: 3}
+
+
+def contains_region(outer: RegionRef, inner: Region | RegionRef) -> bool:
+    """outer가 inner를 포함하는 더 넓은 지역인지. 전국은 모든 하위 지역을 포함한다.
+
+    행안부 계층 코드라 하위 지역 코드는 상위 지역 코드로 시작한다 (강남구 11680 ⊂ 서울 11).
+    코드를 모르는 지역(LLM이 쓴 이름만 있는 Region)은 전국 범위일 때만 포함으로 본다.
+    """
+    if _LEVEL_ORDER[inner.level] <= _LEVEL_ORDER[outer.level]:
+        return False
+    if outer.level == SpatialLevel.COUNTRY:
+        return True
+    code = getattr(inner, "code", "")
+    return bool(code) and code.startswith(outer.code)
+
+
 def resolve_region(region: Region | RegionRef, coverage: RegionRef | None) -> RegionRef | None:
-    """Dataset 범위가 전국이면 그 아래 시도·시군구 지역도 포함한다."""
-    if coverage is not None and coverage.name == region.name and coverage.level == region.level:
+    """Dataset 범위가 분석 지역과 같거나 분석 지역을 포함하면 분석에 쓸 지역을 돌려준다."""
+    if coverage is None:
+        return None
+    if coverage.name == region.name and coverage.level == region.level:
         return coverage
-    if coverage is not None and coverage.level == SpatialLevel.COUNTRY:
+    if contains_region(coverage, region):
         return RegionRef(name=region.name, level=region.level, code=getattr(region, "code", ""))
     return None
 
@@ -94,18 +113,12 @@ def _compact(name: str) -> str:
 
 def analysis_units(datasets: Iterable[DatasetMetadata], region: Region | RegionRef) -> list[SpatialLevel]:
     """region을 범위로 가진 Polygon 경계 Dataset이 있어 분석 단위로 쓸 수 있는 공간 단위."""
-    order = {
-        SpatialLevel.COUNTRY: 0,
-        SpatialLevel.SIDO: 1,
-        SpatialLevel.SIGUNGU: 2,
-        SpatialLevel.EMD: 3,
-    }
     levels = {
         d.spatial.level
         for d in datasets
         if d.is_polygon
         and d.spatial.level is not None
-        and order[d.spatial.level] >= order[region.level]
+        and _LEVEL_ORDER[d.spatial.level] >= _LEVEL_ORDER[region.level]
         and resolve_region(region, d.spatial.coverage)
     }
     return [level for level in SpatialLevel if level in levels]

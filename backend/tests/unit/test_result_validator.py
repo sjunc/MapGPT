@@ -1,4 +1,5 @@
 from app.catalog.definitions import NATIONAL_EMD_BOUNDARY, SEOUL, TRUSTED_DATASETS
+from app.domain.catalog import RegionRef
 from app.domain.enums import SpatialLevel
 from app.domain.results import BoundaryStats, ExecutionResult, OperationLog, UnitRow
 from app.validation.result_validator import validate_result
@@ -137,3 +138,11 @@ def test_unmatched_keys_outside_the_analysis_region_are_not_reported():
 
     assert warning.code == "UNMATCHED_KEYS"
     assert "코드 1개" in warning.message and "2611000100" not in warning.message
+
+
+def test_points_outside_a_sub_region_are_expected_when_the_dataset_covers_more():
+    # 서울 범위 어린이집으로 가가구를 분석하면 다른 구의 점은 빠지는 것이 정상이다.
+    region = RegionRef(name="서울특별시 가가구", level=SpatialLevel.SIGUNGU, code="11110")
+    result = _result([_row(i) for i in range(10)], unassigned=4).model_copy(update={"region": region})
+
+    assert "UNASSIGNED_POINTS" not in _codes(result)[1]

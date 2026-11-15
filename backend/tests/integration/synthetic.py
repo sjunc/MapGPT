@@ -116,12 +116,14 @@ def _square(minx: float, miny: float, maxx: float, maxy: float) -> str:
     return f"MULTIPOLYGON((({minx} {miny},{maxx} {miny},{maxx} {maxy},{minx} {maxy},{minx} {miny})))"
 
 
-def load_synthetic(conn: psycopg.Connection) -> dict:
+def load_synthetic(conn: psycopg.Connection, boundary: bool = True) -> dict:
+    """합성 데이터를 넣는다. boundary=False면 행정동 경계는 넣지 않는다 (전국 경계로 따로 적재할 때)."""
     with conn.cursor() as cur:
-        cur.executemany(
-            "INSERT INTO datasets.emd_boundary VALUES (%s, %s, %s, %s, %s, %s, ST_GeomFromText(%s, 4326))",
-            [(*unit[:6], _square(*unit[6])) for unit in UNITS],
-        )
+        if boundary:
+            cur.executemany(
+                "INSERT INTO datasets.emd_boundary VALUES (%s, %s, %s, %s, %s, %s, ST_GeomFromText(%s, 4326))",
+                [(*unit[:6], _square(*unit[6])) for unit in UNITS],
+            )
         cur.executemany(
             "INSERT INTO datasets.daycare_facility VALUES (%s, %s, '민간', %s, %s, ST_SetSRID(ST_MakePoint(%s, %s), 4326))",
             [(pid, f"시설 {pid}", lat, lon, lon, lat) for pid, lon, lat in POINTS],

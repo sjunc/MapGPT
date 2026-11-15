@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from app.domain.catalog import DatasetMetadata
 from app.domain.enums import AggregationFunction, SemanticType, Severity, SpatialLevel
 from app.domain.operations import AggregateByAreaOperation, AggregateOperation, CalculateRatioOperation
-from app.domain.plan import AnalysisPlan
+from app.domain.plan import AnalysisPlan, contains_region
 from app.domain.results import ExecutionResult, ValidationIssue, ValidationReport
 
 MAX_NULL_RATE = 0.2  # output metric의 null 비율이 이를 넘으면 결합 실패로 본다
@@ -99,7 +99,7 @@ def validate_result(
     expected_units = unit_metadata.spatial.feature_count if exact_coverage else None
     if expected_units is None:
         reason = (
-            "하위 지역 분석이라 전국 객체 수를 비교할 수 없어"
+            "하위 지역 분석이라 Dataset 전체 객체 수와 비교할 수 없어"
             if coverage and not exact_coverage
             else "예상 단위 수 정보가 없어"
         )
@@ -121,8 +121,14 @@ def validate_result(
             )
     for log in result.operations:
         unassigned = log.stats.get("unassigned_points", 0)
-        if unassigned:
-            warning("UNASSIGNED_POINTS", f"'{log.output}': 분석 지역 경계 밖의 점 {unassigned}개는 집계에서 제외")
+        if not unassigned:
+            continue
+        # 점 데이터 범위가 분석 지역보다 넓으면(예: 서울 어린이집으로 강남구 분석) 지역 밖 점은 빠지는 것이 정상이다.
+        op = plan.operations[log.index]
+        source = datasets.get(op.input) if isinstance(op, AggregateByAreaOperation) else None
+        if source is not None and source.spatial.coverage and contains_region(source.spatial.coverage, result.region):
+            continue
+        warning("UNASSIGNED_POINTS", f"'{log.output}': 분석 지역 경계 밖의 점 {unassigned}개는 집계에서 제외")
 
     return ValidationReport(issues=issues)
 

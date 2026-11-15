@@ -4,7 +4,7 @@ from datetime import date
 import pytest
 
 from app.catalog.catalog import sync_catalog_embeddings
-from app.catalog.definitions import POPULATION_BY_AGE
+from app.catalog.definitions import DAYCARE_FACILITY, POPULATION_BY_AGE
 from app.data_sources.ingest import ingest_boundary
 from app.domain.enums import RunStatus, WorkflowStep
 from app.domain.policies import AUTO_DATASET_LIMITATIONS
@@ -16,6 +16,7 @@ from app.repositories.catalog_repository import upsert_dataset
 from app.repositories.run_repository import get_run
 from app.workflows.analysis_workflow import AnalysisWorkflow
 from tests.fakes import FakeEmbedder, daycare_llm, interpreted
+from tests.integration.synthetic import UNITS, load_synthetic
 from tests.support import QUESTION, load_plan, load_plan_dict
 
 pytestmark = pytest.mark.integration
@@ -485,3 +486,35 @@ def test_auto_discovered_dataset_limitations_appear_when_one_is_used(pool, catal
 
     assert state.status == RunStatus.SUCCEEDED, state.errors
     assert set(AUTO_DATASET_LIMITATIONS) <= set(state.final_response.limitations)
+
+
+@pytest.fixture
+def sigungu_catalog(conn, tmp_path):
+    """합성 단위를 전국 경계로 적재하고 서울 범위 어린이집·인구를 넣는다 (시군구를 분석 지역으로 잡는 질문용)."""
+    _ingest_units(conn, tmp_path, UNITS)
+    load_synthetic(conn, boundary=False)
+    # 서울 범위 Dataset으로 하위 지역을 분석하는지 보려고, 전국 범위 행정동 경계는 후보에서 뺀다.
+    conn.execute("DELETE FROM catalog.dataset WHERE dataset_id = 'national_emd_boundary'")
+    for dataset, reference_date in ((POPULATION_BY_AGE, date(2026, 9, 30)), (DAYCARE_FACILITY, date(2026, 10, 7))):
+        temporal = dataset.temporal.model_copy(update={"reference_date": reference_date})
+        upsert_dataset(conn, dataset.model_copy(update={"temporal": temporal}))
+    conn.commit()
+    sync_catalog_embeddings(conn, FakeEmbedder())
+
+
+def test_sub_region_uses_seoul_datasets_that_cover_it(pool, sigungu_catalog):
+    # 가가구(11110)는 서울(11) 범위의 행정동 경계·어린이집 안에 있다.
+    region = Region(name="서울특별시 가가구", level="sigungu")
+    llm = daycare_llm(
+        interpreted=[interpreted().model_copy(update={"region": region})],
+        plans=[load_plan(region=region.model_dump(mode="json"))],
+    )
+
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("서울 가가구에서 어린이 인구 대비 어린이집이 부족한 행정동")
+
+    assert state.status == RunStatus.SUCCEEDED, state.errors
+    assert state.resolved_region.code == "11110"
+    ranking = [(item.rank, item.unit_name) for item in state.final_response.ranking]
+    assert ranking == [(1, "아동"), (2, "사동"), (3, "자동"), (4, "가동")]
+    # 서울 범위 어린이집으로 가가구를 분석하면 다른 구의 점은 빠지는 것이 정상이라 경고하지 않는다.
+    assert not any("경계 밖의 점" in note for note in state.final_response.limitations)

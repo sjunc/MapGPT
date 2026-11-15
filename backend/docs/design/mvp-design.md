@@ -754,7 +754,7 @@ Validation(5)을 LLM 연동(6)보다 먼저 한다. LLM 출력은 처음부터 �
 
 ## 부록 C. 이번 범위에서 하지 않는 것
 
-전달 문서 30번 목록을 따른다(Vector DB, Dynamic Discovery, Multi-Agent, MCP, OGC API, Sedona, Raster, Routing, Isochrone, 입지 최적화, Knowledge Graph, 임의 코드/SQL 실행, Plugin System). 단, pgvector Dataset 후보 검색은 사용자 요청으로 구현했다(부록 D). 그 밖에 다음도 하지 않는다: 비동기 Job 큐, 마이그레이션 도구(Alembic), 인증, Vector Tile, 지역 계층(시군구 단위 질의) 해석.
+전달 문서 30번 목록을 따른다(Vector DB, Dynamic Discovery, Multi-Agent, MCP, OGC API, Sedona, Raster, Routing, Isochrone, 입지 최적화, Knowledge Graph, 임의 코드/SQL 실행, Plugin System). 단, pgvector Dataset 후보 검색은 사용자 요청으로 구현했다(부록 D). 그 밖에 다음도 하지 않는다: 비동기 Job 큐, 마이그레이션 도구(Alembic), 인증, Vector Tile, 행정동을 분석 지역으로 잡는 질의(시군구까지는 지원, 부록 D).
 
 ## 부록 D. 구현 중 변경·보완 사항
 
@@ -800,3 +800,4 @@ Validation(5)을 LLM 연동(6)보다 먼저 한다. LLM 출력은 처음부터 �
 | 인구·경계 불일치 노트 (2026-11-14) | 인구 적재 시 전국 경계에 없는 행정동 코드 수·인구를 품질 노트로 기록 | 경계(2026-07-01판)와 인구(2026-09-30) 기준 시점 차이로 62개 행정동(약 26만 명)이 경고 없이 분석에서 빠졌음 |
 | 자동 Dataset 한계 문구 (2026-11-14) | 자동 발견 Dataset 한계를 `regional_summary` 정책이 아니라 그 Dataset을 쓴 분석에만 붙임 | 기존 Dataset만 쓴 지역 통계에도 자동 발견 한계가 표시됐음 |
 | 등록 출처 수집 (2026-11-14) | 출처 등록 파일(`backend/sources/*.yaml`, PyYAML `safe_load` + Pydantic 검증)로 승인한 서울 OpenAPI 출처를 카탈로그에 "받기 전" 항목으로 올리고, 선택되면 `acquire_data` 단계가 계획 전에 받아 적재. 등록 출처는 `public_api` 분류이고 컬럼 의미는 등록 파일 값을 쓰며, 대상 지역 밖 좌표는 위치를 만들지 않음. 질문 처리 중 한도 10만 행, 다시 받는 주기 기본 30일, 원본 사본 재사용, 동시 수집은 advisory lock | DB에 없는 데이터를 공공 API로 받아 답하려는 요구. 전달 문서 36번(검증 없이 쓰지 않음)과 데이터 전달 문서 5.3의 선언 파일·신뢰 단계를 따르되, 서울 일반 인증키 하나로 모든 일반 OpenAPI를 부를 수 있어 서울부터 시작. YAML은 데이터 전달 문서의 선언 파일 예시와 같고 데이터 쪽에서 가장 흔한 형식 |
+| 하위 지역 분석 (2026-11-14) | Dataset 범위가 분석 지역을 포함하면(행정안전부 계층 코드 앞자리로 판단: 강남구 11680 ⊂ 서울 11) 그 Dataset을 쓴다. 해석에서 확정한 지역(`resolved_region`)을 분석 단위 계산·경계 보정·계획 검증·실행 준비에 넘기고, 범위가 더 넓은 점 데이터의 지역 밖 점은 `UNASSIGNED_POINTS`로 알리지 않는다 | 서울 범위 Dataset(어린이집·공공와이파이)으로 "서울특별시 강남구" 같은 시군구 지역을 분석하면 `REGION_NOT_COVERED`로 멈췄음. 코드를 모르는 이름만으로는 판단하지 않아 서울 데이터를 서울 밖에 쓰는 일은 계속 막힌다 |

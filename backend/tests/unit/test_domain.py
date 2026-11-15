@@ -10,11 +10,11 @@ from app.domain.operations import (
     CalculateRatioOperation,
     RankOperation,
 )
-from app.catalog.definitions import SEOUL, TRUSTED_DATASETS
+from app.catalog.definitions import KOREA, SEOUL, TRUSTED_DATASETS
 from app.agents.prompts import interpret_prompt
 from app.domain.enums import SpatialLevel
 from app.domain.catalog import RegionRef
-from app.domain.plan import AnalysisPlan, DatasetFilter, Region, analysis_units, match_regions
+from app.domain.plan import AnalysisPlan, DatasetFilter, Region, analysis_units, match_regions, resolve_region
 from app.domain.state import DatasetSelection, Explanation, InterpretedQuery
 from app.llm.schema import to_llm_json_schema
 from tests.support import load_plan, load_plan_dict
@@ -208,3 +208,26 @@ def test_interpretation_reports_whether_the_question_named_a_unit():
 
     assert "analysis_unit_specified" in system
     assert "analysis_unit_specified" in to_llm_json_schema(InterpretedQuery)["required"]
+
+
+GANGNAM = RegionRef(name="서울특별시 강남구", level=SpatialLevel.SIGUNGU, code="11680")
+
+
+@pytest.mark.parametrize(
+    ("region", "coverage", "covered"),
+    [
+        (SEOUL, SEOUL, True),
+        (GANGNAM, SEOUL, True),  # 강남구(11680)는 서울(11) 안
+        (RegionRef(name="역삼1동", level=SpatialLevel.EMD, code="1168064000"), GANGNAM, True),
+        (GANGNAM, KOREA, True),
+        (RegionRef(name="부산광역시 중구", level=SpatialLevel.SIGUNGU, code="26110"), SEOUL, False),
+        (SEOUL, GANGNAM, False),  # 넓은 지역은 좁은 범위에 들지 않는다
+        (Region(name="서울특별시 강남구", level="sigungu"), SEOUL, False),  # 코드를 모르면 같은 지역일 때만
+    ],
+)
+def test_resolve_region_accepts_regions_inside_the_dataset_coverage(region, coverage, covered):
+    resolved = resolve_region(region, coverage)
+
+    assert (resolved is not None) is covered
+    if covered and region != coverage:
+        assert (resolved.name, resolved.code) == (region.name, region.code)

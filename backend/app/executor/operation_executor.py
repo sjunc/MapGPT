@@ -71,7 +71,7 @@ def prepare_context(
             "UNIT_BOUNDARY_MISSING", f"분석 단위 '{plan.analysis_unit}'의 경계 Dataset을 정할 수 없습니다"
         )
     unit_metadata = candidates[0]
-    if resolve_region(plan.region, unit_metadata.spatial.coverage) is None:
+    if resolve_region(region, unit_metadata.spatial.coverage) is None:
         raise GisToolError("REGION_NOT_COVERED", f"'{plan.region.name}'은 '{unit_metadata.dataset_id}' 범위가 아닙니다")
 
     boundary = tools.get_boundary(conn, unit_metadata, region)
