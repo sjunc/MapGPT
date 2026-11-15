@@ -13,10 +13,14 @@ const STEP_NAMES: Record<string, string> = {
   generate_explanation: "결과 설명",
 };
 
+// 데이터가 없다는 답 (필요한 데이터가 등록되지 않았거나, 조건·지역에 맞는 데이터가 없음). 분석 실패와 구분해 보여 준다.
+const NO_DATA_CODES = new Set(["DATA_NOT_AVAILABLE", "NO_MATCHING_DATA"]);
+
 export function ErrorPanel({ errors, runId }: { errors: WorkflowError[]; runId?: string }) {
+  const noData = errors.some((error) => NO_DATA_CODES.has(error.code));
   return (
     <section className="card error" role="alert">
-      <h2>분석을 완료하지 못했습니다</h2>
+      <h2>{noData ? "데이터가 없습니다" : "분석을 완료하지 못했습니다"}</h2>
       {errors.map((error) => (
         <div key={error.code + error.message}>
           <p>

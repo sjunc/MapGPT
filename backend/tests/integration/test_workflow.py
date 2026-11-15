@@ -446,6 +446,26 @@ def test_result_validation_failure_blocks_map_and_explanation(pool, catalog, con
     assert state.map_layer is None and state.final_response is None
 
 
+def test_condition_without_matching_data_says_so_with_actual_values(pool, catalog):
+    # 합성 어린이집은 모두 민간이다. 없는 유형을 물으면 실패가 아니라 '없다'고 답하고, 조건을 고칠 수 있게 실제 값을 보여 준다.
+    data = load_plan_dict()
+    data["filters"].append(
+        {"dataset": "daycare_facility", "where": {"field": "facility_type", "operator": "eq", "value": "협동"}}
+    )
+    llm = daycare_llm(plans=[AnalysisPlan.model_validate(data)])
+
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run(
+        "서울에서 어린이 인구 대비 협동 어린이집이 부족한 행정동을 알려줘."
+    )
+
+    assert state.status == RunStatus.FAILED
+    [error] = state.errors
+    assert (error.step, error.code) == (WorkflowStep.LOAD_DATA, "NO_MATCHING_DATA")
+    assert error.message == (
+        "'facility_type = 협동' 조건에 맞는 '서울특별시 어린이집 위치' 데이터가 없습니다. 'facility_type'의 실제 값: 민간"
+    )
+
+
 # 시군구 이름이 겹치는 두 시도(서울·부산 '중구')의 전국 경계: (adm_cd, 행정동, 시도, 시도명, 시군구, 시군구명, 범위)
 NATIONAL_UNITS = [
     ("1114052000", "을지로동", "11", "서울특별시", "11140", "중구", (126.9, 37.5, 127.0, 37.6)),
@@ -702,3 +722,33 @@ def test_sub_region_uses_seoul_datasets_that_cover_it(pool, sigungu_catalog):
     assert ranking == [(1, "아동"), (2, "사동"), (3, "자동"), (4, "가동")]
     # 서울 범위 어린이집으로 가가구를 분석하면 다른 구의 점은 빠지는 것이 정상이라 경고하지 않는다.
     assert not any("경계 밖의 점" in note for note in state.final_response.limitations)
+
+
+def test_region_without_matching_facilities_says_no_data(pool, sigungu_catalog, conn):
+    # 직장 어린이집은 나나구 라동에만 있다. 가가구를 물으면 모든 행정동이 0이므로 비교할 수 없다는 오류 대신 '없다'고 답한다.
+    conn.execute("UPDATE datasets.daycare_facility SET facility_type = '직장' WHERE facility_id = 'e1'")
+    conn.commit()
+    region = Region(name="서울특별시 가가구", level="sigungu")
+    data = load_plan_dict()
+    data["region"] = region.model_dump(mode="json")
+    data["filters"].append(
+        {"dataset": "daycare_facility", "where": {"field": "facility_type", "operator": "eq", "value": "직장"}}
+    )
+    llm = daycare_llm(
+        interpreted=[interpreted().model_copy(update={"region": region})],
+        plans=[AnalysisPlan.model_validate(data)],
+    )
+
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run(
+        "서울 가가구에서 어린이 인구 대비 직장 어린이집이 부족한 행정동"
+    )
+
+    [error] = state.errors
+    assert (error.step, error.code) == (WorkflowStep.VALIDATE_RESULT, "NO_MATCHING_DATA")
+    # 나동은 어린이가 0명이라 값이 없고(분모 0), 나머지 4개 행정동이 모두 0이다.
+    assert error.message == (
+        "'서울특별시 가가구'의 행정동 4개 모두 '0~5세 어린이 1,000명당 어린이집 수' 값이 0입니다. "
+        "이 지역에는 조건에 맞는 데이터가 없습니다"
+    )
+    assert error.issues == []  # 같은 문구를 issues에 다시 싣지 않는다
+    assert state.map_layer is None and state.final_response is None

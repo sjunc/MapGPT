@@ -521,6 +521,11 @@ def _execute_operations(state: AgentState, ctx: _RunContext, update: Update) -> 
 def _validate_result(state: AgentState, ctx: _RunContext, update: Update) -> None:
     report = validate_result(state.execution_results, state.analysis_plan, _candidates(state))
     update["result_validation"] = report
+    no_data = next((issue for issue in report.errors if issue.code == "NO_MATCHING_DATA"), None)
+    if no_data is not None:
+        # 실패가 아니라 '없다'는 답이므로 결과 검증 실패 대신 데이터 없음으로 알린다 (같은 문구를 두 번 싣지 않는다).
+        others = [issue for issue in report.errors if issue is not no_data]
+        raise WorkflowFailure("NO_MATCHING_DATA", no_data.message, others)
     if not report.ok:
         raise WorkflowFailure("RESULT_INVALID", "분석 결과가 검증을 통과하지 못했습니다", report.errors)
 

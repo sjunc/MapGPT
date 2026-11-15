@@ -111,6 +111,19 @@ def test_constant_metric_fails():
     assert "'0~5세 어린이 1,000명당 어린이집 수' 값이 모두 10입니다" in issue.message
 
 
+def test_all_zero_metric_means_no_matching_data():
+    # 예: 직장 어린이집이 없는 구. 계획 실수가 아니라 그 지역에 조건에 맞는 데이터가 없다는 답이다.
+    result = _result([_row(i, count=0) for i in range(10)])
+
+    [issue] = validate_result(result, PLAN, _datasets()).errors
+
+    assert issue.code == "NO_MATCHING_DATA"
+    assert issue.message == (
+        "'서울특별시'의 행정동 10개 모두 '0~5세 어린이 1,000명당 어린이집 수' 값이 0입니다. "
+        "이 지역에는 조건에 맞는 데이터가 없습니다"
+    )
+
+
 def test_single_unit_is_not_a_constant_metric():
     assert _codes(_result([_row(0)]), datasets=_datasets(feature_count=None)) == ([], ["UNIT_COUNT_CHECK_SKIPPED"])
 

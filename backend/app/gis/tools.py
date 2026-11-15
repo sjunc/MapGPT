@@ -23,12 +23,13 @@ from app.domain.enums import (
     SortOrder,
     SpatialLevel,
 )
-from app.domain.filters import FilterCondition, FilterExpression
+from app.domain.filters import FilterCondition, FilterExpression, describe_filter, iter_conditions
 from app.domain.results import Classification, MapLayer, MetricValue, UnitRow
 from app.gis.crs import MAP_OUTPUT_SRID, CrsError, parse_srid, transform_crs
 from app.gis.filter_sql import FilterCompileError, compile_filter
 
 QUANTILE_CLASSES = 5
+_VALUE_EXAMPLES = 20  # 조건에 맞는 데이터가 없을 때 보여 줄 실제 값 수
 _REGION_CODE_COLUMN = {SpatialLevel.SIDO: SemanticType.SIDO_CODE, SpatialLevel.SIGUNGU: SemanticType.SIGUNGU_CODE}
 _SQL_AGGREGATES = {
     AggregationFunction.COUNT: "count",
@@ -117,8 +118,29 @@ def filter_dataset(conn: psycopg.Connection, view: DatasetView, expression: Filt
     filtered = replace(view, filter=expression)
     count = _count(conn, filtered)
     if count == 0:
-        raise GisToolError("FILTER_EMPTY_RESULT", f"'{view.metadata.dataset_id}' 필터 결과가 비어 있습니다")
+        raise GisToolError("NO_MATCHING_DATA", _no_matching_data(conn, view, expression))
     return replace(filtered, row_count=count)
+
+
+def _no_matching_data(conn: psycopg.Connection, view: DatasetView, expression: FilterExpression) -> str:
+    """조건에 맞는 행이 없다는 안내. 조건이 틀렸는지 알 수 있게 문자열 컬럼의 실제 값을 함께 보여 준다."""
+    message = f"'{describe_filter(expression)}' 조건에 맞는 '{view.metadata.title}' 데이터가 없습니다."
+    for field_name in dict.fromkeys(condition.field for condition in iter_conditions(expression)):
+        column = view.metadata.column(field_name)
+        if column is None or column.data_type != DataType.STRING:
+            continue
+        rows = conn.execute(
+            # DB 기본 정렬 규칙은 한글 순서가 뒤섞일 수 있어 바이트 순(한글 음절은 가나다순)으로 정렬한다.
+            sql.SQL(
+                'SELECT DISTINCT {column} COLLATE "C" FROM {table} WHERE {column} IS NOT NULL ORDER BY 1 LIMIT %s'
+            ).format(column=sql.Identifier(field_name), table=view.table),
+            (_VALUE_EXAMPLES + 1,),
+        ).fetchall()
+        values = [str(row[0]) for row in rows]
+        if values:
+            listed = ", ".join(values[:_VALUE_EXAMPLES]) + (" 등" if len(values) > _VALUE_EXAMPLES else "")
+            message += f" '{field_name}'의 실제 값: {listed}"
+    return message
 
 
 def get_boundary(conn: psycopg.Connection, metadata: DatasetMetadata, region: RegionRef) -> BoundaryView:

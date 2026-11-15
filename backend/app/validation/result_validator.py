@@ -4,7 +4,7 @@ import math
 from collections.abc import Mapping
 
 from app.domain.catalog import DatasetMetadata
-from app.domain.enums import AggregationFunction, SemanticType, Severity, SpatialLevel
+from app.domain.enums import SPATIAL_LEVEL_NAMES, AggregationFunction, SemanticType, Severity, SpatialLevel
 from app.domain.operations import AggregateByAreaOperation, AggregateOperation, CalculateRatioOperation
 from app.domain.plan import AnalysisPlan, contains_region
 from app.domain.results import ExecutionResult, ValidationIssue, ValidationReport
@@ -87,7 +87,15 @@ def validate_result(
 
     # 모든 단위의 값이 같으면(예: 경계 행을 세어 전부 1) 비교·순위가 의미 없고, 질문에 맞는 데이터가 없다는 신호다.
     present = [row.values[metric] for row in rows if row.values.get(metric) is not None]
-    if len(present) >= 2 and len(set(present)) == 1:
+    if len(present) >= 2 and set(present) == {0}:
+        # 모두 0이면 계획 실수가 아니라 그 지역에 조건에 맞는 데이터가 없다는 답이다 (예: 직장 어린이집이 없는 구).
+        label = next((op.label for op in plan.operations if op.output == metric), metric)
+        error(
+            "NO_MATCHING_DATA",
+            f"'{result.region.name}'의 {SPATIAL_LEVEL_NAMES[result.analysis_unit]} {len(present)}개 모두 "
+            f"'{label}' 값이 0입니다. 이 지역에는 조건에 맞는 데이터가 없습니다",
+        )
+    elif len(present) >= 2 and len(set(present)) == 1:
         label = next((op.label for op in plan.operations if op.output == metric), metric)
         error(
             "CONSTANT_METRIC",

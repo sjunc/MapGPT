@@ -59,12 +59,23 @@ def test_aggregate_sums_filtered_rows_per_group(conn, datasets):
     assert result.stats == {"input_rows": CHILD_ROWS, "group_count": len(expected) + 1}
 
 
-def test_filter_with_no_rows_fails_explicitly(conn, datasets):
+def test_filter_with_no_rows_says_no_data_matches(conn, datasets):
     with pytest.raises(GisToolError) as error:
         tools.filter_dataset(
             conn, tools.get_dataset(conn, POPULATION_BY_AGE), FilterCondition(field="age", operator="gt", value=200)
         )
-    assert error.value.code == "FILTER_EMPTY_RESULT"
+    assert error.value.code == "NO_MATCHING_DATA"
+    assert str(error.value) == "'age > 200' 조건에 맞는 '행정동별 연령별 주민등록 인구' 데이터가 없습니다."
+
+
+def test_no_matching_data_lists_actual_values_of_text_columns(conn, datasets):
+    # 조건 값이 실제 값과 다르게 적혔는지 알 수 있게 실제 값을 함께 보여 준다. 합성 어린이집은 모두 민간이다.
+    condition = FilterCondition(field="facility_type", operator="eq", value="협동")
+    with pytest.raises(GisToolError) as error:
+        tools.filter_dataset(conn, tools.get_dataset(conn, DAYCARE_FACILITY), condition)
+    assert str(error.value) == (
+        "'facility_type = 협동' 조건에 맞는 '서울특별시 어린이집 위치' 데이터가 없습니다. 'facility_type'의 실제 값: 민간"
+    )
 
 
 def test_full_plan_execution_matches_hand_computed_answer(conn, datasets):

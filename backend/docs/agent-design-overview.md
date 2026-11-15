@@ -210,9 +210,9 @@ stateDiagram-v2
 | 2-1 | `acquire_data` | 코드 | 선택한 등록 출처 중 아직 받지 않았거나 다시 받을 때가 된 것 → 받아 적재, `data_acquisitions` | `DATA_ACQUISITION_UNAVAILABLE`, `DATA_ACQUISITION_FAILED` |
 | 3 | `build_analysis_plan` | LLM | 해석 + 선택 Dataset 상세 메타데이터 (+ 이전 오류) → `AnalysisPlan` | `LLM_FAILED` (스키마 불일치는 재생성) |
 | 4 | `validate_plan` | 코드 | Plan + 메타데이터 → `ValidationReport` | `PLAN_INVALID` |
-| 5 | `load_data` | GIS | Plan → 경계 View, 필터를 적용한 Dataset View | `DATASET_TABLE_MISSING`, `DATASET_EMPTY`, `FILTER_EMPTY_RESULT`, `REGION_NOT_FOUND`, `INVALID_GEOMETRY` 등 |
+| 5 | `load_data` | GIS | Plan → 경계 View, 필터를 적용한 Dataset View | `DATASET_TABLE_MISSING`, `DATASET_EMPTY`, `NO_MATCHING_DATA`, `REGION_NOT_FOUND`, `INVALID_GEOMETRY` 등 |
 | 6 | `execute_operations` | GIS | Operation 순차 실행 → `ExecutionResult` | `NON_FINITE_RESULT` 등 GIS Tool 코드 |
-| 7 | `validate_result` | 코드 | 실행 결과 → `ValidationReport` | `RESULT_INVALID` |
+| 7 | `validate_result` | 코드 | 실행 결과 → `ValidationReport` | `RESULT_INVALID`, `NO_MATCHING_DATA` |
 | 8 | `create_map_layer` | GIS | 결과 행 → GeoJSON + 분위 구간 | `OUTPUT_CRS_INVALID`, `GEOMETRY_MISSING` |
 | 9 | `generate_explanation` | 코드 + LLM | 응답 조립 → 설명용 사실 → 요약 | `LLM_FAILED` |
 
@@ -348,7 +348,7 @@ SELECT u.unit_key, count(a.point_id) FROM units u LEFT JOIN assigned a USING (un
 
 #### ⑦ validate_result: 결과 검증
 
-[Result Validator](../app/validation/result_validator.py)가 지도·설명으로 넘기기 전에 결과를 검사합니다(규칙은 3.6절). 오류가 있으면 `RESULT_INVALID`로 멈추고, 경고는 최종 응답의 "한계"에 들어갑니다.
+[Result Validator](../app/validation/result_validator.py)가 지도·설명으로 넘기기 전에 결과를 검사합니다(규칙은 3.6절). 오류가 있으면 `RESULT_INVALID`로 멈추고(출력 지표가 모두 0이면 '조건에 맞는 데이터가 없다'는 답이라 `NO_MATCHING_DATA`), 경고는 최종 응답의 "한계"에 들어갑니다.
 
 #### ⑧ create_map_layer: 지도 레이어
 
@@ -501,7 +501,8 @@ LLM 출력은 세 겹으로 검사합니다.
 
 | 구분 | 코드 |
 |---|---|
-| 오류 → `RESULT_INVALID` | `RESULT_EMPTY`, `DUPLICATE_UNITS`, `INVALID_GEOMETRY`, `NEGATIVE_VALUE`(개수·인구), `ZERO_DENOMINATOR_UNHANDLED`, `NON_FINITE_VALUE`, `HIGH_NULL_RATE`(출력 지표 null > 20%), `CONSTANT_METRIC`(값 있는 단위가 2개 이상인데 출력 지표가 모두 같음. 비교할 수 없고 질문에 맞는 데이터가 없다는 신호), `OUT_OF_REGION`(bbox ±0.01° 초과), `UNIT_COUNT_MISMATCH`(예상 단위 수와 10% 넘게 차이) |
+| 오류 → `RESULT_INVALID` | `RESULT_EMPTY`, `DUPLICATE_UNITS`, `INVALID_GEOMETRY`, `NEGATIVE_VALUE`(개수·인구), `ZERO_DENOMINATOR_UNHANDLED`, `NON_FINITE_VALUE`, `HIGH_NULL_RATE`(출력 지표 null > 20%), `CONSTANT_METRIC`(값 있는 단위가 2개 이상인데 출력 지표가 0이 아닌 한 값으로 모두 같음. 비교할 수 없고 질문에 맞는 데이터가 없거나 계획이 질문과 맞지 않다는 신호), `OUT_OF_REGION`(bbox ±0.01° 초과), `UNIT_COUNT_MISMATCH`(예상 단위 수와 10% 넘게 차이) |
+| 오류 → `NO_MATCHING_DATA` | `NO_MATCHING_DATA`(값 있는 단위가 2개 이상이고 출력 지표가 모두 0. 그 지역에 조건에 맞는 데이터가 없다는 답이라 `RESULT_INVALID` 대신 이 코드로 멈추고, 다른 오류는 `issues`에 붙임) |
 | 경고 → 응답의 "한계" | `NULL_VALUES`, `UNMATCHED_KEYS`, `UNASSIGNED_POINTS`, `UNIT_COUNT_MISMATCH`(작은 차이), `REGION_CHECK_SKIPPED`, `UNIT_COUNT_CHECK_SKIPPED` |
 
 ### 3.7 실패 코드 모음 (`WorkflowError.code`)
@@ -511,11 +512,12 @@ LLM 출력은 세 겹으로 검사합니다.
 | 해석 | `UNSUPPORTED_QUESTION`, `INCOMPLETE_INTERPRETATION`, `REGION_OUT_OF_SCOPE`, `REGION_NOT_SUPPORTED`, `UNIT_NOT_SUPPORTED` |
 | 검색·선택 | `CATALOG_INDEX_STALE`, `EMBEDDING_FAILED`, `DATA_NOT_AVAILABLE`(필요한 데이터가 없거나 분석 지역이 범위 밖), `INVALID_DATASET_SELECTION` |
 | 계획 | `PLAN_INVALID` (`issues`에 Plan Validator 코드) |
-| GIS 실행 | GIS Tool 코드가 그대로 올라옴: `UNIT_BOUNDARY_MISSING`, `REGION_NOT_COVERED`, `DATASET_TABLE_MISSING`, `DATASET_EMPTY`, `FILTER_INVALID`, `FILTER_EMPTY_RESULT`, `NOT_POLYGON`, `BOUNDARY_METADATA_INCOMPLETE`, `REGION_NOT_FOUND`, `DUPLICATE_UNIT_KEY`, `INVALID_GEOMETRY`, `CRS_UNSUPPORTED`, `NO_GEOMETRY`, `NOT_POINT`, `UNSUPPORTED_AGGREGATION`, `MULTI_GROUP_UNSUPPORTED`, `FIELD_UNKNOWN`, `FIELD_NOT_NUMERIC`, `NON_FINITE_RESULT`, `OUTPUT_CRS_INVALID`, `GEOMETRY_MISSING` |
-| 결과 | `RESULT_INVALID` (`issues`에 Result Validator 코드) |
+| GIS 실행 | GIS Tool 코드가 그대로 올라옴: `UNIT_BOUNDARY_MISSING`, `REGION_NOT_COVERED`, `DATASET_TABLE_MISSING`, `DATASET_EMPTY`, `FILTER_INVALID`, `NO_MATCHING_DATA`(필터 조건에 맞는 행이 없음. 조건과 조건에 쓴 문자열 컬럼의 실제 값을 최대 20개 안내), `NOT_POLYGON`, `BOUNDARY_METADATA_INCOMPLETE`, `REGION_NOT_FOUND`, `DUPLICATE_UNIT_KEY`, `INVALID_GEOMETRY`, `CRS_UNSUPPORTED`, `NO_GEOMETRY`, `NOT_POINT`, `UNSUPPORTED_AGGREGATION`, `MULTI_GROUP_UNSUPPORTED`, `FIELD_UNKNOWN`, `FIELD_NOT_NUMERIC`, `NON_FINITE_RESULT`, `OUTPUT_CRS_INVALID`, `GEOMETRY_MISSING` |
+| 결과 | `RESULT_INVALID` (`issues`에 Result Validator 코드), `NO_MATCHING_DATA`(출력 지표가 모두 0) |
 | 공통 | `LLM_FAILED`(API 오류·거절·잘림·스키마 불일치), `INTERNAL_ERROR`(예상하지 못한 예외, 서버 로그에 스택 기록) |
 
 분석이 실패해도 실행 기록이 남으므로 HTTP 응답은 200이고, `status: "failed"`와 `errors`로 구분합니다.
+`DATA_NOT_AVAILABLE`와 `NO_MATCHING_DATA`는 시스템 실패가 아니라 '데이터가 없다'는 답이라, 화면은 제목을 "데이터가 없습니다"로 보여줍니다.
 
 ### 3.8 LLM 연동
 
@@ -885,7 +887,7 @@ frontend/
    - 응답이 오기 전까지 경과 시간과 고정된 단계 목록을 보여줍니다. API가 동기 방식이라 실시간 단계 진행은 아닙니다.
    - 이전 결과가 있으면 흐리게 표시합니다.
 3. 응답에 따라 화면을 그립니다.
-   - `status: "failed"`면 `ErrorPanel`이 단계 이름, 코드, 메시지, issues, 실행 기록 링크를 보여줍니다.
+   - `status: "failed"`면 `ErrorPanel`이 단계 이름, 코드, 메시지, issues, 실행 기록 링크를 보여줍니다. 데이터가 없다는 답(`DATA_NOT_AVAILABLE`, `NO_MATCHING_DATA`)이면 제목이 "데이터가 없습니다"입니다.
    - HTTP 오류(422, 503 등)는 "요청을 처리하지 못했습니다" 카드에 표시합니다.
 4. 성공하면 요약·지표, `RankingTable`, `ResultDetails`, `ChoroplethMap`, `Legend`를 그립니다.
    - 표와 지도는 `hoveredKey`를 공유해 양방향으로 강조됩니다.

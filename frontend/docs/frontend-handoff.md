@@ -105,7 +105,7 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
 | `GET /api/datasets`, `GET /api/health` | 쓰지 않는다 |
 
 - **응답 처리:**
-  - 분석이 실패해도 HTTP 200에 `status: "failed"`와 `errors[]`가 온다. `ErrorPanel`이 단계 이름, 코드, 메시지, 세부 issues를 보여준다.
+  - 분석이 실패해도 HTTP 200에 `status: "failed"`와 `errors[]`가 온다. `ErrorPanel`이 단계 이름, 코드, 메시지, 세부 issues를 보여준다. 데이터가 없다는 답(`DATA_NOT_AVAILABLE`, `NO_MATCHING_DATA`)이면 제목을 "데이터가 없습니다"로 바꿔 분석 실패와 구분한다.
   - 422(형식 오류)나 503(LLM·임베딩 설정 누락) 같은 HTTP 오류는 "요청을 처리하지 못했습니다" 카드에 `detail`을 보여준다.
 - **단계 이름:** `errors[].step`은 백엔드 워크플로의 9개 단계 이름이다. 화면은 `ErrorPanel.tsx`의 `STEP_NAMES`로 한국어 이름을 붙이므로, 단계가 늘면 함께 고친다.
 - **응답 크기와 시간:**
