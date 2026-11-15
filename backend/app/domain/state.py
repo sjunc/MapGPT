@@ -44,9 +44,20 @@ class DatasetSearch(StrictModel):
     hits: list[DatasetHit]
 
 
+class RequiredData(StrictModel):
+    """분석에 필요한 데이터 하나와 그 데이터를 주는 후보 Dataset."""
+
+    concept: str = Field(description="필요한 데이터의 짧은 한국어 이름 (예: 0~5세 인구)")
+    dataset_id: str | None = Field(description="이 데이터를 주는 후보 dataset_id. 어느 후보로도 만들 수 없으면 null")
+
+
 class DatasetSelection(StrictModel):
     """후보 Dataset 중 분석에 필요한 Dataset 선택 결과."""
 
+    # LLM은 스키마 순서대로 답하므로, 필요한 데이터마다 출처부터 정한 뒤 ID 목록을 쓰도록 앞에 둔다.
+    required_data: list[RequiredData] = Field(
+        default=[], description="질문의 지표·조건에 필요한 데이터마다 그 데이터를 주는 후보 Dataset"
+    )
     datasets: list[str] = Field(description="선택한 Dataset ID 목록")
     rationale: str
 

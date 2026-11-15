@@ -9,7 +9,7 @@ from app.data_sources.ingest import ingest_boundary
 from app.domain.enums import RunStatus, WorkflowStep
 from app.domain.policies import AUTO_DATASET_LIMITATIONS
 from app.domain.plan import AnalysisPlan, Region
-from app.domain.state import DatasetSelection, InterpretedQuery
+from app.domain.state import DatasetSelection, InterpretedQuery, RequiredData
 from app.llm.base import LLMError, LLMOutputError
 from app.llm.embeddings import EmbeddingError
 from app.repositories.catalog_repository import upsert_dataset
@@ -318,9 +318,52 @@ def test_invalid_dataset_selection_is_recorded_before_stopping(pool, catalog, co
     state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run(QUESTION)
 
     assert (state.errors[0].step, state.errors[0].code) == (WorkflowStep.SELECT_DATASETS, "INVALID_DATASET_SELECTION")
+    assert "분석할 수 있는 관련 데이터: " in state.errors[0].message
     assert llm.prompts_for(AnalysisPlan) == []
     stored = get_run(conn, state.run_id)["provenance"]["dataset_selection"]
-    assert stored == {"datasets": ["emd_boundary", "subway_station"], "rationale": "지하철역 거리를 계산"}
+    assert stored == {
+        "required_data": [],
+        "datasets": ["emd_boundary", "subway_station"],
+        "rationale": "지하철역 거리를 계산",
+    }
+
+
+@pytest.mark.parametrize(
+    ("source", "datasets"),
+    [
+        (None, ["emd_boundary", "population_by_age"]),  # 후보에 없다고 답함
+        ("pharmacy_facility", ["emd_boundary", "population_by_age", "pharmacy_facility"]),  # 없는 ID를 지어냄
+    ],
+)
+def test_missing_data_stops_with_related_data_instead_of_a_substitute(pool, catalog, conn, source, datasets):
+    needs = [
+        RequiredData(concept="약국", dataset_id=source),
+        RequiredData(concept="인구", dataset_id="population_by_age"),
+    ]
+    llm = daycare_llm(
+        interpreted=[
+            interpreted(
+                restated_question="서울특별시 행정동별 인구 1,000명당 약국 수가 적은 곳",
+                key_concepts=["약국 위치", "인구", "행정동 경계"],
+                assumptions=[],
+            )
+        ],
+        selection=[
+            DatasetSelection(required_data=needs, datasets=datasets, rationale="약국 위치 데이터가 후보에 없다")
+        ],
+    )
+
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("서울에서 인구 대비 약국이 부족한 행정동은?")
+
+    [error] = state.errors
+    assert (error.step, error.code) == (WorkflowStep.SELECT_DATASETS, "DATA_NOT_AVAILABLE")
+    assert error.message.startswith("'약국' 데이터가 없어 분석할 수 없습니다. 분석할 수 있는 관련 데이터: ")
+    assert "서울특별시 어린이집 위치(서울특별시 범위)" in error.message
+    assert "행정동별 연령별 주민등록 인구(대한민국 범위)" in error.message
+    assert "경계" not in error.message  # 분석 단위 경계는 안내하지 않는다
+    assert state.selected_datasets == [] and llm.prompts_for(AnalysisPlan) == []
+    stored = get_run(conn, state.run_id)["provenance"]["dataset_selection"]["required_data"]
+    assert stored == [{"concept": "약국", "dataset_id": source}, {"concept": "인구", "dataset_id": "population_by_age"}]
 
 
 def test_result_validation_failure_blocks_map_and_explanation(pool, catalog, conn):
@@ -456,6 +499,33 @@ def test_sigungu_name_shared_by_provinces_stops_with_candidates(pool, national_c
 
     assert (state.errors[0].step, state.errors[0].code) == (WorkflowStep.INTERPRET_QUERY, "REGION_AMBIGUOUS")
     assert "서울특별시 중구, 부산광역시 중구" in state.errors[0].message
+    assert llm.prompts_for(AnalysisPlan) == []
+
+
+def test_dataset_that_does_not_cover_the_region_stops_before_planning(pool, national_catalog, conn):
+    # 서울 범위 어린이집으로 부산 중구를 분석하는 계획은 다시 만들어도 검증을 통과할 수 없다.
+    upsert_dataset(conn, DAYCARE_FACILITY)
+    conn.commit()
+    sync_catalog_embeddings(conn, FakeEmbedder())
+    region = Region(name="부산광역시 중구", level="sigungu")
+    llm = daycare_llm(
+        interpreted=[interpreted().model_copy(update={"region": region})],
+        selection=[
+            DatasetSelection(
+                datasets=["national_emd_boundary", "population_by_age", "daycare_facility"],
+                rationale="경계, 수요(0~5세 인구), 공급(어린이집)",
+            )
+        ],
+    )
+
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("부산 중구에서 어린이 인구 대비 어린이집이 부족한 행정동")
+
+    [error] = state.errors
+    assert (error.step, error.code) == (WorkflowStep.SELECT_DATASETS, "DATA_NOT_AVAILABLE")
+    assert (
+        error.message
+        == "서울특별시 어린이집 위치(서울특별시 범위)에는 '부산광역시 중구' 지역이 없어 분석할 수 없습니다"
+    )
     assert llm.prompts_for(AnalysisPlan) == []
 
 

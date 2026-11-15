@@ -167,7 +167,7 @@ sequenceDiagram
 | ③ 분석 계획: 필터, Operation 순서, 출력 지표 | Pydantic 스키마 검증, Plan Validator, 해석과의 일치 검사 |
 | ④ 결과 설명: 3~5문장 요약 | GIS 실행(SQL), 결과 검증, 지도 생성, 방법·가정·한계·순위 조립, Provenance 저장 |
 
-LLM이 쓴 문장 중 화면에 그대로 보이는 것은 요약(summary), 해석 가정(assumptions), Operation 라벨, 지원하지 않는 질문의 이유(unsupported_reason)뿐입니다. 수치, 순위, 계산 방법 문장, 한계는 모두 코드가 실행 기록에서 만듭니다.
+LLM이 쓴 문장 중 화면에 그대로 보이는 것은 요약(summary), 해석 가정(assumptions), Operation 라벨, 지원하지 않는 질문의 이유(unsupported_reason), 필요한 데이터 이름(`required_data`의 concept)뿐입니다. 수치, 순위, 계산 방법 문장, 한계는 모두 코드가 실행 기록에서 만듭니다.
 
 ### 3.2 LangGraph 워크플로
 
@@ -206,7 +206,7 @@ stateDiagram-v2
 | # | 단계 (`WorkflowStep`) | 주체 | 입력 → 출력 | 대표 실패 코드 |
 |---|---|---|---|---|
 | 1 | `interpret_query` | LLM + 검사 | 질문, 분석 정책, 지역별 분석 가능 단위 → `InterpretedQuery` | `UNSUPPORTED_QUESTION`, `INCOMPLETE_INTERPRETATION`, `REGION_NOT_SUPPORTED`, `UNIT_NOT_SUPPORTED` |
-| 2 | `select_datasets` | pgvector + LLM | 검색어 → 후보(최대 10개) → `DatasetSelection` | `CATALOG_INDEX_STALE`, `EMBEDDING_FAILED`, `INVALID_DATASET_SELECTION` |
+| 2 | `select_datasets` | pgvector + LLM | 검색어 → 후보(최대 10개) → `DatasetSelection` | `CATALOG_INDEX_STALE`, `EMBEDDING_FAILED`, `DATA_NOT_AVAILABLE`, `INVALID_DATASET_SELECTION` |
 | 2-1 | `acquire_data` | 코드 | 선택한 등록 출처 중 아직 받지 않았거나 다시 받을 때가 된 것 → 받아 적재, `data_acquisitions` | `DATA_ACQUISITION_UNAVAILABLE`, `DATA_ACQUISITION_FAILED` |
 | 3 | `build_analysis_plan` | LLM | 해석 + 선택 Dataset 상세 메타데이터 (+ 이전 오류) → `AnalysisPlan` | `LLM_FAILED` (스키마 불일치는 재생성) |
 | 4 | `validate_plan` | 코드 | Plan + 메타데이터 → `ValidationReport` | `PLAN_INVALID` |
@@ -246,10 +246,19 @@ pgvector는 후보를 찾고, LLM은 최종 선택을 하고, Validator는 실�
 
 1. 검색어 = `restated_question` + `key_concepts`
 2. 카탈로그 임베딩이 최신인지 확인합니다. 임베딩이 없거나, 모델이 다르거나, 임베딩한 문서가 현재 메타데이터로 만든 문서와 다르면 `CATALOG_INDEX_STALE`로 멈춥니다. 임베딩이 빠진 Dataset이 후보에서 조용히 사라지는 것을 막기 위해서입니다.
-3. 검색어를 임베딩하고 pgvector 코사인 거리로 상위 10개를 고릅니다(`SEARCH_LIMIT = 10`). 지금은 Dataset이 3개라 모두 후보가 되고, 유사도는 순서만 정합니다.
-4. LLM에 후보 요약(제목, 설명, 분류, 태그, 공간·시간 정보, 컬럼 설명)을 주고 `DatasetSelection{datasets, rationale}`을 받습니다.
-5. 선택 원본을 **검사 전에** 기록합니다. 잘못된 선택도 근거와 함께 추적하기 위해서입니다. 후보에 없는 ID를 골랐거나 아무것도 고르지 않았으면 `INVALID_DATASET_SELECTION`입니다. 통과한 선택은 중복을 제거해 `selected_datasets`에 둡니다.
+3. 검색어를 임베딩하고 pgvector 코사인 거리로 상위 10개를 고릅니다(`SEARCH_LIMIT = 10`). 지금은 등록된 Dataset이 10개 이하라 모두 후보가 되고, 유사도는 순서만 정합니다.
+4. LLM에 후보 요약(제목, 설명, 분류, 태그, 공간·시간 정보, 컬럼 설명)을 주고 `DatasetSelection{required_data, datasets, rationale}`을 받습니다.
+   - `required_data`에는 질문의 지표·조건에 필요한 데이터마다 그 데이터를 주는 후보 Dataset을 적게 합니다. 예: `{"concept": "0~5세 인구", "dataset_id": "population_by_age"}`
+   - 컬럼·필터로 만들 수 있으면 그 Dataset이 주는 데이터로 봅니다. 어느 후보로도 만들 수 없을 때만 `dataset_id`를 null로 두고, 비슷해 보이는 Dataset으로 대신하지 않습니다.
+   - 지역 이름과 분석 단위 경계는 적지 않습니다. 지역 범위는 코드가 따로 확인합니다(7번).
+   - LLM은 스키마 순서대로 답하므로 `required_data`를 `datasets` 앞에 둡니다. 필요한 데이터마다 출처부터 정한 뒤 ID 목록을 쓰게 하려는 것입니다.
+5. 선택 원본을 **검사 전에** 기록합니다. 잘못된 선택도 근거와 함께 추적하기 위해서입니다.
+   1. `required_data`에 출처가 null이거나 후보에 없는 ID인 데이터가 있으면 `DATA_NOT_AVAILABLE`로 멈춥니다. LLM이 지어낸 ID(예: `pharmacy_facility`)도 여기서 걸려 데이터 이름으로 안내됩니다. 메시지에 검색 후보에서 경계를 뺀 데이터 목록을 붙입니다. 예: `'약국' 데이터가 없어 분석할 수 없습니다. 분석할 수 있는 관련 데이터: 서울특별시 어린이집 위치(서울특별시 범위), …`
+   2. 후보에 없는 ID를 골랐거나 아무것도 고르지 않았으면 `INVALID_DATASET_SELECTION`입니다. 같은 데이터 목록을 붙입니다.
+
+   통과한 선택은 중복을 제거해 `selected_datasets`에 둡니다.
 6. LLM이 분석 단위와 다른 경계를 골랐거나 경계를 빠뜨리면, 코드가 `analysis_unit`과 지역 범위가 일치하는 Polygon 경계 Dataset으로 교체·추가합니다.
+7. 선택한 Dataset의 범위가 분석 지역을 포함하지 않으면 `DATA_NOT_AVAILABLE`로 멈춥니다. 메시지 예: `서울특별시 어린이집 위치(서울특별시 범위)에는 '부산광역시 중구' 지역이 없어 분석할 수 없습니다`. 계획을 다시 만들어도 고칠 수 없으므로 계획 전에 끝냅니다. 계획 검증의 `REGION_NOT_COVERED`는 안전장치로 남깁니다.
 
 실제 실행 기록 예시(`dataset_search`): `daycare_facility` 0.571, `population_by_age` 0.560, `emd_boundary` 0.362
 
@@ -493,7 +502,7 @@ LLM 출력은 세 겹으로 검사합니다.
 | 단계 | 코드 |
 |---|---|
 | 해석 | `UNSUPPORTED_QUESTION`, `INCOMPLETE_INTERPRETATION`, `REGION_NOT_SUPPORTED`, `UNIT_NOT_SUPPORTED` |
-| 검색·선택 | `CATALOG_INDEX_STALE`, `EMBEDDING_FAILED`, `INVALID_DATASET_SELECTION` |
+| 검색·선택 | `CATALOG_INDEX_STALE`, `EMBEDDING_FAILED`, `DATA_NOT_AVAILABLE`(필요한 데이터가 없거나 분석 지역이 범위 밖), `INVALID_DATASET_SELECTION` |
 | 계획 | `PLAN_INVALID` (`issues`에 Plan Validator 코드) |
 | GIS 실행 | GIS Tool 코드가 그대로 올라옴: `UNIT_BOUNDARY_MISSING`, `REGION_NOT_COVERED`, `DATASET_TABLE_MISSING`, `DATASET_EMPTY`, `FILTER_INVALID`, `FILTER_EMPTY_RESULT`, `NOT_POLYGON`, `BOUNDARY_METADATA_INCOMPLETE`, `REGION_NOT_FOUND`, `DUPLICATE_UNIT_KEY`, `INVALID_GEOMETRY`, `CRS_UNSUPPORTED`, `NO_GEOMETRY`, `NOT_POINT`, `UNSUPPORTED_AGGREGATION`, `MULTI_GROUP_UNSUPPORTED`, `FIELD_UNKNOWN`, `FIELD_NOT_NUMERIC`, `NON_FINITE_RESULT`, `OUTPUT_CRS_INVALID`, `GEOMETRY_MISSING` |
 | 결과 | `RESULT_INVALID` (`issues`에 Result Validator 코드) |

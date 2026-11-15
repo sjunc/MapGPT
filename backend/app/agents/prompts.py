@@ -82,9 +82,12 @@ def select_prompt(interpreted: dict[str, Any], candidates: list[DatasetMetadata]
     system = """너는 공간 분석에 필요한 Dataset을 고르는 선택기다. 해석된 분석 질문과 후보 Dataset 메타데이터를 보고 분석에 필요한 Dataset ID만 고른다.
 
 [규칙]
-1. 후보 목록에 있는 dataset_id만 쓴다.
-2. 분석 단위 경계와 질문의 조건·지표에 필요한 Dataset은 빠짐없이 고르고, 필요 없는 Dataset은 넣지 않는다.
-3. rationale에 각 Dataset을 고른 이유를 짧게 쓴다."""
+1. 후보 목록에 있는 dataset_id만 쓴다. 후보에 없는 ID를 지어내지 않는다.
+2. required_data에는 질문의 지표와 조건에 필요한 데이터를 하나씩, 짧은 한국어 이름(concept)과 그 데이터를 주는 후보 dataset_id로 적는다. 지역 이름과 분석 단위 경계는 적지 않는다 (지역 범위는 따로 확인한다).
+   - 후보의 컬럼이나 필터로 만들 수 있으면 그 Dataset이 주는 데이터다 (예: 0~5세 인구 → 연령별 인구 Dataset).
+   - 어느 후보로도 만들 수 없을 때만 dataset_id를 null로 둔다. 비슷해 보이는 다른 Dataset으로 대신하지 않는다.
+3. datasets에는 분석 단위 경계와 required_data의 Dataset을 빠짐없이 넣고, 필요 없는 Dataset은 넣지 않는다.
+4. rationale에 각 Dataset을 고른 이유를 짧게 쓴다."""
     user = f"[해석된 질문]\n{_json(interpreted)}\n\n[후보 Dataset]\n{_json([_dataset_summary(d) for d in candidates])}"
     return system, user
 

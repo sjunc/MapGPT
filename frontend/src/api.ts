@@ -32,7 +32,11 @@ export interface RunProvenance {
     embedding_model?: string;
     hits?: { dataset_id: string; similarity: number }[];
   } | null;
-  dataset_selection?: { datasets?: string[]; rationale?: string } | null;
+  dataset_selection?: {
+    required_data?: { concept: string; dataset_id: string | null }[];
+    datasets?: string[];
+    rationale?: string;
+  } | null;
   analysis_plan?: {
     intent?: string;
     analysis_unit?: string;

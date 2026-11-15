@@ -86,6 +86,14 @@ export function ExecutionTrace({ provenance, runId, loading, error, demo, onRefr
             <details>
               <summary>3. 데이터 선택</summary>
               <p>선택: {(provenance.dataset_selection.datasets ?? []).join(", ") || "정보 없음"}</p>
+              {(provenance.dataset_selection.required_data ?? []).length > 0 && (
+                <p>
+                  필요한 데이터:{" "}
+                  {(provenance.dataset_selection.required_data ?? [])
+                    .map((need) => `${need.concept}(${need.dataset_id ?? "없음"})`)
+                    .join(", ")}
+                </p>
+              )}
               <p>{provenance.dataset_selection.rationale ?? ""}</p>
             </details>
           )}

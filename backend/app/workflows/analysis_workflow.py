@@ -202,9 +202,20 @@ def _select_datasets(state: AgentState, ctx: _RunContext, update: Update) -> Non
     selection = _llm_call(steps.select_datasets, ctx.llm, interpreted, candidates)
     update["dataset_selection"] = selection  # 검사 전에 기록해 잘못된 선택도 추적할 수 있게 한다
     candidate_ids = {d.dataset_id for d in candidates}
+    # 출처가 없거나 후보에 없는 ID(지어낸 ID)인 데이터는 이 후보들로 만들 수 없다.
+    missing = [need.concept for need in selection.required_data if need.dataset_id not in candidate_ids]
+    if missing:
+        concepts = ", ".join(f"'{concept}'" for concept in dict.fromkeys(missing))
+        raise WorkflowFailure(
+            "DATA_NOT_AVAILABLE",
+            f"{concepts} 데이터가 없어 분석할 수 없습니다. 분석할 수 있는 관련 데이터: {_available_data(candidates)}",
+        )
     unknown = [d for d in selection.datasets if d not in candidate_ids]
     if unknown or not selection.datasets:
-        raise WorkflowFailure("INVALID_DATASET_SELECTION", f"후보에 없는 Dataset을 선택했습니다: {unknown}")
+        raise WorkflowFailure(
+            "INVALID_DATASET_SELECTION",
+            f"후보에 없는 Dataset을 선택했습니다: {unknown}. 분석할 수 있는 관련 데이터: {_available_data(candidates)}",
+        )
     selected = list(dict.fromkeys(selection.datasets))
     boundary_ids = {dataset.dataset_id for dataset in candidates if dataset.is_polygon}
     compatible_boundaries = [
@@ -217,7 +228,25 @@ def _select_datasets(state: AgentState, ctx: _RunContext, update: Update) -> Non
     if compatible_boundaries:
         selected = [dataset_id for dataset_id in selected if dataset_id not in boundary_ids]
         selected.append(compatible_boundaries[0])
+    # 범위 밖 데이터는 계획을 다시 만들어도 고칠 수 없으므로 계획 전에 끝낸다 (계획 검증의 같은 검사는 안전장치).
+    by_id = {dataset.dataset_id: dataset for dataset in candidates}
+    outside = [by_id[d] for d in selected if resolve_region(state.resolved_region, by_id[d].spatial.coverage) is None]
+    if outside:
+        listed = ", ".join(_dataset_label(d) for d in outside)
+        raise WorkflowFailure(
+            "DATA_NOT_AVAILABLE", f"{listed}에는 '{state.resolved_region.name}' 지역이 없어 분석할 수 없습니다"
+        )
     update["selected_datasets"] = selected
+
+
+def _available_data(candidates: list[DatasetMetadata]) -> str:
+    """데이터가 없다고 안내할 때 함께 보여줄 검색 후보 (분석 단위 경계는 뺀다)."""
+    return ", ".join(_dataset_label(d) for d in candidates if not d.is_polygon) or "없음"
+
+
+def _dataset_label(dataset: DatasetMetadata) -> str:
+    coverage = dataset.spatial.coverage
+    return f"{dataset.title}({coverage.name} 범위)" if coverage else f"{dataset.title}(범위 정보 없음)"
 
 
 def _acquire_data(state: AgentState, ctx: _RunContext, update: Update) -> None:
