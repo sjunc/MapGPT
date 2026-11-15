@@ -4,7 +4,7 @@ from pydantic import Field
 
 from app.domain.base import StrictModel
 from app.domain.catalog import DatasetMetadata, RegionRef
-from app.domain.enums import AnalysisIntent, MapType, SpatialLevel
+from app.domain.enums import AnalysisIntent, AnalysisScope, MapType, SpatialLevel
 from app.domain.filters import FilterExpression
 from app.domain.operations import Operation
 
@@ -109,6 +109,32 @@ def match_regions(region: Region | RegionRef, regions: Iterable[RegionRef]) -> l
 
 def _compact(name: str) -> str:
     return "".join(name.split())
+
+
+# 분석 범위의 기준 지역 행정코드. 서울 범위는 코드가 11로 시작하는 지역(서울과 그 안의 시군구)만 쓴다.
+SCOPE_REGION_CODES = {AnalysisScope.SEOUL: "11", AnalysisScope.NATIONAL: "KR"}
+_COUNTRY_WORDS = ("전국", "대한민국", "한국", "국내", "우리나라")
+
+
+def in_scope(region: RegionRef, scope: AnalysisScope) -> bool:
+    return scope == AnalysisScope.NATIONAL or region.code.startswith(SCOPE_REGION_CODES[scope])
+
+
+def region_named(question: str, phrase: str | None, region: Region | None) -> bool:
+    """해석 LLM이 옮겨 적은 지역 표현이 질문에 있고, 해석한 지역을 가리키는지 본다.
+
+    지역을 말하지 않은 질문에 LLM이 지역을 채우는 일을 가려내 분석 범위의 기준 지역을 쓰기 위해서다.
+    표현과 지역 이름은 낱말 앞부분이 맞으면 같은 지역으로 본다 ('부산 중구' → '부산광역시 중구', '강남구에서' → '강남구').
+    """
+    if region is None or not phrase or _compact(phrase) not in _compact(question):
+        return False
+    if region.level == SpatialLevel.COUNTRY:
+        return any(word in _compact(phrase) for word in _COUNTRY_WORDS)
+    return any(
+        len(word) >= 2 and (name.startswith(word) or word.startswith(name))
+        for word in phrase.split()
+        for name in region.name.split()
+    )
 
 
 # 행정구역 이름 끝 글자. 단위 표현(예: '자치구', '행정동별', '시도 중')에는 고른 단위의 글자가 들어 있다.

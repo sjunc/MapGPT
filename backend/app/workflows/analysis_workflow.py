@@ -24,10 +24,12 @@ from psycopg_pool import ConnectionPool
 from app.agents import steps
 from app.catalog.catalog import CatalogIndexError, DatasetCatalog
 from app.data_sources.acquisition import AcquisitionError, DataAcquirer
-from app.domain.catalog import DatasetMetadata
+from app.domain.catalog import DatasetMetadata, RegionRef
 from app.domain.enums import (
+    ANALYSIS_SCOPE_NAMES,
     SPATIAL_LEVEL_NAMES,
     AnalysisIntent,
+    AnalysisScope,
     DataType,
     GeometryType,
     RunStatus,
@@ -36,7 +38,17 @@ from app.domain.enums import (
     SpatialLevel,
     WorkflowStep,
 )
-from app.domain.plan import AnalysisPlan, Region, analysis_units, match_regions, resolve_region, unit_named
+from app.domain.plan import (
+    SCOPE_REGION_CODES,
+    AnalysisPlan,
+    Region,
+    analysis_units,
+    in_scope,
+    match_regions,
+    region_named,
+    resolve_region,
+    unit_named,
+)
 from app.domain.results import ValidationIssue, ValidationReport
 from app.domain.state import AgentState, DatasetHit, DatasetSearch, InterpretedQuery, PlanAttempt, WorkflowError
 from app.executor.operation_executor import ExecutionContext, execute_operations, prepare_context
@@ -102,10 +114,11 @@ class AnalysisWorkflow:
         self._catalog = DatasetCatalog(pool, embedder)
         self._acquirer = acquirer
 
-    def run(self, question: str) -> AgentState:
+    def run(self, question: str, scope: AnalysisScope = AnalysisScope.SEOUL) -> AgentState:
         initial = AgentState(
             run_id=str(uuid.uuid4()),
             question=question,
+            scope=scope,
             llm_provider=self._llm.provider,
             llm_model=self._llm.model,
             started_at=datetime.now(UTC),
@@ -130,17 +143,21 @@ class AnalysisWorkflow:
 
 def _interpret_query(state: AgentState, ctx: _RunContext, update: Update) -> None:
     datasets = ctx.catalog.list_all()
-    regions = ctx.catalog.list_regions()
+    registered = ctx.catalog.list_regions()
+    # 해석에는 분석 범위 안의 지역만 보여 준다. 서울 범위면 서울과 그 안의 구만 남아 프롬프트가 짧아지고 '중구'도 하나로 정해진다.
+    regions = [region for region in registered if in_scope(region, state.scope)]
     coverage = [(region, analysis_units(datasets, region)) for region in regions]
-    interpreted = _llm_call(steps.interpret_query, ctx.llm, state.question, coverage)
+    default = next((region for region in regions if region.code == SCOPE_REGION_CODES[state.scope]), None)
+    interpreted = _scoped(_llm_call(steps.interpret_query, ctx.llm, state.question, coverage), state.question, default)
     if interpreted.intent is None or interpreted.region is None or interpreted.analysis_unit is None:
-        interpreted = _llm_call(
+        retried = _llm_call(
             steps.interpret_query,
             ctx.llm,
             state.question,
             coverage,
             interpreted.unsupported_reason or "분석 유형·지역·분석 단위 중 일부를 해석하지 못함",
         )
+        interpreted = _scoped(retried, state.question, default)
     update["interpreted_query"] = interpreted
     if interpreted.intent is None:
         raise WorkflowFailure("UNSUPPORTED_QUESTION", interpreted.unsupported_reason or "지원하지 않는 분석 질문입니다")
@@ -152,6 +169,14 @@ def _interpret_query(state: AgentState, ctx: _RunContext, update: Update) -> Non
         raise WorkflowFailure(
             "REGION_AMBIGUOUS",
             f"'{interpreted.region.name}'에 해당하는 지역이 여러 곳입니다: {names}. 시도를 함께 적어 주세요",
+        )
+    outside = [] if matches else match_regions(interpreted.region, registered)
+    if outside:
+        name = outside[0].name if len(outside) == 1 else interpreted.region.name
+        raise WorkflowFailure(
+            "REGION_OUT_OF_SCOPE",
+            f"'{name}'은(는) 현재 분석 범위({ANALYSIS_SCOPE_NAMES[state.scope]}) 밖입니다. "
+            "설정에서 분석 범위를 전국으로 바꿔 주세요",
         )
     if not matches:
         # 지역은 이름과 단위가 모두 맞아야 하므로 둘 다 보여준다 (예: '서울특별시'(emd) vs 서울특별시(sido)).
@@ -184,6 +209,19 @@ def _interpret_query(state: AgentState, ctx: _RunContext, update: Update) -> Non
             f"'{interpreted.region.name}'에는 {_unit_name(interpreted.analysis_unit)} 단위 경계 데이터가 없습니다. "
             f"분석 가능한 단위: {available}",
         )
+
+
+def _scoped(interpreted: InterpretedQuery, question: str, default: RegionRef | None) -> InterpretedQuery:
+    """질문이 지역을 말하지 않았으면 분석 범위의 기준 지역을 쓴다. LLM이 채운 지역은 질문에 근거가 있을 때만 따른다."""
+    if default is None or region_named(question, interpreted.region_phrase, interpreted.region):
+        return interpreted
+    assumption = f"질문에 지역이 없어 분석 범위의 기준 지역인 {default.name} 전체를 분석"
+    return interpreted.model_copy(
+        update={
+            "region": Region(name=default.name, level=default.level),
+            "assumptions": [*interpreted.assumptions, assumption],
+        }
+    )
 
 
 def _select_datasets(state: AgentState, ctx: _RunContext, update: Update) -> None:

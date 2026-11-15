@@ -21,6 +21,16 @@ SPATIAL_LEVEL_NAMES: dict[SpatialLevel, str] = {
 }
 
 
+class AnalysisScope(StrEnum):
+    """분석할 수 있는 지역 범위. 화면 설정에서 고르고 질문마다 함께 보낸다."""
+
+    SEOUL = "seoul"  # 서울특별시와 그 안의 시군구·행정동 (기본)
+    NATIONAL = "national"  # 등록된 전국 지역
+
+
+ANALYSIS_SCOPE_NAMES: dict[AnalysisScope, str] = {AnalysisScope.SEOUL: "서울", AnalysisScope.NATIONAL: "전국"}
+
+
 class GeometryType(StrEnum):
     POINT = "Point"
     POLYGON = "Polygon"

@@ -60,7 +60,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def create_analysis(body: AnalysisRequest, pool: Pool, llm: LLM, embedder: Embedding) -> AnalysisResponse:
         """질문을 분석 워크플로로 실행한다. 분석 실패도 run으로 기록되며 status=failed로 반환한다."""
         acquirer = DataAcquirer.from_settings(settings, pool, embedder)
-        state = AnalysisWorkflow(llm, pool, embedder, acquirer).run(body.question)
+        state = AnalysisWorkflow(llm, pool, embedder, acquirer).run(body.question, body.scope)
         return AnalysisResponse(
             run_id=state.run_id, status=state.status, result=state.final_response, errors=state.errors
         )

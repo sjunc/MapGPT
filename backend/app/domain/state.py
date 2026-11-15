@@ -4,7 +4,7 @@ from pydantic import Field
 
 from app.domain.base import StrictModel
 from app.domain.catalog import DatasetMetadata, RegionRef
-from app.domain.enums import AnalysisIntent, RunStatus, SpatialLevel, WorkflowStep
+from app.domain.enums import AnalysisIntent, AnalysisScope, RunStatus, SpatialLevel, WorkflowStep
 from app.domain.plan import AnalysisPlan, Region
 from app.domain.results import (
     ExecutionResult,
@@ -21,6 +21,11 @@ class InterpretedQuery(StrictModel):
     intent: AnalysisIntent | None = Field(description="지원하는 분석 유형. 지원 범위 밖이면 null")
     unsupported_reason: str | None = Field(description="intent가 null일 때 그 이유, 아니면 null")
     region: Region | None
+    # 지역을 말하지 않은 질문에도 LLM이 지역을 채우므로, 질문 속 표현을 옮겨 적게 해 코드가 확인한다.
+    region_phrase: str | None = Field(
+        default=None,
+        description="질문에서 분석 지역을 말한 표현을 질문 글자 그대로 옮긴 것 (예: '서울', '강남구'). 없으면 null",
+    )
     analysis_unit: SpatialLevel | None
     # 참/거짓으로 물으면 같은 질문에도 판단이 흔들려서, 질문 속 표현을 옮겨 적게 하고 코드가 질문에 있는지 확인한다.
     analysis_unit_phrase: str | None = Field(
@@ -99,6 +104,7 @@ class WorkflowError(StrictModel):
 class AgentState(StrictModel):
     run_id: str
     question: str
+    scope: AnalysisScope = AnalysisScope.SEOUL  # 화면 설정의 분석 범위
     status: RunStatus = RunStatus.RUNNING
     current_step: WorkflowStep | None = None
     interpreted_query: InterpretedQuery | None = None

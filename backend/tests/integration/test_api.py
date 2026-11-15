@@ -49,6 +49,13 @@ def test_analysis_endpoint_returns_map_ranking_and_explanation(client):
     assert stored["result"]["result_id"] == result["result_id"]
 
 
+def test_analysis_scope_is_recorded_and_validated(client):
+    body = client.post("/api/analyses", json={"question": QUESTION, "scope": "national"}).json()
+
+    assert client.get(f"/api/analyses/{body['run_id']}").json()["provenance"]["scope"] == "national"
+    assert client.post("/api/analyses", json={"question": QUESTION, "scope": "busan"}).status_code == 422
+
+
 def test_unknown_run_is_404(client):
     assert client.get(f"/api/analyses/{uuid.uuid4()}").status_code == 404
 

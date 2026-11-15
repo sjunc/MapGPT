@@ -19,6 +19,7 @@ from app.data_sources.adapters import admdongkor, mois_population, seoul_childca
 from app.data_sources.sources import SourceError, load_sources
 from app.db import connect, init_schema
 from app.domain.catalog import DatasetMetadata
+from app.domain.enums import AnalysisScope
 from app.domain.state import AgentState
 from app.llm.base import LLMError
 from app.llm.embeddings import EmbeddingError
@@ -97,6 +98,9 @@ def main(argv: list[str] | None = None) -> None:
     embed_parser.add_argument("--refresh", action="store_true", help="변경 여부와 관계없이 모두 다시 임베딩")
     analyze_parser = commands.add_parser("analyze", help="자연어 질문을 분석 워크플로로 실행")
     analyze_parser.add_argument("question")
+    analyze_parser.add_argument(
+        "--scope", choices=[scope.value for scope in AnalysisScope], default=AnalysisScope.SEOUL, help="분석 범위"
+    )
     args = parser.parse_args(argv)
 
     settings = get_settings()
@@ -129,7 +133,7 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(str(error)) from error
         with ConnectionPool(settings.database_url, min_size=1, max_size=2) as pool:
             acquirer = DataAcquirer.from_settings(settings, pool, embedder)
-            _print_run(AnalysisWorkflow(llm, pool, embedder, acquirer).run(args.question))
+            _print_run(AnalysisWorkflow(llm, pool, embedder, acquirer).run(args.question, AnalysisScope(args.scope)))
         return
     if args.command == "fetch-source":
         try:

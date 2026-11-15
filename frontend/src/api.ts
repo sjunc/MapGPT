@@ -1,10 +1,10 @@
-import type { AnalysisResponse, FinalResponse, ValidationIssue, WorkflowError } from "./types";
+import type { AnalysisResponse, AnalysisScope, FinalResponse, ValidationIssue, WorkflowError } from "./types";
 
-export async function requestAnalysis(question: string): Promise<AnalysisResponse> {
+export async function requestAnalysis(question: string, scope: AnalysisScope): Promise<AnalysisResponse> {
   const response = await fetch("/api/analyses", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, scope }),
   });
   if (!response.ok) {
     const body = await response.json().catch(() => null);
@@ -17,6 +17,7 @@ export async function requestAnalysis(question: string): Promise<AnalysisRespons
 // GET /api/analyses/{run_id}는 POST의 AnalysisResponse와 다르다.
 // 원본 API 계약: {run_id, status, question, provenance, result}.
 export interface RunProvenance {
+  scope?: AnalysisScope;
   llm_provider?: string;
   llm_model?: string;
   started_at?: string | null;

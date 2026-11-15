@@ -120,6 +120,7 @@ cd ../frontend && npm install && npm run dev
 
 ```bash
 python -m app.cli analyze "서울에서 어린이 인구 대비 어린이집이 부족한 행정동을 알려줘."
+python -m app.cli analyze "부산 중구 행정동별 인구 순위" --scope national   # 분석 범위: 서울(기본)·전국
 ```
 
 API: `POST /api/analyses`, `GET /api/analyses/{run_id}` (Provenance), `GET /api/datasets`, `GET /api/health`

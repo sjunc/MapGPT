@@ -6,7 +6,7 @@ import pytest
 from app.catalog.catalog import sync_catalog_embeddings
 from app.catalog.definitions import DAYCARE_FACILITY, POPULATION_BY_AGE
 from app.data_sources.ingest import ingest_boundary
-from app.domain.enums import RunStatus, WorkflowStep
+from app.domain.enums import AnalysisScope, RunStatus, WorkflowStep
 from app.domain.policies import AUTO_DATASET_LIMITATIONS
 from app.domain.plan import AnalysisPlan, Region
 from app.domain.state import DatasetSelection, InterpretedQuery, RequiredData
@@ -210,7 +210,7 @@ def test_plan_that_changes_the_interpretation_is_rejected(pool, catalog):
             ),
             "UNSUPPORTED_QUESTION",
         ),
-        (interpreted(region="부산광역시"), "REGION_NOT_SUPPORTED"),
+        (interpreted(region="부산광역시", region_phrase="부산"), "REGION_NOT_SUPPORTED"),
         (interpreted(analysis_unit="sigungu", analysis_unit_phrase="구"), "UNIT_NOT_SUPPORTED"),
         (LLMError("OpenAI 호출 실패: 401"), "LLM_FAILED"),
     ],
@@ -218,7 +218,7 @@ def test_plan_that_changes_the_interpretation_is_rejected(pool, catalog):
 def test_interpretation_failures_stop_before_planning(pool, catalog, conn, interpretation, code):
     llm = daycare_llm(interpreted=[interpretation])
 
-    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("지하철역에서 500m 이상 떨어진 구를 찾아줘")
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("부산 지하철역에서 500m 이상 떨어진 구를 찾아줘")
 
     assert state.status == RunStatus.FAILED
     assert (state.errors[0].step, state.errors[0].code) == (WorkflowStep.INTERPRET_QUERY, code)
@@ -486,9 +486,10 @@ def _population_plan(region: str) -> AnalysisPlan:
     )
 
 
-def _regional(region: str) -> InterpretedQuery:
+def _regional(region: str, phrase: str) -> InterpretedQuery:
     return interpreted(
         intent="regional_summary",
+        region_phrase=phrase,
         restated_question=f"{region} 행정동별 인구 순위",
         key_concepts=["인구수", "행정동 경계"],
         assumptions=[],
@@ -498,12 +499,12 @@ def _regional(region: str) -> InterpretedQuery:
 def test_sigungu_sharing_a_name_is_resolved_with_its_province(pool, national_catalog):
     # 실제 qwen3.5:9b 해석: 시도와 시군구를 붙여 씀
     llm = daycare_llm(
-        interpreted=[_regional("부산광역시중구")],
+        interpreted=[_regional("부산광역시중구", "부산 중구")],
         selection=[DatasetSelection(datasets=["population_by_age", "national_emd_boundary"], rationale="인구와 경계")],
         plans=[_population_plan("부산광역시 중구")],
     )
 
-    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("부산 중구 행정동별 인구 순위")
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("부산 중구 행정동별 인구 순위", AnalysisScope.NATIONAL)
 
     assert state.status == RunStatus.SUCCEEDED, state.errors
     assert (state.resolved_region.name, state.resolved_region.code) == ("부산광역시 중구", "26110")
@@ -518,13 +519,59 @@ def test_sigungu_sharing_a_name_is_resolved_with_its_province(pool, national_cat
 
 
 def test_sigungu_name_shared_by_provinces_stops_with_candidates(pool, national_catalog):
-    llm = daycare_llm(interpreted=[_regional("중구")])
+    llm = daycare_llm(interpreted=[_regional("중구", "중구")])
 
-    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("중구 행정동별 인구 순위")
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("중구 행정동별 인구 순위", AnalysisScope.NATIONAL)
 
     assert (state.errors[0].step, state.errors[0].code) == (WorkflowStep.INTERPRET_QUERY, "REGION_AMBIGUOUS")
     assert "서울특별시 중구, 부산광역시 중구" in state.errors[0].message
     assert llm.prompts_for(AnalysisPlan) == []
+
+
+# 아래 범위 시험은 해석 단계만 본다. 선택 단계에서 없는 Dataset을 골라 계획 전에 멈추게 한다.
+_STOP_AFTER_INTERPRETATION = [DatasetSelection(datasets=["subway_station"], rationale="해석 단계만 확인")]
+
+
+def test_seoul_scope_resolves_a_shared_name_inside_seoul(pool, national_catalog):
+    # 서울 범위의 해석에는 서울 지역만 보여 주므로 '중구'가 서울 중구 하나로 정해진다.
+    llm = daycare_llm(interpreted=[_regional("중구", "중구")], selection=_STOP_AFTER_INTERPRETATION)
+
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("중구 행정동별 인구 순위")
+
+    assert state.scope == AnalysisScope.SEOUL
+    assert state.resolved_region.name == "서울특별시 중구"
+    system = next(system for output_type, system, _ in llm.calls if output_type is InterpretedQuery)
+    assert "- 서울특별시 중구 (sigungu)" in system
+    assert "- 부산광역시 중구 (sigungu)" not in system  # 지역 목록에 서울 밖 지역이 없다
+
+
+def test_region_outside_seoul_scope_asks_to_switch_scope(pool, national_catalog):
+    # 실제 gpt-4o-mini는 지역을 줄여 썼다('부산 중구'). 안내에는 등록된 공식 이름을 쓴다.
+    llm = daycare_llm(interpreted=[_regional("부산 중구", "부산 중구")])
+
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("부산 중구 행정동별 인구 순위")
+
+    [error] = state.errors
+    assert (error.step, error.code) == (WorkflowStep.INTERPRET_QUERY, "REGION_OUT_OF_SCOPE")
+    assert error.message == (
+        "'부산광역시 중구'은(는) 현재 분석 범위(서울) 밖입니다. 설정에서 분석 범위를 전국으로 바꿔 주세요"
+    )
+
+
+@pytest.mark.parametrize(
+    ("scope", "region"), [(AnalysisScope.SEOUL, "서울특별시"), (AnalysisScope.NATIONAL, "대한민국")]
+)
+def test_question_without_region_uses_the_scope_region(pool, national_catalog, scope, region):
+    # 실제 gpt-4o-mini: 지역이 없는 질문을 '대한민국'(emd)처럼 채웠다. 질문에 근거가 없으면 분석 범위의 기준 지역을 쓴다.
+    filled = interpreted(intent="regional_summary", region_phrase=None).model_copy(
+        update={"region": Region(name="대한민국", level="emd")}
+    )
+    llm = daycare_llm(interpreted=[filled], selection=_STOP_AFTER_INTERPRETATION)
+
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("어린이 인구 대비 어린이집이 부족한 행정동을 알려줘", scope)
+
+    assert state.resolved_region.name == region
+    assert f"질문에 지역이 없어 분석 범위의 기준 지역인 {region} 전체를 분석" in state.interpreted_query.assumptions
 
 
 def test_dataset_that_does_not_cover_the_region_stops_before_planning(pool, national_catalog, conn):
@@ -534,7 +581,7 @@ def test_dataset_that_does_not_cover_the_region_stops_before_planning(pool, nati
     sync_catalog_embeddings(conn, FakeEmbedder())
     region = Region(name="부산광역시 중구", level="sigungu")
     llm = daycare_llm(
-        interpreted=[interpreted().model_copy(update={"region": region})],
+        interpreted=[interpreted(region_phrase="부산 중구").model_copy(update={"region": region})],
         selection=[
             DatasetSelection(
                 datasets=["national_emd_boundary", "population_by_age", "daycare_facility"],
@@ -543,7 +590,9 @@ def test_dataset_that_does_not_cover_the_region_stops_before_planning(pool, nati
         ],
     )
 
-    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("부산 중구에서 어린이 인구 대비 어린이집이 부족한 행정동")
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run(
+        "부산 중구에서 어린이 인구 대비 어린이집이 부족한 행정동", AnalysisScope.NATIONAL
+    )
 
     [error] = state.errors
     assert (error.step, error.code) == (WorkflowStep.SELECT_DATASETS, "DATA_NOT_AVAILABLE")

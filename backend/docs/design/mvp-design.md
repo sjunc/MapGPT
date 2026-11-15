@@ -406,6 +406,7 @@ class InterpretedQuery(StrictModel):        # LLM 출력
     intent: AnalysisIntent | None            # None = 지원 범위 밖
     unsupported_reason: str | None
     region: Region | None
+    region_phrase: str | None  # 질문에서 지역을 말한 표현 (없으면 분석 범위의 기준 지역)
     analysis_unit: SpatialLevel | None
     analysis_unit_phrase: str | None  # 질문에서 결과 단위를 말한 표현 (질문에 없으면 가장 세밀한 단위로 보정)
     restated_question: str                   # 분석 질문 재진술
@@ -433,6 +434,7 @@ class WorkflowError(StrictModel):
 class AgentState(BaseModel):
     run_id: str
     question: str
+    scope: AnalysisScope = "seoul"           # 화면 설정의 분석 범위 (seoul | national)
     status: RunStatus                        # running | succeeded | failed
     current_step: WorkflowStep | None = None
     interpreted_query: InterpretedQuery | None = None
@@ -679,7 +681,7 @@ CREATE TABLE analysis.result (
 
 | Method | Path | 설명 |
 |---|---|---|
-| `POST` | `/api/analyses` | `{"question": str}` → 워크플로를 동기 실행한다. `200 {run_id, status, result: FinalResponse \| null, errors: WorkflowError[]}`. 분석 실패(지원 범위 밖, Plan 무효 등)도 run이 기록되므로 200 + `status="failed"`다. 요청 형식 오류는 422, 서버 장애는 500이다. |
+| `POST` | `/api/analyses` | `{"question": str, "scope": "seoul" \| "national" = "seoul"}` → 워크플로를 동기 실행한다. `200 {run_id, status, result: FinalResponse \| null, errors: WorkflowError[]}`. 분석 실패(지원 범위 밖, Plan 무효 등)도 run이 기록되므로 200 + `status="failed"`다. 요청 형식 오류는 422, 서버 장애는 500이다. |
 | `GET` | `/api/analyses/{run_id}` | Provenance(상태 전체)와 결과를 조회한다. 없으면 404. |
 | `GET` | `/api/datasets` | 카탈로그 메타데이터 목록 |
 | `GET` | `/api/health` | DB 연결, LLM provider/model, 임베딩 모델 |
@@ -805,3 +807,4 @@ Validation(5)을 LLM 연동(6)보다 먼저 한다. LLM 출력은 처음부터 �
 | 데이터 없음 안내 (2026-11-15) | 선택 결과에 `required_data`(필요한 데이터마다 그 데이터를 주는 후보 Dataset, 없으면 null)를 두고, 출처가 null이거나 후보에 없는 ID면 선택 단계에서 `DATA_NOT_AVAILABLE`로 멈추며 검색 후보(경계 제외)를 함께 안내한다. 선택한 Dataset 범위가 분석 지역을 포함하지 않을 때도 계획 전에 같은 코드로 멈춘다 | 약국처럼 등록되지 않은 데이터를 물으면 LLM이 없는 ID(`pharmacy_facility`)를 지어내 `INVALID_DATASET_SELECTION`이라는 내부 문구로 멈췄고, 모델에 따라 비슷한 다른 데이터로 대신 답할 위험이 있었음. 범위 밖 지역은 계획을 두 번 만든 뒤에야 계획 검증에서 멈췄음. 처음에는 '없는 데이터' 목록만 받았는데, gpt-4o-mini가 '어린이 인구'·'0~5세 인구'처럼 필터로 만드는 데이터와 지역이 붙은 표현을 없다고 적어 성공해야 할 질문 5개 중 4개를 막았음. 출처를 묻는 형식으로 바꿔 고르면서 없다고 하는 모순이 생기지 않게 했다 |
 | 틀린 답 막기 (2026-11-15) | 계획 검증에 `POPULATION_NOT_SUMMED`(인구 컬럼은 합계만), 결과 검증에 `CONSTANT_METRIC`(값 있는 단위가 2개 이상인데 출력 지표가 모두 같으면 오류)를 추가했다. 실패한 계획에 경계가 아닌 Dataset 필터가 있었으면 `regional_summary` 대체 Plan을 쓰지 않는다. 설명용 사실에 순위 방향(`ranking_order`)을 넣고 설명 규칙에 반영했으며, 플래너에 "`regional_summary` 순위는 적은 쪽을 묻지 않는 한 desc" 규칙을 추가했다. `REGION_NOT_COVERED` 문구는 계획에 적힌 지역 대신 실제로 검사한 지역을 쓴다 | gpt-4o-mini 재현에서 성공한 7건 중 5건이 틀린 답이었음. '평균 소득'을 0~5세 인구의 나이별 평균으로 답했고, '부유한 동네'·'평균 소득'(gpt-4o-mini)과 '0~5세 인구'(qwen3.5:9b)에는 대체 Plan이 조건을 버리고 전체 인구로 답했으며, 오름차순 순위의 최솟값을 '가장 많다'고 설명했음. 팀원이 본 '모두 1'(경계 행 세기 등)도 검증을 그대로 통과했음. 대체 Plan(BE/jjc 추가)은 조건이 없는 질문(공공와이파이 개수 등)에는 계속 쓴다 |
 | 해석 근거 확인 (2026-11-15) | `analysis_unit_specified`(참/거짓) 대신 `analysis_unit_phrase`(질문에서 결과 단위를 말한 표현을 그대로 옮긴 것)를 받는다. 그 표현이 질문에 실제로 있고(공백 무시, 지역 이름 부분 제외) 고른 단위의 행정구역 글자(동·읍·면 / 구·군·시 / 도·시)가 들어 있을 때만 LLM이 고른 단위를 쓰고, 아니면 가장 세밀한 단위로 보정한다. 해석 규칙에 "`supply_demand_gap`은 시설이 인구에 비해 부족한지 물을 때만, 시설 수나 인구 수 한 가지만 세거나 순위를 매기면 `regional_summary`"를 추가했다 | gpt-4o-mini 해석 단계 8문항×3회에서, 단위를 자치구로 맞게 고르고도 "말하지 않았다"고 표시해 행정동으로 바뀐 경우가 3회, 개수·인구 질문('자치구별 어린이집 수 순위', '0~5세 인구가 가장 많은 행정동')을 `supply_demand_gap`으로 해석한 경우가 7회였음. 수정 후 같은 조건에서 각각 1회, 0회였고, 남은 1회(단위가 아닌 말 "어린이집이 가장 많은 곳"을 옮겨 적음)는 행정구역 글자 확인으로 막았다(기록된 출력 24개로 다시 판정해 0회). 11-14의 "키워드 목록 대신 LLM 판단" 결정은 유지하고, 판단 근거를 질문 글자로 확인한다 |
+| 분석 범위 토글 (2026-11-15) | 화면 헤더의 "분석 범위" 토글(서울·전국, 기본 서울, 브라우저에 기억)이 `POST /api/analyses`에 `scope`를 함께 보내고, 실행 기록(`AgentState.scope`)에 남는다. 서울 범위면 해석에 서울과 그 안의 구만 보여 준다. LLM이 옮겨 적은 지역 표현(`region_phrase`)이 질문에 있고 해석한 지역을 가리킬 때만 그 지역을 쓰고, 아니면 범위의 기준 지역(서울특별시·대한민국) 전체를 분석하며 가정에 남긴다. 서울 범위에서 서울 밖 등록 지역을 물으면 `REGION_OUT_OF_SCOPE`로 멈추고 전국으로 바꾸라고 안내한다 | 사용자 결정: 서울 OpenAPI가 잘 갖춰져 있어 서울을 기본으로 하고 전국은 차차 확장한다. 지역을 말하지 않은 질문이 '대한민국'으로 해석돼 실패했고(팀 피드백), 전국 273곳 지역 목록이 해석 프롬프트의 87%를 차지했다(서울 범위 3,233자). 범위는 서버 설정이 아니라 요청 값이라 사용자마다 다르게 쓸 수 있고 실행을 다시 확인할 수 있다 |

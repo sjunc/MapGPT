@@ -234,10 +234,12 @@ LLM 호출 실패(API 오류, 거절, 길이 초과로 잘림, 스키마 불일�
 - 출력 `InterpretedQuery`: `intent`, `unsupported_reason`, `region{name, level}`, `analysis_unit`, `analysis_unit_phrase`, `restated_question`, `key_concepts`, `assumptions`
 - 첫 해석이 `unsupported`이면 지역별 통계로 표현 가능한지 명시해 한 번 재판정합니다. 재판정도 `unsupported`일 때만 종료합니다.
 - LLM이 옮겨 적은 단위 표현이 질문에 없거나(공백 무시, 지역 이름 부분 제외) 고른 단위의 행정구역 글자(행정동 동·읍·면, 시군구 구·군·시, 시도 도·시)가 없으면, 코드가 해당 지역에서 가능한 가장 세밀한 경계 단위로 보정합니다. 글자 확인은 LLM이 '어린이집이 가장 많은 곳'처럼 단위가 아닌 말을 옮겨 적는 경우를 막습니다. '자치구 중', '가장 많은 구'처럼 표현이 다양해 어떤 말이 단위인지는 키워드 목록 대신 LLM이 고르고, 그 말이 질문에 실제로 있는지는 코드가 확인합니다. 참/거짓으로 물었을 때는 gpt-4o-mini가 단위를 자치구로 맞게 고르고도 "말하지 않았다"고 표시해 행정동으로 바뀌는 일이 24회 중 3회 있었습니다.
+- 분석 범위(`scope`, 화면 설정의 서울·전국 토글, 기본 서울)에 따라 해석에 보여 줄 지역 목록을 정합니다. 서울 범위면 서울과 그 안의 구(26곳)만 보여 주므로 프롬프트가 짧고(전국 14,770자 → 3,233자) '중구'가 서울 중구 하나로 정해집니다.
+- LLM은 질문에서 지역을 말한 표현도 옮겨 적습니다(`region_phrase`). 그 표현이 질문에 있고 해석한 지역을 가리킬 때만 LLM의 지역을 따르고, 아니면 분석 범위의 기준 지역(서울특별시 또는 대한민국) 전체를 분석하며 그 사실을 가정에 남깁니다. 지역을 말하지 않은 질문에 gpt-4o-mini가 '대한민국'(emd)처럼 지역을 채웠기 때문입니다.
 - 검사는 다음 순서로 진행합니다. 계획을 만들기 전에 끝내서 불필요한 LLM 호출을 줄입니다.
   1. 재판정 후에도 intent가 없으면 `UNSUPPORTED_QUESTION`
   2. 지역이나 단위가 없으면 `INCOMPLETE_INTERPRETATION`
-  3. 해석한 지역을 지역 목록과 대조합니다(이름의 공백은 무시하고, 시도는 앞부분만 써도, 시군구는 시도를 빼거나 줄여 써도 찾음). 같은 단위의 지역이 없으면 `REGION_NOT_SUPPORTED`(메시지 예: `'서울특별시'(emd) 데이터가 없습니다. 분석 가능한 지역: 서울특별시(sido)`), '중구'처럼 여러 곳이면 후보를 안내하며 `REGION_AMBIGUOUS`로 멈춥니다. 하나로 정해지면 공식 이름과 행정코드를 `AgentState.resolved_region`에 남기고, 경계는 이름이 아니라 이 코드로 거릅니다.
+  3. 해석한 지역을 지역 목록과 대조합니다(이름의 공백은 무시하고, 시도는 앞부분만 써도, 시군구는 시도를 빼거나 줄여 써도 찾음). 범위 밖의 등록 지역이면 `REGION_OUT_OF_SCOPE`(설정에서 전국으로 바꾸라는 안내), 같은 단위의 지역이 없으면 `REGION_NOT_SUPPORTED`(메시지 예: `'서울특별시'(emd) 데이터가 없습니다. 분석 가능한 지역: 서울특별시(sido)`), '중구'처럼 여러 곳이면 후보를 안내하며 `REGION_AMBIGUOUS`로 멈춥니다. 하나로 정해지면 공식 이름과 행정코드를 `AgentState.resolved_region`에 남기고, 경계는 이름이 아니라 이 코드로 거릅니다.
   4. 그 지역에 해당 단위의 경계 데이터가 없으면 `UNIT_NOT_SUPPORTED`. 메시지 예: `분석 가능한 단위: 행정동(emd)`
 
 #### ② select_datasets: 후보 검색과 선택
@@ -503,7 +505,7 @@ LLM 출력은 세 겹으로 검사합니다.
 
 | 단계 | 코드 |
 |---|---|
-| 해석 | `UNSUPPORTED_QUESTION`, `INCOMPLETE_INTERPRETATION`, `REGION_NOT_SUPPORTED`, `UNIT_NOT_SUPPORTED` |
+| 해석 | `UNSUPPORTED_QUESTION`, `INCOMPLETE_INTERPRETATION`, `REGION_OUT_OF_SCOPE`, `REGION_NOT_SUPPORTED`, `UNIT_NOT_SUPPORTED` |
 | 검색·선택 | `CATALOG_INDEX_STALE`, `EMBEDDING_FAILED`, `DATA_NOT_AVAILABLE`(필요한 데이터가 없거나 분석 지역이 범위 밖), `INVALID_DATASET_SELECTION` |
 | 계획 | `PLAN_INVALID` (`issues`에 Plan Validator 코드) |
 | GIS 실행 | GIS Tool 코드가 그대로 올라옴: `UNIT_BOUNDARY_MISSING`, `REGION_NOT_COVERED`, `DATASET_TABLE_MISSING`, `DATASET_EMPTY`, `FILTER_INVALID`, `FILTER_EMPTY_RESULT`, `NOT_POLYGON`, `BOUNDARY_METADATA_INCOMPLETE`, `REGION_NOT_FOUND`, `DUPLICATE_UNIT_KEY`, `INVALID_GEOMETRY`, `CRS_UNSUPPORTED`, `NO_GEOMETRY`, `NOT_POINT`, `UNSUPPORTED_AGGREGATION`, `MULTI_GROUP_UNSUPPORTED`, `FIELD_UNKNOWN`, `FIELD_NOT_NUMERIC`, `NON_FINITE_RESULT`, `OUTPUT_CRS_INVALID`, `GEOMETRY_MISSING` |
@@ -761,7 +763,7 @@ app/
 
 | Method | Path | 설명 | 응답 |
 |---|---|---|---|
-| `POST` | `/api/analyses` | `{"question": "..."}`(1~500자)로 워크플로를 동기 실행 | 200 `{run_id, status, result, errors}`. 분석 실패도 200 + `status: "failed"`. 형식 오류 422, LLM·임베딩 설정 누락 503 |
+| `POST` | `/api/analyses` | `{"question": "...", "scope": "seoul"}`(질문 1~500자, 범위 `seoul`·`national`, 기본 `seoul`)로 워크플로를 동기 실행 | 200 `{run_id, status, result, errors}`. 분석 실패도 200 + `status: "failed"`. 형식 오류 422, LLM·임베딩 설정 누락 503 |
 | `GET` | `/api/analyses/{run_id}` | 실행 기록과 결과 조회 | `{run_id, status, question, provenance, result}`. 없으면 404 |
 | `GET` | `/api/datasets` | 카탈로그 메타데이터 목록 | `DatasetMetadata[]` |
 | `GET` | `/api/health` | 상태 확인 | `{status, database, llm_provider, llm_model, embedding_model}` |
@@ -806,7 +808,7 @@ app/
 | `python -m app.cli download` | 경계 GeoJSON, 인구 CSV를 `data/raw/`로 다운로드 |
 | `python -m app.cli ingest <all / emd_boundary / population_by_age / daycare_facility> [--refresh]` | 적재. 어린이집은 API 캐시를 쓰고, `--refresh`면 다시 수집. 끝나면 임베딩 동기화 |
 | `python -m app.cli embed-catalog [--refresh]` | 카탈로그 임베딩 동기화 (`--refresh`면 전부 다시) |
-| `python -m app.cli analyze "질문"` | 터미널에서 워크플로 실행, 순위와 한계 출력 |
+| `python -m app.cli analyze "질문" [--scope national]` | 터미널에서 워크플로 실행, 순위와 한계 출력 |
 
 ### 6.5 설정 (`.env`)
 
@@ -993,7 +995,8 @@ FROM analysis.run GROUP BY 1, 2, 3 ORDER BY 1, 2;
 | 503, 메시지에 `OLLAMA_MODEL` | `LLM_PROVIDER=ollama`인데 모델이 지정되지 않음 |
 | `CATALOG_INDEX_STALE` | 메타데이터가 바뀌었거나 임베딩 모델이 바뀜 → `python -m app.cli embed-catalog` |
 | `DATASET_TABLE_MISSING`, `DATASET_EMPTY` | 적재 전 → `init-db`, `download`, `ingest all` |
-| `REGION_NOT_SUPPORTED` | 서울 밖 지역이거나, LLM이 지역 단위를 잘못 채움(메시지의 `(단위)`와 `state.interpreted_query` 확인) |
+| `REGION_OUT_OF_SCOPE` | 서울 범위에서 서울 밖 지역을 물음 → 화면 설정에서 분석 범위를 전국으로 |
+| `REGION_NOT_SUPPORTED` | 데이터가 없는 지역이거나, LLM이 지역 단위를 잘못 채움(메시지의 `(단위)`와 `state.interpreted_query` 확인) |
 | `UNIT_NOT_SUPPORTED` | 행정동 외 단위(예: 구별) 요청. 현재 경계 데이터는 행정동뿐 |
 | `PLAN_INVALID` | `errors[0].issues`와 `plan_history`에서 어떤 규칙에 걸렸는지 확인. 반복되면 프롬프트 규칙 보강 검토 |
 | `LLM_FAILED` | API 키·네트워크·모델 이름 확인, Ollama라면 `ollama serve` 실행 여부 확인 |

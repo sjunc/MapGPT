@@ -163,7 +163,7 @@ API 테스트([tests/integration/test_api.py](../tests/integration/test_api.py))
 
 | Method | Path | 요청 | 응답 |
 |---|---|---|---|
-| `POST` | `/api/analyses` | `{"question": "..."}` (1~500자) | 200 `{run_id, status, result, errors}`. 분석이 실패해도 200 + `status: "failed"`. 형식 오류 422, LLM·임베딩 설정 누락 503, 단계 밖 예외 500 |
+| `POST` | `/api/analyses` | `{"question": "...", "scope": "seoul"}` (질문 1~500자, 범위 `seoul`·`national`, 기본 `seoul`) | 200 `{run_id, status, result, errors}`. 분석이 실패해도 200 + `status: "failed"`. 형식 오류 422, LLM·임베딩 설정 누락 503, 단계 밖 예외 500 |
 | `GET` | `/api/analyses/{run_id}` | `run_id`는 UUID | 200 `{run_id, status, question, provenance, result}`. 없으면 404 |
 | `GET` | `/api/datasets` | 없음 | 200 `DatasetMetadata[]` (카탈로그) |
 | `GET` | `/api/health` | 없음 | 200 `{status, database, llm_provider, llm_model, embedding_model}`. `status`는 `ok` 또는 `degraded` |

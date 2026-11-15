@@ -11,14 +11,16 @@ import { AnalysisResultPanel } from "./components/AnalysisResultPanel";
 import { ErrorPanel } from "./components/ErrorPanel";
 import { Legend } from "./components/Legend";
 import { loadDemoAnalysis } from "./demo";
+import { SCOPE_HINTS, SCOPE_LABELS, SCOPES, readScope, saveScope } from "./scope";
 import { useColorScheme } from "./theme";
-import type { AnalysisResponse, WorkflowError } from "./types";
+import type { AnalysisResponse, AnalysisScope, WorkflowError } from "./types";
 import type { FocusRequest } from "./components/ChoroplethMap";
 import "./p3.css";
 import "./p4.css";
 import "./p5.css";
 import "./p6.css";
 import "./p7.css";
+import "./p8.css";
 
 const EXAMPLE = "서울에서 어린이 인구 대비 어린이집이 부족한 행정동을 알려줘.";
 const DEMO_MODE = new URLSearchParams(window.location.search).get("demo") === "1";
@@ -41,6 +43,7 @@ function useElapsedSeconds(running: boolean): number {
 export function App() {
   const scheme = useColorScheme();
   const [question, setQuestion] = useState("");
+  const [scope, setScope] = useState<AnalysisScope>(readScope);
   const [panelOpen, setPanelOpen] = useState(true);
   const [mobileExpanded, setMobileExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -230,7 +233,7 @@ export function App() {
     const sequence = ++requestSequence.current;
 
     try {
-      const next = DEMO_MODE ? await loadDemoAnalysis() : await requestAnalysis(text);
+      const next = DEMO_MODE ? await loadDemoAnalysis() : await requestAnalysis(text, scope);
       if (requestSequence.current !== sequence) return;
 
       if (next.status === "succeeded") {
@@ -368,6 +371,27 @@ export function App() {
           {DEMO_MODE && <span className="p3-demo-label">데모 · 가상 수치</span>}
         </div>
         <div className="p4-header-actions">
+          {!DEMO_MODE && (
+            <div className="p8-scope" role="radiogroup" aria-label="분석 범위">
+              <span className="p8-scope-label" aria-hidden="true">분석 범위</span>
+              {SCOPES.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  role="radio"
+                  aria-checked={scope === option}
+                  onClick={() => {
+                    setScope(option);
+                    saveScope(option);
+                  }}
+                  disabled={loading}
+                  title={SCOPE_HINTS[option]}
+                >
+                  {SCOPE_LABELS[option]}
+                </button>
+              ))}
+            </div>
+          )}
           {(result || requestError || failedRun || runningRunId) && (
             <button
               type="button"

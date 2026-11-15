@@ -100,7 +100,7 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
 
 | API | 화면에서 쓰는 곳 |
 |---|---|
-| `POST /api/analyses` | 분석 요청 ([api.ts](../src/api.ts)) |
+| `POST /api/analyses` | 분석 요청 ([api.ts](../src/api.ts)). 본문은 `{question, scope}`이고, `scope`는 헤더의 "분석 범위" 토글(서울·전국, 기본 서울, 이 브라우저에 기억)에서 온다 ([scope.ts](../src/scope.ts)) |
 | `GET /api/analyses/{run_id}` | "실행 기록" 링크로 원본 JSON을 새 탭에 연다 |
 | `GET /api/datasets`, `GET /api/health` | 쓰지 않는다 |
 
@@ -227,7 +227,8 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
 
 - 지금은 오류 코드(`REGION_NOT_SUPPORTED` 등)와 백엔드 메시지를 그대로 보여준다.
 - 자주 나는 코드에는 사용자용 안내를 붙이는 것을 권한다.
-  - `REGION_NOT_SUPPORTED`: "현재는 서울만 분석할 수 있습니다"
+  - `REGION_OUT_OF_SCOPE`: 백엔드 메시지가 이미 "설정에서 분석 범위를 전국으로 바꿔 주세요"를 안내한다. 토글로 바로 이어지게 할 수 있다.
+  - `REGION_NOT_SUPPORTED`: "이 지역은 아직 데이터가 없습니다"
   - `UNIT_NOT_SUPPORTED`: "행정동 단위만 지원합니다"
 - 지원하는 질문 예시도 보여주면 좋다.
 - 코드별 의미는 [개요 문서 3.7절](../../backend/docs/agent-design-overview.md#37-실패-코드-모음-workflowerrorcode)과 [10.2절](../../backend/docs/agent-design-overview.md#102-자주-보는-오류)에 있다.

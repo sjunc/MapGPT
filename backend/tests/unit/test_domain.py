@@ -12,14 +12,16 @@ from app.domain.operations import (
 )
 from app.catalog.definitions import KOREA, SEOUL, TRUSTED_DATASETS
 from app.agents.prompts import interpret_prompt
-from app.domain.enums import SpatialLevel
+from app.domain.enums import AnalysisScope, SpatialLevel
 from app.domain.catalog import RegionRef
 from app.domain.plan import (
     AnalysisPlan,
     DatasetFilter,
     Region,
     analysis_units,
+    in_scope,
     match_regions,
+    region_named,
     resolve_region,
     unit_named,
 )
@@ -211,11 +213,36 @@ def test_match_regions_resolves_interpreted_names_to_registered_regions(name, le
     assert [region.code for region in match_regions(Region(name=name, level=level), REGIONS)] == codes
 
 
-def test_interpretation_reports_how_the_question_named_a_unit():
+def test_interpretation_reports_how_the_question_named_a_unit_and_region():
     system, _ = interpret_prompt("서울 자치구 중 어린이집이 가장 많은 곳은?", [(SEOUL, [SpatialLevel.SIGUNGU])])
 
-    assert "analysis_unit_phrase" in system
-    assert "analysis_unit_phrase" in to_llm_json_schema(InterpretedQuery)["required"]
+    for field in ("analysis_unit_phrase", "region_phrase"):
+        assert field in system
+        assert field in to_llm_json_schema(InterpretedQuery)["required"]
+
+
+@pytest.mark.parametrize(
+    ("question", "phrase", "region", "level", "named"),
+    [
+        ("부산 중구 행정동별 인구 순위", "부산 중구", "부산광역시 중구", "sigungu", True),  # 줄여 쓴 시도
+        ("부산 중구 행정동별 인구 순위", "부산 중구", "부산광역시중구", "sigungu", True),  # 붙여 쓴 이름
+        ("강남구에서 어린이집이 가장 부족한 곳은?", "강남구에서", "서울특별시 강남구", "sigungu", True),  # 조사
+        ("전국에서 인구가 가장 많은 시도는?", "전국", "대한민국", "country", True),
+        ("어린이 인구 대비 어린이집이 부족한 행정동", None, "대한민국", "country", False),
+        ("어린이 인구 대비 어린이집이 부족한 행정동", "행정동", "대한민국", "emd", False),  # 지역이 아닌 말
+        ("어린이 인구 대비 어린이집이 부족한 행정동", "서울", "서울특별시", "sido", False),  # 질문에 없는 말
+    ],
+)
+def test_region_phrase_must_appear_in_the_question_and_name_the_region(question, phrase, region, level, named):
+    assert region_named(question, phrase, Region(name=region, level=level)) is named
+
+
+def test_seoul_scope_keeps_seoul_and_its_districts():
+    gangnam = RegionRef(name="서울특별시 강남구", level=SpatialLevel.SIGUNGU, code="11680")
+    busan = RegionRef(name="부산광역시", level=SpatialLevel.SIDO, code="26")
+
+    assert [in_scope(r, AnalysisScope.SEOUL) for r in (SEOUL, gangnam, busan, KOREA)] == [True, True, False, False]
+    assert all(in_scope(r, AnalysisScope.NATIONAL) for r in (SEOUL, gangnam, busan, KOREA))
 
 
 @pytest.mark.parametrize(

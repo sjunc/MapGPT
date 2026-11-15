@@ -3,6 +3,9 @@ import type { FeatureCollection, MultiPolygon } from "geojson";
 
 export type MetricValue = number | null;
 
+/** 분석 범위 (backend AnalysisScope). 질문마다 함께 보낸다. */
+export type AnalysisScope = "seoul" | "national";
+
 export interface RankingItem {
   rank: number;
   unit_key: string;

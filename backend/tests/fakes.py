@@ -58,6 +58,7 @@ def interpreted(region: str = SEOUL.name, **overrides) -> InterpretedQuery:
         "intent": "supply_demand_gap",
         "unsupported_reason": None,
         "region": Region(name=region, level="sido"),
+        "region_phrase": "서울",  # 기본 질문이 '서울'을 말한다
         "analysis_unit": "emd",
         "analysis_unit_phrase": "행정동",  # 기본 질문이 '행정동'을 말한다
         "restated_question": "서울특별시 행정동별 0~5세 인구 1,000명당 어린이집 수가 적은 곳",
