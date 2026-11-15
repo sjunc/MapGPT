@@ -3,6 +3,7 @@ import pytest
 from app.catalog.definitions import DAYCARE_FACILITY, EMD_BOUNDARY, POPULATION_BY_AGE, SEOUL
 from app.domain.enums import AggregationFunction
 from app.domain.filters import FilterCondition
+from app.domain.maps import map_style
 from app.executor.operation_executor import execute_operations, prepare_context
 from app.gis import tools
 from app.gis.tools import GisToolError
@@ -116,13 +117,18 @@ def test_points_stored_in_another_crs_are_normalized_before_overlay(conn, datase
     assert result.values == {**EXPECTED["daycare_count"], "1111000100": 3}
 
 
-def test_choropleth_layer_is_wgs84_geojson_with_quantile_breaks(conn, datasets):
+def test_map_layer_is_wgs84_geojson_with_quantile_breaks_and_label_points(conn, datasets):
     plan = load_plan()
     ctx = prepare_context(conn, plan, datasets, SEOUL)
     result = execute_operations(ctx)
 
-    layer = tools.create_choropleth_layer(
-        conn, ctx.boundary, result.rows, "daycare_per_1000_children", "0~5세 어린이 1,000명당 어린이집 수"
+    layer = tools.create_map_layer(
+        conn,
+        ctx.boundary,
+        result.rows,
+        "daycare_per_1000_children",
+        "0~5세 어린이 1,000명당 어린이집 수",
+        map_style(plan),
     )
 
     features = layer.geojson["features"]
@@ -133,3 +139,10 @@ def test_choropleth_layer_is_wgs84_geojson_with_quantile_breaks(conn, datasets):
     assert features[1]["properties"]["null_reason"] == "denominator_zero"
     assert (layer.null_count, layer.classification.min, layer.classification.max) == (2, 0.0, 40.0)
     assert layer.classification.breaks == [5.0, 20.0, 40.0]
+    assert layer.style.default_view == "choropleth"
+    # 비례 원을 그릴 대표점은 각 단위 Polygon 안에 있다.
+    for feature in features:
+        x, y = feature["properties"]["label_point"]
+        ring = feature["geometry"]["coordinates"][0][0]
+        assert min(p[0] for p in ring) < x < max(p[0] for p in ring)
+        assert min(p[1] for p in ring) < y < max(p[1] for p in ring)

@@ -3,12 +3,12 @@ from typing import Any, Literal
 
 from app.domain.base import StrictModel
 from app.domain.catalog import RegionRef
-from app.domain.enums import MapType, Severity, SpatialLevel
+from app.domain.enums import MapType, MapView, Severity, SpatialLevel
 
 MetricValue = float | int | None
 
 # 지도 GeoJSON properties에서 지표 이름과 겹치면 안 되는 예약 이름
-RESERVED_PROPERTY_NAMES = frozenset({"unit_key", "unit_name", "parent_name", "null_reason"})
+RESERVED_PROPERTY_NAMES = frozenset({"unit_key", "unit_name", "parent_name", "null_reason", "label_point"})
 
 
 class ValidationIssue(StrictModel):
@@ -88,6 +88,17 @@ class Classification(StrictModel):
     max: float | None
 
 
+class MapStyle(StrictModel):
+    """지도 지표의 성격과 순위 방향으로 코드가 정한 지도 보기 (domain/maps.py)."""
+
+    default_view: MapView
+    views: list[MapView]  # 화면에서 바꿔 볼 수 있는 보기 (기본 보기 포함)
+    emphasis: Literal["low", "high"]  # 진하게 강조할 쪽 값 (순위와 같은 방향)
+    legend_low: str  # 범례에서 작은 값 쪽 문구
+    legend_high: str  # 범례에서 큰 값 쪽 문구
+    note: str  # 이 보기를 고른 이유 (화면에 그대로 보인다)
+
+
 class MapLayer(StrictModel):
     type: MapType
     metric: str
@@ -96,7 +107,8 @@ class MapLayer(StrictModel):
     classification: Classification
     feature_count: int
     null_count: int
-    geojson: dict[str, Any]
+    geojson: dict[str, Any]  # 단위마다 properties.label_point = [경도, 위도] (비례 원 위치)
+    style: MapStyle
 
 
 class MetricDescription(StrictModel):

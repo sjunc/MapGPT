@@ -106,6 +106,21 @@ class MapType(StrEnum):
     CHOROPLETH = "choropleth"
 
 
+class MetricKind(StrEnum):
+    """지도 지표의 성격. 결과 지도를 어떻게 그릴지 정한다."""
+
+    RATE = "rate"  # 비율 (calculate_ratio)
+    AVERAGE = "average"  # 평균 (aggregate avg)
+    TOTAL = "total"  # 개수·합계 (aggregate_by_area count, aggregate sum·count)
+
+
+class MapView(StrEnum):
+    """결과 지도를 그리는 방식."""
+
+    CHOROPLETH = "choropleth"  # 단계 구분도: 값 구간별 색으로 지역을 칠한다
+    PROPORTIONAL_SYMBOL = "proportional_symbol"  # 비례 원: 값에 비례한 넓이의 원을 지역 안에 그린다
+
+
 class Severity(StrEnum):
     ERROR = "error"
     WARNING = "warning"

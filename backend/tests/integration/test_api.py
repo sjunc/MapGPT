@@ -37,6 +37,8 @@ def test_analysis_endpoint_returns_map_ranking_and_explanation(client):
     assert result["metric"]["name"] == "daycare_per_1000_children"
     assert result["ranking"][0]["unit_name"] == "카동"
     assert result["map_layer"]["geojson"]["type"] == "FeatureCollection"
+    assert result["map_layer"]["style"]["default_view"] == "choropleth"
+    assert len(result["map_layer"]["geojson"]["features"][0]["properties"]["label_point"]) == 2
     assert {d["dataset_id"]: d["reference_date"] for d in result["datasets"]} == {
         "emd_boundary": "2026-07-01",
         "population_by_age": "2026-09-30",

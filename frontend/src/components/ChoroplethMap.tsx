@@ -1,4 +1,5 @@
 import type { ExpressionSpecification } from "@maplibre/maplibre-gl-style-spec";
+import type { FeatureCollection, Point } from "geojson";
 import {
   type GeoJSONSource,
   LngLatBounds,
@@ -12,14 +13,29 @@ import "maplibre-gl/dist/maplibre-gl.css";
 // MapLibre v6: Vite가 번들한 worker URL을 명시적으로 지정한다.
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { useEffect, useRef } from "react";
-import { type ColorScheme, MAP_CHROME, NULL_REASONS, classColors, formatValue } from "../theme";
-import type { FinalResponse, UnitProperties } from "../types";
+import {
+  type ColorScheme,
+  MAP_CHROME,
+  NULL_REASONS,
+  classColors,
+  formatValue,
+  layerStyle,
+  symbolMaxRadius,
+} from "../theme";
+import type { FinalResponse, MapView, UnitProperties } from "../types";
 import { MapResetControl } from "./MapResetControl";
 
 setWorkerUrl(maplibreWorkerUrl);
 
 const SOURCE = "units";
+const POINT_SOURCE = "unit-points";
 const LAYERS = ["units-fill", "units-separator", "units-hover"];
+const SYMBOL_LAYERS = ["units-outline", "unit-symbols"];
+// 보기마다 보이는 레이어. hover·선택 테두리(units-hover)는 두 보기 모두에서 보인다.
+const VIEW_LAYERS: Record<MapView, string[]> = {
+  choropleth: [LAYERS[0], LAYERS[1]],
+  proportional_symbol: SYMBOL_LAYERS,
+};
 
 // 표에서 지역을 선택할 때마다 sequence가 증가하므로 같은 행을 다시 눌러도 이동할 수 있다.
 export interface FocusRequest {
@@ -29,11 +45,45 @@ export interface FocusRequest {
 
 function fillColor(result: FinalResponse, scheme: ColorScheme): ExpressionSpecification {
   const { metric, classification } = result.map_layer;
-  const colors = classColors(scheme, classification.class_count);
+  const colors = classColors(scheme, classification.class_count, layerStyle(result.map_layer).emphasis);
   const value: ExpressionSpecification = ["get", metric];
   const stops = classification.breaks.flatMap((limit, i) => [limit, colors[i + 1]]);
   const classified = (stops.length > 0 ? ["step", value, colors[0], ...stops] : colors[0]) as ExpressionSpecification;
   return ["case", ["==", value, null], MAP_CHROME[scheme].noData, classified];
+}
+
+/** 단위마다 대표점(label_point)에 놓을 비례 원. 예전 실행 기록에는 대표점이 없어 비어 있다. */
+function unitPoints(result: FinalResponse): FeatureCollection<Point, UnitProperties> {
+  return {
+    type: "FeatureCollection",
+    features: result.map_layer.geojson.features.flatMap((feature) => {
+      const point = feature.properties.label_point;
+      return point
+        ? [{ type: "Feature" as const, id: feature.id, geometry: { type: "Point" as const, coordinates: point }, properties: feature.properties }]
+        : [];
+    }),
+  };
+}
+
+/** 원의 넓이가 값에 비례하도록 반지름은 값의 제곱근으로 키운다. */
+function symbolRadius(result: FinalResponse): ExpressionSpecification | number {
+  const { metric, classification, feature_count } = result.map_layer;
+  const max = classification.max ?? 0;
+  if (max <= 0) return 0;
+  return ["*", symbolMaxRadius(feature_count), ["sqrt", ["/", ["max", ["to-number", ["get", metric]], 0], max]]];
+}
+
+function applyView(map: MapLibreMap, view: MapView) {
+  for (const [name, layers] of Object.entries(VIEW_LAYERS)) {
+    for (const layer of layers) map.setLayoutProperty(layer, "visibility", name === view ? "visible" : "none");
+  }
+}
+
+// 두 보기의 같은 지역을 함께 강조한다 (면과 원은 같은 unit_key를 쓴다).
+function setUnitState(map: MapLibreMap, id: string, state: Record<string, boolean>) {
+  for (const source of [SOURCE, POINT_SOURCE]) {
+    if (map.getSource(source)) map.setFeatureState({ source, id }, state);
+  }
 }
 
 // LLM이 만든 문자열은 팝업 HTML에 삽입하기 전에 반드시 이스케이프한다.
@@ -122,14 +172,22 @@ function focusFeature(map: MapLibreMap, result: FinalResponse, key: string, pane
   });
 }
 
-function applyResult(map: MapLibreMap, result: FinalResponse, scheme: ColorScheme, panelOpen: boolean) {
+function applyResult(map: MapLibreMap, result: FinalResponse, scheme: ColorScheme, panelOpen: boolean, view: MapView) {
+  const value: ExpressionSpecification = ["get", result.map_layer.metric];
   (map.getSource(SOURCE) as GeoJSONSource).setData(result.map_layer.geojson);
+  (map.getSource(POINT_SOURCE) as GeoJSONSource).setData(unitPoints(result));
   map.setPaintProperty("units-fill", "fill-color", fillColor(result, scheme));
+  map.setPaintProperty(SYMBOL_LAYERS[1], "circle-radius", symbolRadius(result));
+  map.setFilter(SYMBOL_LAYERS[1], ["!=", value, null]); // 값이 없는 지역은 원을 그리지 않는다
+  map.setLayoutProperty(SYMBOL_LAYERS[1], "circle-sort-key", ["-", 0, ["to-number", value]]); // 작은 원이 위에
+  applyView(map, view);
   fitResultBounds(map, result, panelOpen);
 }
 
 interface Props {
   result: FinalResponse;
+  /** 지금 보여줄 지도 보기 (기본값은 백엔드가 지표 성격으로 정한다) */
+  view: MapView;
   scheme: ColorScheme;
   hoveredKey: string | null;
   onHover: (key: string | null) => void;
@@ -141,13 +199,13 @@ interface Props {
 }
 
 export function ChoroplethMap({
-  result, scheme, hoveredKey, onHover, panelOpen, panelExpanded, selectedKey, onSelect, focusRequest,
+  result, view, scheme, hoveredKey, onHover, panelOpen, panelExpanded, selectedKey, onSelect, focusRequest,
 }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
   const ready = useRef(false);
-  const latest = useRef({ result, onHover, hoveredKey, panelOpen, selectedKey, onSelect, focusRequest });
-  latest.current = { result, onHover, hoveredKey, panelOpen, selectedKey, onSelect, focusRequest };
+  const latest = useRef({ result, view, onHover, hoveredKey, panelOpen, selectedKey, onSelect, focusRequest });
+  latest.current = { result, view, onHover, hoveredKey, panelOpen, selectedKey, onSelect, focusRequest };
   const clickPopupRef = useRef<Popup | null>(null);
 
   // 배경지도 스타일이 바뀌면 MapLibre 지도를 새로 생성한다.
@@ -219,52 +277,87 @@ export function ChoroplethMap({
         beforeId,
       );
 
+      // 비례 원 보기: 옅은 지역 경계선과, 지명 라벨 위에 그리는 원
+      instance.addSource(POINT_SOURCE, {
+        type: "geojson",
+        data: unitPoints(latest.current.result),
+        promoteId: "unit_key",
+      });
+      instance.addLayer(
+        {
+          id: SYMBOL_LAYERS[0],
+          type: "line",
+          source: SOURCE,
+          layout: { visibility: "none" },
+          paint: { "line-width": 0.8, "line-color": chrome.outline, "line-opacity": 0.8 },
+        },
+        beforeId,
+      );
+      instance.addLayer({
+        id: SYMBOL_LAYERS[1],
+        type: "circle",
+        source: POINT_SOURCE,
+        layout: { visibility: "none" },
+        paint: {
+          "circle-color": chrome.symbol,
+          "circle-opacity": 0.78,
+          "circle-stroke-color": [
+            "case",
+            ["any", ["boolean", ["feature-state", "selected"], false], ["boolean", ["feature-state", "hover"], false]],
+            chrome.hover,
+            chrome.separator,
+          ],
+          "circle-stroke-width": [
+            "case",
+            ["boolean", ["feature-state", "selected"], false], 3,
+            ["boolean", ["feature-state", "hover"], false], 2,
+            1,
+          ],
+        },
+      });
+
       ready.current = true;
-      applyResult(instance, latest.current.result, scheme, latest.current.panelOpen);
+      applyResult(instance, latest.current.result, scheme, latest.current.panelOpen, latest.current.view);
 
       if (latest.current.hoveredKey !== null) {
-        instance.setFeatureState(
-          { source: SOURCE, id: latest.current.hoveredKey },
-          { hover: true },
-        );
+        setUnitState(instance, latest.current.hoveredKey, { hover: true });
       }
       if (latest.current.selectedKey !== null) {
-        instance.setFeatureState(
-          { source: SOURCE, id: latest.current.selectedKey },
-          { selected: true },
-        );
+        setUnitState(instance, latest.current.selectedKey, { selected: true });
       }
       if (latest.current.focusRequest) {
         focusFeature(instance, latest.current.result, latest.current.focusRequest.unitKey, latest.current.panelOpen);
       }
     });
 
-    // 마우스 hover: 일시적인 팝업과 표/지도 강조 동기화
-    instance.on("mousemove", LAYERS[0], (event: MapLayerMouseEvent) => {
-      const feature = event.features?.[0];
-      if (!feature) return;
+    // 마우스 hover: 일시적인 팝업과 표/지도 강조 동기화. 보이는 보기의 면이나 원에서만 일어난다.
+    for (const layer of [LAYERS[0], SYMBOL_LAYERS[1]]) {
+      instance.on("mousemove", layer, (event: MapLayerMouseEvent) => {
+        const feature = event.features?.[0];
+        if (!feature) return;
 
-      instance.getCanvas().style.cursor = "pointer";
-      latest.current.onHover(feature.properties.unit_key as string);
+        instance.getCanvas().style.cursor = "pointer";
+        latest.current.onHover(feature.properties.unit_key as string);
 
-      if (clickPopup.isOpen()) return;
-      hoverPopup
-        .setLngLat(event.lngLat)
-        .setHTML(tooltipHtml(latest.current.result, feature.properties as UnitProperties))
-        .addTo(instance);
-    });
+        if (clickPopup.isOpen()) return;
+        hoverPopup
+          .setLngLat(event.lngLat)
+          .setHTML(tooltipHtml(latest.current.result, feature.properties as UnitProperties))
+          .addTo(instance);
+      });
 
-    instance.on("mouseleave", LAYERS[0], () => {
-      instance.getCanvas().style.cursor = "";
-      latest.current.onHover(null);
-      hoverPopup.remove();
-    });
+      instance.on("mouseleave", layer, () => {
+        instance.getCanvas().style.cursor = "";
+        latest.current.onHover(null);
+        hoverPopup.remove();
+      });
+    }
 
     // 클릭 및 모바일 탭: 닫기 버튼이 있는 고정 팝업
     instance.on("click", (event) => {
       if (!ready.current) return;
 
-      const feature = instance.queryRenderedFeatures(event.point, { layers: [LAYERS[0]] })[0];
+      const feature = instance.queryRenderedFeatures(event.point, { layers: [LAYERS[0], SYMBOL_LAYERS[1]] })[0];
       if (!feature) {
         clickPopup.remove();
         latest.current.onSelect(null);
@@ -302,8 +395,14 @@ export function ChoroplethMap({
   // 새 분석 결과를 기존 지도 레이어에 반영한다.
   useEffect(() => {
     if (!map.current || !ready.current) return;
-    applyResult(map.current, result, scheme, panelOpen);
+    applyResult(map.current, result, scheme, panelOpen, view);
   }, [result, scheme]);
+
+  // 단계 구분도 ↔ 비례 원 보기를 바꾼다.
+  useEffect(() => {
+    if (!map.current || !ready.current) return;
+    applyView(map.current, view);
+  }, [view]);
 
   // 패널의 열림/닫힘에 따라 지도 중심과 배율을 다시 맞춘다.
   useEffect(() => {
@@ -319,12 +418,8 @@ export function ChoroplethMap({
       return;
     }
 
-    instance.setFeatureState({ source: SOURCE, id: selectedKey }, { selected: true });
-    return () => {
-      if (instance.getSource(SOURCE)) {
-        instance.setFeatureState({ source: SOURCE, id: selectedKey }, { selected: false });
-      }
-    };
+    setUnitState(instance, selectedKey, { selected: true });
+    return () => setUnitState(instance, selectedKey, { selected: false });
   }, [selectedKey]);
 
   // 순위표 클릭 시 대상 행정구역으로 이동한다. 지도 클릭은 지도를 이동시키지 않는다.
@@ -340,12 +435,8 @@ export function ChoroplethMap({
     const instance = map.current;
     if (!instance || !ready.current || hoveredKey === null) return;
 
-    instance.setFeatureState({ source: SOURCE, id: hoveredKey }, { hover: true });
-    return () => {
-      if (instance.getSource(SOURCE)) {
-        instance.setFeatureState({ source: SOURCE, id: hoveredKey }, { hover: false });
-      }
-    };
+    setUnitState(instance, hoveredKey, { hover: true });
+    return () => setUnitState(instance, hoveredKey, { hover: false });
   }, [hoveredKey]);
 
   return (
@@ -353,7 +444,7 @@ export function ChoroplethMap({
       ref={container}
       className="map"
       role="img"
-      aria-label={`${result.map_layer.metric_label} Choropleth 지도`}
+      aria-label={`${result.map_layer.metric_label} ${view === "choropleth" ? "단계 구분도" : "비례 원"} 지도`}
     />
   );
 }

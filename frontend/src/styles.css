@@ -105,6 +105,17 @@ table.ranking { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .swatch { display: inline-block; width: 16px; height: 12px; border-radius: 2px; }
 .legend-range { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .legend-ends { display: flex; justify-content: space-between; margin-top: 4px; color: var(--text-muted); }
+.legend-note { margin-top: 6px; max-width: 260px; color: var(--text-muted); line-height: 1.4; }
+.legend-symbols { display: block; overflow: visible; }
+.legend-symbols line { stroke: var(--text-muted); stroke-width: 0.8; }
+.legend-symbols text { fill: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+.view-switch { display: inline-flex; margin-bottom: 8px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.view-switch button {
+  font: inherit; font-size: 11.5px; padding: 3px 10px; border: 0; background: transparent;
+  color: var(--text-secondary); cursor: pointer;
+}
+.view-switch button + button { border-left: 1px solid var(--border); }
+.view-switch button.on { background: var(--accent); color: #fff; font-weight: 600; }
 
 .maplibregl-popup-content { background: var(--surface-1); color: var(--text-primary); border-radius: 8px; padding: 10px 12px; }
 .maplibregl-popup-tip { display: none; }

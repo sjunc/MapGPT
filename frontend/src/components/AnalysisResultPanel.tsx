@@ -5,13 +5,15 @@ import { ResultDetails } from "./ResultDetails";
 import { ExecutionTrace } from "./ExecutionTrace";
 import type { RunProvenance } from "../api";
 import { type ColorScheme, formatValue, NULL_REASONS } from "../theme";
-import type { FinalResponse } from "../types";
+import type { FinalResponse, MapView } from "../types";
 import "./analysis-result.css";
 
 type PanelView = "overview" | "evidence" | "trace";
 
 interface Props {
   result: FinalResponse;
+  mapView: MapView;
+  onMapViewChange: (view: MapView) => void;
   scheme: ColorScheme;
   hoveredKey: string | null;
   onHover: (key: string | null) => void;
@@ -29,7 +31,7 @@ interface Props {
 
 /** 백엔드 계산 결과를 그대로 표시한다. 지표·순위·구간을 프런트에서 재계산하지 않는다. */
 export function AnalysisResultPanel({
-  result, scheme, hoveredKey, onHover, selectedKey, onSelect, onClearSelection,
+  result, mapView, onMapViewChange, scheme, hoveredKey, onHover, selectedKey, onSelect, onClearSelection,
   provenance, traceLoading, traceError, demo, onRefreshTrace, onCopyLink, linkCopied,
 }: Props) {
   const [view, setView] = useState<PanelView>("overview");
@@ -103,7 +105,7 @@ export function AnalysisResultPanel({
           </div>
 
           <div className="analysis-mobile-legend">
-            <Legend layer={result.map_layer} scheme={scheme} />
+            <Legend layer={result.map_layer} scheme={scheme} view={mapView} onViewChange={onMapViewChange} />
           </div>
 
           {selected && (

@@ -44,6 +44,8 @@ def test_first_use_case_runs_end_to_end_and_records_provenance(pool, catalog, co
     assert response.rank_metric == "shortage_rank"
     assert response.summary == "카동이 가장 부족합니다."
     assert response.map_layer.feature_count == 10 and response.map_layer.null_count == 2
+    # 비율 지표는 단계 구분도이고, 공급 부족(작은 값)을 진하게 칠한다.
+    assert (response.map_layer.style.default_view, response.map_layer.style.emphasis) == ("choropleth", "low")
     assert [d.dataset_id for d in response.datasets] == ["emd_boundary", "population_by_age", "daycare_facility"]
     assert response.analysis_method[1] == "필터 — 행정동별 연령별 주민등록 인구(population_by_age): age 0~5"
     assert "'어린이'를 만 0~5세로 해석" in response.assumptions
@@ -160,6 +162,10 @@ def test_invalid_regional_summary_uses_validated_metadata_fallback(pool, catalog
     assert state.analysis_plan.operations[0].aggregation.field == "population"
     assert state.final_response.metric.label == "인구수"
     assert any("최소 집계 계획" in assumption for assumption in state.final_response.assumptions)
+    # 인구 합계는 총량이라 비례 원이 기본이고, 단위마다 원을 그릴 대표점이 있다.
+    layer = state.final_response.map_layer
+    assert (layer.style.default_view, layer.style.emphasis) == ("proportional_symbol", "high")
+    assert all(len(feature["properties"]["label_point"]) == 2 for feature in layer.geojson["features"])
 
 
 def test_fallback_is_not_used_when_it_would_drop_a_data_condition(pool, catalog):

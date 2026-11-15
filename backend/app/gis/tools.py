@@ -24,7 +24,7 @@ from app.domain.enums import (
     SpatialLevel,
 )
 from app.domain.filters import FilterCondition, FilterExpression, describe_filter, iter_conditions
-from app.domain.results import Classification, MapLayer, MetricValue, UnitRow
+from app.domain.results import Classification, MapLayer, MapStyle, MetricValue, UnitRow
 from app.gis.crs import MAP_OUTPUT_SRID, CrsError, parse_srid, transform_crs
 from app.gis.filter_sql import FilterCompileError, compile_filter
 
@@ -381,35 +381,43 @@ def rank(metric: MetricValues, order: SortOrder, unit_keys: list[str], name: str
     )
 
 
-def create_choropleth_layer(
+def create_map_layer(
     conn: psycopg.Connection,
     boundary: BoundaryView,
     rows: list[UnitRow],
     metric: str,
     metric_label: str,
+    style: MapStyle,
 ) -> MapLayer:
-    """결과 행을 EPSG:4326 GeoJSON FeatureCollection과 분위 구간으로 만든다."""
+    """결과 행을 EPSG:4326 GeoJSON FeatureCollection과 분위 구간으로 만든다.
+
+    단위마다 비례 원을 그릴 대표점(label_point)을 함께 담아, 화면이 같은 결과를 단계 구분도·비례 원으로 그린다.
+    """
     bbox = boundary.bbox or []
     if len(bbox) != 4 or not (-180 <= bbox[0] <= bbox[2] <= 180 and -90 <= bbox[1] <= bbox[3] <= 90):
         raise GisToolError("OUTPUT_CRS_INVALID", f"지도 좌표가 경위도 범위를 벗어났습니다: {bbox}")
     where, params = boundary.where()
     geom = transform_crs(sql.Identifier(boundary.metadata.geometry_column.name), boundary.srid, MAP_OUTPUT_SRID)
-    geometries = dict(
-        conn.execute(
-            sql.SQL("SELECT {}::text, ST_AsGeoJSON({}, 6)::json FROM {} WHERE {}").format(
-                sql.Identifier(boundary.key_field), geom, boundary.table, where
-            ),
+    # ST_PointOnSurface: 오목한 지역에서도 Polygon 안에 있는 점 (무게중심은 밖에 있을 수 있다)
+    shapes = {
+        key: (geometry, [round(x, 6), round(y, 6)])
+        for key, geometry, x, y in conn.execute(
+            sql.SQL(
+                "SELECT {key}::text, ST_AsGeoJSON(g, 6)::json, ST_X(ST_PointOnSurface(g)), ST_Y(ST_PointOnSurface(g)) "
+                "FROM (SELECT {key}, {geom} AS g FROM {table} WHERE {where}) AS units"
+            ).format(key=sql.Identifier(boundary.key_field), geom=geom, table=boundary.table, where=where),
             params,
         ).fetchall()
-    )
+    }
 
     features = []
     for row in rows:
-        geometry = geometries.get(row.key)
-        if geometry is None:
+        if row.key not in shapes:
             raise GisToolError("GEOMETRY_MISSING", f"{row.key} ({row.name})의 Geometry가 없습니다")
+        geometry, label_point = shapes[row.key]
         properties = {"unit_key": row.key, "unit_name": row.name, "parent_name": row.parent_name, **row.values}
         properties["null_reason"] = row.null_reasons.get(metric)
+        properties["label_point"] = label_point
         features.append({"type": "Feature", "id": row.key, "geometry": geometry, "properties": properties})
 
     values = [row.values[metric] for row in rows if row.values.get(metric) is not None]
@@ -429,6 +437,7 @@ def create_choropleth_layer(
         feature_count=len(features),
         null_count=len(rows) - len(values),
         geojson={"type": "FeatureCollection", "features": features},
+        style=style,
     )
 
 

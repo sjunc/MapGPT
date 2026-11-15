@@ -49,10 +49,11 @@ from app.domain.plan import (
     resolve_region,
     unit_named,
 )
+from app.domain.maps import map_style
 from app.domain.results import ValidationIssue, ValidationReport
 from app.domain.state import AgentState, DatasetHit, DatasetSearch, InterpretedQuery, PlanAttempt, WorkflowError
 from app.executor.operation_executor import ExecutionContext, execute_operations, prepare_context
-from app.gis.tools import GisToolError, create_choropleth_layer
+from app.gis.tools import GisToolError, create_map_layer
 from app.llm.base import LLMError, LLMOutputError, StructuredLLM
 from app.llm.embeddings import Embedder, EmbeddingError
 from app.repositories.run_repository import save_run
@@ -534,12 +535,13 @@ def _create_map_layer(state: AgentState, ctx: _RunContext, update: Update) -> No
     plan = state.analysis_plan
     label = next(op.label for op in plan.operations if op.output == plan.output.metric)
     update["map_layer"] = _gis_call(
-        create_choropleth_layer,
+        create_map_layer,
         ctx.gis.conn,
         ctx.gis.context.boundary,
         state.execution_results.rows,
         plan.output.metric,
         label,
+        map_style(plan),  # 지표 성격으로 정한 기본 보기와 강조 방향 (LLM 없음)
     )
     ctx.gis.release()
 

@@ -20,7 +20,25 @@ export interface UnitProperties {
   unit_name: string;
   parent_name: string | null;
   null_reason: string | null;
-  [metric: string]: MetricValue | string | null;
+  /** 비례 원을 그릴 단위 안의 대표점 [경도, 위도]. 이 기능 전에 저장된 실행 기록에는 없다 */
+  label_point?: [number, number];
+  [metric: string]: MetricValue | string | null | [number, number] | undefined;
+}
+
+/** 결과 지도를 그리는 방식 (backend MapView) */
+export type MapView = "choropleth" | "proportional_symbol";
+
+/** 지도 지표의 성격과 순위 방향으로 백엔드가 정한 지도 보기 (backend MapStyle) */
+export interface MapStyle {
+  default_view: MapView;
+  /** 화면에서 바꿔 볼 수 있는 보기 (기본 보기 포함) */
+  views: MapView[];
+  /** 진하게 강조할 쪽 값 (순위와 같은 방향) */
+  emphasis: "low" | "high";
+  legend_low: string;
+  legend_high: string;
+  /** 이 보기를 고른 이유 */
+  note: string;
 }
 
 export interface MapLayer {
@@ -32,6 +50,8 @@ export interface MapLayer {
   feature_count: number;
   null_count: number;
   geojson: FeatureCollection<MultiPolygon, UnitProperties>;
+  /** 이 기능 전에 저장된 실행 기록에는 없다 (theme.ts layerStyle이 예전 표시로 채운다) */
+  style?: MapStyle;
 }
 
 export interface DatasetUsage {

@@ -352,8 +352,12 @@ SELECT u.unit_key, count(a.point_id) FROM units u LEFT JOIN assigned a USING (un
 
 #### ⑧ create_map_layer: 지도 레이어
 
-- 결과 행마다 Geometry를 EPSG:4326 GeoJSON으로 만듭니다. `properties`에는 `unit_key`, `unit_name`, `parent_name`, 모든 metric 값, `null_reason`이 들어갑니다.
+- 결과 행마다 Geometry를 EPSG:4326 GeoJSON으로 만듭니다. `properties`에는 `unit_key`, `unit_name`, `parent_name`, 모든 metric 값, `null_reason`, 비례 원을 그릴 대표점 `label_point`([경도, 위도], `ST_PointOnSurface`라 오목한 지역에서도 지역 안)가 들어갑니다.
 - 출력 지표의 값으로 5분위 경계값(`breaks`, 최대 4개)과 min·max·null 수를 계산합니다.
+- 지도 보기는 코드가 정해 `map_layer.style`에 담습니다(`domain/maps.py`, LLM 없음).
+  - 지도 지표를 만든 Operation으로 성격을 봅니다. `calculate_ratio`·평균이면 비율·평균이라 단계 구분도만, 개수 세기·`sum`·`count`면 총량이라 비례 원이 기본이고 단계 구분도로 바꿔 볼 수 있습니다. 총량을 색으로 칠하면 넓은 지역이 진해 보이기 때문입니다.
+  - 강조 방향(`emphasis`)은 지도 지표의 순위 방향을 따릅니다(순위가 없으면 분석 정책의 방향). 오름차순이면 작은 값, 내림차순이면 큰 값이 가장 눈에 띕니다.
+  - 범례 양끝 문구는 분석 정책에 있으면 그것(공급 부족 ↔ 여유), 없으면 지표 성격으로 정합니다(총량은 적음 ↔ 많음, 비율·평균은 낮음 ↔ 높음).
 - 경위도 범위를 벗어나거나 Geometry가 없는 단위가 있으면 실패합니다.
 - 이 단계가 끝나면 읽기 전용 연결을 반납합니다.
 
@@ -895,13 +899,17 @@ frontend/
 
 ### 7.5 지도 렌더링
 
-- **데이터**: `map_layer.geojson`을 GeoJSON source로 올립니다(`promoteId: unit_key`). 레이어는 채움(투명도 0.85), 경계선, hover 강조선 3개입니다.
-- **레이어 순서**: Choropleth를 배경지도의 도로·면 위, 마지막 레이블 묶음 아래에 넣어 지명이 가려지지 않게 합니다.
+- **데이터**: `map_layer.geojson`을 GeoJSON source로 올리고(`promoteId: unit_key`), 각 단위의 `label_point`로 만든 점 source를 하나 더 둡니다.
+- **보기**: `map_layer.style.default_view`로 시작합니다. `style.views`가 둘 이상이면 범례 위의 버튼("원 크기"·"색 구간")으로 바꿀 수 있고, 고른 보기는 그 결과에만 적용됩니다.
+  - 단계 구분도: 채움(투명도 0.85)과 경계선. 배경지도의 도로·면 위, 마지막 레이블 묶음 아래에 넣어 지명이 가려지지 않게 합니다.
+  - 비례 원: 옅은 지역 경계선과, 지명 라벨 위에 그리는 원. 원 넓이가 값에 비례하도록 반지름은 값의 제곱근으로 키우고, 단위가 많으면 최대 크기를 줄입니다(`symbolMaxRadius`). 작은 원이 위에 오고, 값이 없는 지역은 원을 그리지 않습니다.
+  - hover·선택 강조는 두 보기 모두 같은 `unit_key`로 면 테두리와 원 테두리에 함께 걸립니다.
 - **색**: 백엔드가 계산한 분위 경계값으로 MapLibre `step` 식을 만듭니다.
-  - 단일 색상(blue) 5단계 ordinal 램프입니다. 라이트 모드는 진할수록, 다크 모드는 밝을수록 공급이 부족합니다. dataviz 팔레트 검사(ordinal)를 통과했습니다.
+  - 단일 색상(blue) 5단계 ordinal 램프입니다. `style.emphasis` 쪽(공급 부족처럼 작은 값, 또는 많은 곳처럼 큰 값)이 라이트 모드는 가장 진하게, 다크 모드는 가장 밝게 보입니다. dataviz 팔레트 검사(ordinal)를 통과했습니다.
   - 값이 없는 단위는 회색입니다.
   - 동일 값이 많아 구간이 5개보다 적으면 램프 양 끝을 유지하도록 색을 고릅니다.
-- **범례**: 구간은 `[경계값 이상, 다음 경계값 미만)`으로 `step` 식과 같습니다. "← 공급 부족 / 여유 →"와 값 없음 개수를 표시합니다.
+- **범례**: 단계 구분도는 구간을 `[경계값 이상, 다음 경계값 미만)`으로 `step` 식과 같게 보이고, 양끝에 `style.legend_low`·`legend_high`(예: "← 공급 부족 / 여유 →")를 씁니다. 비례 원은 최댓값과 그 1/4·1/16 크기의 원을 겹쳐 보입니다. 값 없음 개수를 표시하고, 바꿔 볼 보기가 있으면 이 보기를 고른 이유(`style.note`)도 보입니다.
+- **예전 실행 기록**: 이 기능 전에 저장된 실행에는 `style`과 `label_point`가 없어 예전처럼 단계 구분도로만 그립니다(`theme.ts`의 `layerStyle`).
 - **툴팁**: 자치구·동 이름, 지표 값(없으면 결측 사유), 다른 지표 값을 보여줍니다. 라벨은 LLM이 만든 문자열이므로 HTML 이스케이프 후 넣습니다.
 - **테마**: `prefers-color-scheme`을 따르고, 배경지도 스타일이 다르므로 테마가 바뀌면 지도를 다시 만듭니다.
 - **MapLibre v6 참고**: 번들러 환경에서는 worker 경로를 직접 지정해야 해서 `maplibre-gl-worker.mjs?worker&url` + `setWorkerUrl`을 씁니다.
@@ -1090,7 +1098,7 @@ FROM analysis.run GROUP BY 1, 2, 3 ORDER BY 1, 2;
   - 어린이집은 `ingest daycare_facility --refresh`로 다시 수집합니다.
 - **분석 정책 한계**: 시설 규모(정원·현원)와 경계를 넘는 이용을 반영하지 않습니다(응답의 "한계"에 표시).
 - **첫 Use Case에 맞춘 문구**: 다른 단위·의미로 확장할 때 아래를 고쳐야 합니다.
-  - 화면: 순위 표의 "행정동", 범례의 "공급 부족 / 여유"
+  - 화면: 순위 표의 "행정동" (범례 문구와 색 방향은 `map_layer.style`에서 받는다)
   - 설명: 설명 프롬프트의 "부족한 행정동", `explanation_facts`의 "자치구/행정동" 키
   - 검증: Result Validator 메시지의 "행정동"
 - **LLM 비결정성**: 모델마다 실수 양상이 다릅니다. 프롬프트를 바꾸면 실제 모델로 E2E를 확인해야 합니다. 요약 문장 속 수치는 코드로 검증하지 않습니다.
@@ -1136,6 +1144,7 @@ FROM analysis.run GROUP BY 1, 2, 3 ORDER BY 1, 2;
 | 지원 CRS 추가 | `gis/crs.py`의 `SUPPORTED_SRIDS` |
 | 응답에 필드 추가 | `domain/results.py`(`FinalResponse`) → `workflows/response.py` → `frontend/src/types.ts` → 컴포넌트 |
 | 화면 수정 | `frontend/src/components/*`, 색·포맷은 `theme.ts` |
+| 지도 보기 규칙 (어떤 지표를 어떤 지도로, 강조 방향, 범례 문구) | `domain/maps.py`(`map_style`), 정책별 범례 문구는 `domain/policies.py`(`legend_labels`) → 화면 `Legend.tsx`·`ChoroplethMap.tsx` |
 
 ---
 
@@ -1161,7 +1170,8 @@ FROM analysis.run GROUP BY 1, 2, 3 ORDER BY 1, 2;
 | Plan / Result Validator | 실행 전 계획 검증 / 지도·설명 전 결과 검증 |
 | Provenance | 실행의 입력·판단·연산·결과 기록(`analysis.run`, `analysis.result`) |
 | Structured Output | LLM이 지정한 JSON Schema에 맞는 JSON만 내도록 하는 기능 |
-| Choropleth / 분위(quantile) | 단위별 값을 색으로 칠한 지도 / 값을 개수가 비슷한 구간으로 나누는 방식 |
+| Choropleth / 분위(quantile) | 단위별 값을 색으로 칠한 지도(단계 구분도) / 값을 개수가 비슷한 구간으로 나누는 방식 |
+| 비례 원(Proportional symbol) | 단위마다 값에 비례한 넓이의 원을 그린 지도. 개수·합계처럼 지역 크기의 영향을 받는 값에 쓴다 |
 | CRS / SRID | 좌표계 / 좌표계 번호(예: EPSG:4326 경위도, EPSG:5179 UTM-K) |
 | pgvector / 임베딩 | PostgreSQL 벡터 검색 확장 / 텍스트를 의미 벡터로 바꾼 값 |
 | null_reason | 값을 계산할 수 없는 이유(`denominator_zero`, `denominator_missing`, `numerator_missing`, `no_matching_records`, `input_null`) |

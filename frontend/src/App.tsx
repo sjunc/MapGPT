@@ -12,8 +12,8 @@ import { ErrorPanel } from "./components/ErrorPanel";
 import { Legend } from "./components/Legend";
 import { loadDemoAnalysis } from "./demo";
 import { SCOPE_HINTS, SCOPE_LABELS, SCOPES, readScope, saveScope } from "./scope";
-import { useColorScheme } from "./theme";
-import type { AnalysisResponse, AnalysisScope, WorkflowError } from "./types";
+import { layerStyle, useColorScheme } from "./theme";
+import type { AnalysisResponse, AnalysisScope, MapView, WorkflowError } from "./types";
 import type { FocusRequest } from "./components/ChoroplethMap";
 import "./p3.css";
 import "./p4.css";
@@ -59,10 +59,18 @@ export function App() {
   const [traceError, setTraceError] = useState<string | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
   const [recentRuns, setRecentRuns] = useState<RecentRun[]>(readRecentRuns);
+  const [viewChoice, setViewChoice] = useState<{ runId: string; view: MapView } | null>(null);
   // 늦게 도착한 이전 요청 응답이 새 지도를 덮어쓰지 않도록 구분한다.
   const requestSequence = useRef(0);
   const elapsed = useElapsedSeconds(loading);
   const result = response?.result ?? null;
+  // 결과마다 백엔드가 지표 성격으로 정한 기본 보기로 시작하고, 사용자가 바꾼 보기는 그 결과에만 쓴다.
+  const view: MapView = result && viewChoice?.runId === result.run_id
+    ? viewChoice.view
+    : result ? layerStyle(result.map_layer).default_view : "choropleth";
+  const changeView = (next: MapView) => {
+    if (result) setViewChoice({ runId: result.run_id, view: next });
+  };
 
   // Demo Mode에서는 서버 없이 같은 분석 결과 UI를 사용한다.
   useEffect(() => {
@@ -337,6 +345,7 @@ export function App() {
         {result ? (
           <ChoroplethMap
             result={result}
+            view={view}
             scheme={scheme}
             hoveredKey={hoveredKey}
             onHover={setHoveredKey}
@@ -352,7 +361,7 @@ export function App() {
 
         {result && (
           <div className="map-legend">
-            <Legend layer={result.map_layer} scheme={scheme} />
+            <Legend layer={result.map_layer} scheme={scheme} view={view} onViewChange={changeView} />
           </div>
         )}
       </main>
@@ -543,6 +552,8 @@ export function App() {
               <AnalysisResultPanel
                 key={result.run_id}
                 result={result}
+                mapView={view}
+                onMapViewChange={changeView}
                 scheme={scheme}
                 hoveredKey={hoveredKey}
                 onHover={setHoveredKey}

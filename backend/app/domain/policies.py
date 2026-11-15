@@ -17,6 +17,8 @@ class IntentPolicy(StrictModel):
     definitions: list[str]
     limitations: list[str]
     enforce_ratio_policy: bool = True
+    # 지도 범례 양끝 문구 (작은 값, 큰 값). 없으면 지표 성격으로 정한다 (domain/maps.py).
+    legend_labels: tuple[str, str] | None = None
 
 
 POLICIES: dict[AnalysisIntent, IntentPolicy] = {
@@ -39,6 +41,7 @@ POLICIES: dict[AnalysisIntent, IntentPolicy] = {
             "행정동 경계를 넘어 다른 동의 시설을 이용하는 행태는 반영하지 않는다.",
             "수요 인구가 적은 행정동은 시설 1개 차이로도 지표가 크게 변한다.",
         ],
+        legend_labels=("공급 부족", "여유"),
     ),
     AnalysisIntent.REGIONAL_SUMMARY: IntentPolicy(
         intent=AnalysisIntent.REGIONAL_SUMMARY,

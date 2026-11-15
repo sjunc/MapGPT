@@ -2,6 +2,7 @@ import pytest
 
 from app.catalog.definitions import SEOUL, TRUSTED_DATASETS
 from app.domain.enums import MapType, SpatialLevel
+from app.domain.maps import map_style
 from app.domain.plan import AnalysisPlan
 from app.domain.results import BoundaryStats, Classification, ExecutionResult, MapLayer, UnitRow, ValidationReport
 from app.workflows.response import compose_response, explanation_facts
@@ -50,6 +51,7 @@ def test_explanation_facts_state_the_ranking_order(order, direction):
         feature_count=3,
         null_count=0,
         geojson={},
+        style=map_style(plan),
     )
     response = compose_response(
         run_id="run",
