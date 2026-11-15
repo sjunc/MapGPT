@@ -224,16 +224,16 @@ LLM 호출 실패(API 오류, 거절, 길이 초과로 잘림, 스키마 불일�
 
 - 코드가 먼저 카탈로그에서 지역과 지역별 분석 가능 단위를 계산합니다. 지역은 Dataset의 `coverage`와 전국 경계에 있는 시도·시군구이고, 분석 가능 단위는 "그 지역을 범위로 가진 Polygon 경계 Dataset의 단위"입니다. Dataset 범위가 분석 지역을 포함해도 그 Dataset을 씁니다. 포함 여부는 확정된 지역의 행정코드가 범위의 코드로 시작하는지로 판단합니다(강남구 11680은 서울 11 안). 그래서 서울 범위의 어린이집·공공와이파이로 "서울특별시 강남구"를 분석할 수 있고, 이때 다른 구의 점이 빠지는 것은 정상이라 "경계 밖 점" 경고를 붙이지 않습니다. 프롬프트에는 `- 서울특별시 (sido): emd(행정동)`처럼 들어갑니다. 시군구는 중구·동구처럼 이름이 겹치므로 `- 부산광역시 중구 (sigungu): sigungu(시군구), emd(행정동)`처럼 시도 이름을 붙입니다.
 - 프롬프트에는 분석 정책(intent 정의, 해석, 개념 정의), 공간 단위 목록, 지역 목록, 규칙 7개가 들어갑니다.
-  1. 지역별 개수·합계·평균·비율·순위 질문은 `regional_summary`로 해석합니다.
+  1. 지역별 개수·합계·평균·비율·순위 질문은 `regional_summary`로 해석합니다. `supply_demand_gap`은 시설(공급)이 인구(수요)에 비해 부족한지를 물을 때만 쓰고, 시설 수나 인구 수 한 가지만 세거나 순위를 매기는 질문은 시설·연령 이름이 들어 있어도 `regional_summary`입니다.
   2. 지원하는 분석 유형으로 표현되지 않으면 intent·region·analysis_unit을 null로 두고 이유를 씁니다. 짧거나 구어체라는 이유만으로 거절하지 않습니다.
   3. `region.name`은 지역 목록의 이름('서울' → '서울특별시', '부산 중구' → '부산광역시 중구'), `region.level`은 지역 자체의 단위(서울특별시 → sido)입니다. 결과를 나눌 단위는 `analysis_unit`에 쓰고, 사용자가 말한 지역을 바꾸지 않습니다. 질문에 시도가 없으면 추측해 붙이지 않습니다.
   4. `analysis_unit`은 결과를 보여줄 단위('동별' → emd, '구별'·'자치구 중' → sigungu)입니다. 사용자가 말한 단위를 바꾸지 않고, 말하지 않았으면 그 지역에서 분석 가능한 가장 세밀한 단위를 씁니다.
-  5. `analysis_unit_specified`에는 질문이 결과 단위를 직접 말했는지(true/false)를 씁니다.
+  5. `analysis_unit_phrase`에는 질문에서 결과 단위를 직접 말한 표현을 글자 그대로 옮겨 씁니다('인구가 가장 적은 구는?' → '구'). 지역 이름의 일부('강남구'의 '구')는 단위가 아니고, 단위를 말하지 않았으면 null입니다.
   6. assumptions에는 정책 정의를 반복하지 않고, 추가로 둔 가정만 씁니다.
   7. key_concepts에는 분석에 필요한 데이터 개념을 짧은 명사구로 씁니다(검색어로 쓰임).
-- 출력 `InterpretedQuery`: `intent`, `unsupported_reason`, `region{name, level}`, `analysis_unit`, `analysis_unit_specified`, `restated_question`, `key_concepts`, `assumptions`
+- 출력 `InterpretedQuery`: `intent`, `unsupported_reason`, `region{name, level}`, `analysis_unit`, `analysis_unit_phrase`, `restated_question`, `key_concepts`, `assumptions`
 - 첫 해석이 `unsupported`이면 지역별 통계로 표현 가능한지 명시해 한 번 재판정합니다. 재판정도 `unsupported`일 때만 종료합니다.
-- LLM이 질문에 결과 단위가 없다고 판단하면(`analysis_unit_specified=false`) 코드가 해당 지역에서 가능한 가장 세밀한 경계 단위로 보정합니다. '자치구 중', '가장 많은 구'처럼 표현이 다양해 키워드 목록 대신 LLM이 판단합니다.
+- LLM이 옮겨 적은 단위 표현이 질문에 없거나(공백 무시, 지역 이름 부분 제외) 고른 단위의 행정구역 글자(행정동 동·읍·면, 시군구 구·군·시, 시도 도·시)가 없으면, 코드가 해당 지역에서 가능한 가장 세밀한 경계 단위로 보정합니다. 글자 확인은 LLM이 '어린이집이 가장 많은 곳'처럼 단위가 아닌 말을 옮겨 적는 경우를 막습니다. '자치구 중', '가장 많은 구'처럼 표현이 다양해 어떤 말이 단위인지는 키워드 목록 대신 LLM이 고르고, 그 말이 질문에 실제로 있는지는 코드가 확인합니다. 참/거짓으로 물었을 때는 gpt-4o-mini가 단위를 자치구로 맞게 고르고도 "말하지 않았다"고 표시해 행정동으로 바뀌는 일이 24회 중 3회 있었습니다.
 - 검사는 다음 순서로 진행합니다. 계획을 만들기 전에 끝내서 불필요한 LLM 호출을 줄입니다.
   1. 재판정 후에도 intent가 없으면 `UNSUPPORTED_QUESTION`
   2. 지역이나 단위가 없으면 `INCOMPLETE_INTERPRETATION`

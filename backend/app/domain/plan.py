@@ -111,6 +111,25 @@ def _compact(name: str) -> str:
     return "".join(name.split())
 
 
+# 행정구역 이름 끝 글자. 단위 표현(예: '자치구', '행정동별', '시도 중')에는 고른 단위의 글자가 들어 있다.
+_UNIT_MARKS = {SpatialLevel.EMD: "동읍면", SpatialLevel.SIGUNGU: "구군시", SpatialLevel.SIDO: "도시"}
+
+
+def unit_named(question: str, phrase: str | None, region_name: str, unit: SpatialLevel | None) -> bool:
+    """해석 LLM이 옮겨 적은 결과 단위 표현(예: '자치구')이 질문에 실제로 있고 고른 단위를 가리키는지 본다.
+
+    공백은 무시한다. 지역 이름에 든 글자(예: '강남구'의 '구')는 단위가 아니므로 지역 이름의 각 부분을 질문에서
+    지운 뒤 찾는다. 단위가 아닌 말('어린이집이 가장 많은 곳')을 옮겨 적는 경우가 있어, 고른 단위의 행정구역 글자
+    (행정동 동·읍·면, 시군구 구·군·시, 시도 도·시)가 표현에 있어야 한다.
+    """
+    text = _compact(question)
+    for part in region_name.split():
+        text = text.replace(part, "")
+    wanted = _compact(phrase or "")
+    marks = _UNIT_MARKS.get(unit, "")
+    return bool(wanted) and wanted in text and any(mark in wanted for mark in marks)
+
+
 def analysis_units(datasets: Iterable[DatasetMetadata], region: Region | RegionRef) -> list[SpatialLevel]:
     """region을 범위로 가진 Polygon 경계 Dataset이 있어 분석 단위로 쓸 수 있는 공간 단위."""
     levels = {

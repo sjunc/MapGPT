@@ -14,7 +14,15 @@ from app.catalog.definitions import KOREA, SEOUL, TRUSTED_DATASETS
 from app.agents.prompts import interpret_prompt
 from app.domain.enums import SpatialLevel
 from app.domain.catalog import RegionRef
-from app.domain.plan import AnalysisPlan, DatasetFilter, Region, analysis_units, match_regions, resolve_region
+from app.domain.plan import (
+    AnalysisPlan,
+    DatasetFilter,
+    Region,
+    analysis_units,
+    match_regions,
+    resolve_region,
+    unit_named,
+)
 from app.domain.state import DatasetSelection, Explanation, InterpretedQuery
 from app.llm.schema import to_llm_json_schema
 from tests.support import load_plan, load_plan_dict
@@ -203,11 +211,29 @@ def test_match_regions_resolves_interpreted_names_to_registered_regions(name, le
     assert [region.code for region in match_regions(Region(name=name, level=level), REGIONS)] == codes
 
 
-def test_interpretation_reports_whether_the_question_named_a_unit():
+def test_interpretation_reports_how_the_question_named_a_unit():
     system, _ = interpret_prompt("서울 자치구 중 어린이집이 가장 많은 곳은?", [(SEOUL, [SpatialLevel.SIGUNGU])])
 
-    assert "analysis_unit_specified" in system
-    assert "analysis_unit_specified" in to_llm_json_schema(InterpretedQuery)["required"]
+    assert "analysis_unit_phrase" in system
+    assert "analysis_unit_phrase" in to_llm_json_schema(InterpretedQuery)["required"]
+
+
+@pytest.mark.parametrize(
+    ("question", "phrase", "region", "unit", "named"),
+    [
+        ("서울에서 공공와이파이가 가장 많은 자치구는?", "자치구", "서울특별시", "sigungu", True),
+        ("노원구 행정동 별 어린이집 수", "행정동별", "서울특별시 노원구", "emd", True),  # 공백은 무시한다
+        ("시도 중 인구가 가장 많은 곳은?", "시도", "대한민국", "sido", True),
+        ("서울에서 어린이집이 가장 많은 곳은?", None, "서울특별시", "sigungu", False),
+        ("서울에서 어린이집이 가장 많은 곳은?", "구별", "서울특별시", "sigungu", False),  # 질문에 없는 표현
+        ("강남구에서 어린이집이 가장 부족한 곳은?", "구", "서울특별시 강남구", "sigungu", False),  # 지역 이름의 일부
+        # 질문에 있지만 단위가 아닌 말 (gpt-4o-mini가 실제로 옮겨 적음)
+        ("서울에서 어린이집이 가장 많은 곳은?", "어린이집이 가장 많은 곳", "서울특별시", "sigungu", False),
+        ("서울 자치구 중 인구가 가장 많은 곳은?", "자치구", "서울특별시", "emd", False),  # 고른 단위와 맞지 않음
+    ],
+)
+def test_unit_phrase_must_appear_in_the_question_and_name_the_unit(question, phrase, region, unit, named):
+    assert unit_named(question, phrase, region, SpatialLevel(unit)) is named
 
 
 GANGNAM = RegionRef(name="서울특별시 강남구", level=SpatialLevel.SIGUNGU, code="11680")

@@ -22,9 +22,10 @@ class InterpretedQuery(StrictModel):
     unsupported_reason: str | None = Field(description="intent가 null일 때 그 이유, 아니면 null")
     region: Region | None
     analysis_unit: SpatialLevel | None
-    analysis_unit_specified: bool = Field(
-        default=False,
-        description="질문이 결과를 나눌 단위(행정동별, 구별, 자치구 중, 시도별 등)를 직접 말했으면 true, 아니면 false",
+    # 참/거짓으로 물으면 같은 질문에도 판단이 흔들려서, 질문 속 표현을 옮겨 적게 하고 코드가 질문에 있는지 확인한다.
+    analysis_unit_phrase: str | None = Field(
+        default=None,
+        description="질문에서 결과를 나눌 단위를 직접 말한 표현을 질문 글자 그대로 옮긴 것 (예: '자치구', '행정동별'). 없으면 null",
     )
     restated_question: str = Field(description="분석 질문을 명확하게 다시 쓴 문장")
     key_concepts: list[str] = Field(description="필요한 데이터 개념 (예: 어린이집, 0~5세 인구, 행정동 경계)")

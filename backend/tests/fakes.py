@@ -59,7 +59,7 @@ def interpreted(region: str = SEOUL.name, **overrides) -> InterpretedQuery:
         "unsupported_reason": None,
         "region": Region(name=region, level="sido"),
         "analysis_unit": "emd",
-        "analysis_unit_specified": True,  # 기본 질문이 '행정동'을 말한다
+        "analysis_unit_phrase": "행정동",  # 기본 질문이 '행정동'을 말한다
         "restated_question": "서울특별시 행정동별 0~5세 인구 1,000명당 어린이집 수가 적은 곳",
         "key_concepts": ["어린이집 위치", "0~5세 인구", "행정동 경계"],
         "assumptions": ["'어린이'를 만 0~5세로 해석"],

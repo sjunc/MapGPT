@@ -162,6 +162,7 @@ def _count_llm():
             interpreted(
                 intent="regional_summary",
                 analysis_unit="sigungu",
+                analysis_unit_phrase="자치구별",
                 restated_question="서울 자치구별 시험 시설 수",
                 key_concepts=["시험 시설 위치"],
                 assumptions=[],

@@ -211,14 +211,14 @@ def test_plan_that_changes_the_interpretation_is_rejected(pool, catalog):
             "UNSUPPORTED_QUESTION",
         ),
         (interpreted(region="부산광역시"), "REGION_NOT_SUPPORTED"),
-        (interpreted(analysis_unit="sigungu"), "UNIT_NOT_SUPPORTED"),
+        (interpreted(analysis_unit="sigungu", analysis_unit_phrase="구"), "UNIT_NOT_SUPPORTED"),
         (LLMError("OpenAI 호출 실패: 401"), "LLM_FAILED"),
     ],
 )
 def test_interpretation_failures_stop_before_planning(pool, catalog, conn, interpretation, code):
     llm = daycare_llm(interpreted=[interpretation])
 
-    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("지하철역에서 500m 이상 떨어진 지역을 찾아줘")
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("지하철역에서 500m 이상 떨어진 구를 찾아줘")
 
     assert state.status == RunStatus.FAILED
     assert (state.errors[0].step, state.errors[0].code) == (WorkflowStep.INTERPRET_QUERY, code)
@@ -283,7 +283,7 @@ def test_region_with_wrong_level_fails_showing_both_levels(pool, catalog):
 
 
 def test_unit_without_boundary_data_fails_with_available_units(pool, catalog):
-    llm = daycare_llm(interpreted=[interpreted(analysis_unit="sigungu")])
+    llm = daycare_llm(interpreted=[interpreted(analysis_unit="sigungu", analysis_unit_phrase="구별")])
 
     state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("서울특별시 구별 어린이집 공급 부족을 알려줘")
 
@@ -293,7 +293,7 @@ def test_unit_without_boundary_data_fails_with_available_units(pool, catalog):
 
 
 def test_unspecified_unit_uses_finest_available_boundary(pool, catalog):
-    llm = daycare_llm(interpreted=[interpreted(analysis_unit="sigungu", analysis_unit_specified=False)])
+    llm = daycare_llm(interpreted=[interpreted(analysis_unit="sigungu", analysis_unit_phrase=None)])
 
     state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("서울에서 어린이집이 부족한 곳을 알려줘")
 
@@ -554,13 +554,12 @@ def test_dataset_that_does_not_cover_the_region_stops_before_planning(pool, nati
     assert llm.prompts_for(AnalysisPlan) == []
 
 
-@pytest.mark.parametrize(("specified", "expected"), [(True, "sigungu"), (False, "emd")])
-def test_unit_is_replaced_only_when_the_question_did_not_specify_it(pool, national_catalog, specified, expected):
-    # '구별' 같은 정해진 낱말이 없어도('자치구 중') LLM이 단위를 말했다고 판단하면 그 단위를 그대로 쓴다.
+@pytest.mark.parametrize(("phrase", "expected"), [("자치구", "sigungu"), (None, "emd"), ("구별", "emd")])
+def test_unit_is_replaced_only_when_the_question_did_not_specify_it(pool, national_catalog, phrase, expected):
+    # '구별' 같은 정해진 낱말이 없어도('자치구 중') LLM이 옮겨 적은 단위 표현이 질문에 있으면 그 단위를 그대로 쓴다.
+    # 질문에 없는 표현('구별')은 단위를 말한 근거가 아니다.
     llm = daycare_llm(
-        interpreted=[
-            interpreted(intent="regional_summary", analysis_unit="sigungu", analysis_unit_specified=specified)
-        ],
+        interpreted=[interpreted(intent="regional_summary", analysis_unit="sigungu", analysis_unit_phrase=phrase)],
         selection=[DatasetSelection(datasets=["subway_station"], rationale="해석 단계만 확인")],
     )
 

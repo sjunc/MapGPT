@@ -36,7 +36,7 @@ from app.domain.enums import (
     SpatialLevel,
     WorkflowStep,
 )
-from app.domain.plan import AnalysisPlan, Region, analysis_units, match_regions, resolve_region
+from app.domain.plan import AnalysisPlan, Region, analysis_units, match_regions, resolve_region, unit_named
 from app.domain.results import ValidationIssue, ValidationReport
 from app.domain.state import AgentState, DatasetHit, DatasetSearch, InterpretedQuery, PlanAttempt, WorkflowError
 from app.executor.operation_executor import ExecutionContext, execute_operations, prepare_context
@@ -170,8 +170,11 @@ def _interpret_query(state: AgentState, ctx: _RunContext, update: Update) -> Non
     update["resolved_region"] = region
     # 경계 데이터가 없는 단위는 계획을 만들어도 검증에서 실패하므로 LLM을 더 부르기 전에 끝낸다.
     units = analysis_units(datasets, region)
-    # 질문이 단위를 말하지 않았을 때만 가장 세밀한 단위로 정한다. 말했는지는 표현이 다양해 LLM이 판단한다.
-    if units and not interpreted.analysis_unit_specified:
+    # 질문이 단위를 말하지 않았을 때만 가장 세밀한 단위로 정한다. 표현이 다양해 어떤 말이 단위인지는 LLM이 고르고,
+    # 그 말이 실제로 질문에 있는지는 코드가 확인한다.
+    if units and not unit_named(
+        state.question, interpreted.analysis_unit_phrase, region.name, interpreted.analysis_unit
+    ):
         interpreted = interpreted.model_copy(update={"analysis_unit": units[-1]})
         update["interpreted_query"] = interpreted
     if interpreted.analysis_unit not in units:
