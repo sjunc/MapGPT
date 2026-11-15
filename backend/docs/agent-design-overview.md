@@ -223,19 +223,21 @@ LLM 호출 실패(API 오류, 거절, 길이 초과로 잘림, 스키마 불일�
 #### ① interpret_query: 질문 해석
 
 - 코드가 먼저 카탈로그에서 지역과 지역별 분석 가능 단위를 계산합니다. 지역은 Dataset의 `coverage`와 전국 경계에 있는 시도·시군구이고, 분석 가능 단위는 "그 지역을 범위로 가진 Polygon 경계 Dataset의 단위"입니다. Dataset 범위가 분석 지역을 포함해도 그 Dataset을 씁니다. 포함 여부는 확정된 지역의 행정코드가 범위의 코드로 시작하는지로 판단합니다(강남구 11680은 서울 11 안). 그래서 서울 범위의 어린이집·공공와이파이로 "서울특별시 강남구"를 분석할 수 있고, 이때 다른 구의 점이 빠지는 것은 정상이라 "경계 밖 점" 경고를 붙이지 않습니다. 프롬프트에는 `- 서울특별시 (sido): emd(행정동)`처럼 들어갑니다. 시군구는 중구·동구처럼 이름이 겹치므로 `- 부산광역시 중구 (sigungu): sigungu(시군구), emd(행정동)`처럼 시도 이름을 붙입니다.
-- 프롬프트에는 분석 정책(intent 정의, 해석, 개념 정의), 공간 단위 목록, 지역 목록, 규칙 7개가 들어갑니다.
-  1. 지역별 개수·합계·평균·비율·순위 질문은 `regional_summary`로 해석합니다. `supply_demand_gap`은 시설(공급)이 인구(수요)에 비해 부족한지를 물을 때만 쓰고, 시설 수나 인구 수 한 가지만 세거나 순위를 매기는 질문은 시설·연령 이름이 들어 있어도 `regional_summary`입니다.
+- 프롬프트에는 분석 정책(intent 정의, 해석, 개념 정의), 공간 단위 목록, 지역 목록, 규칙 8개가 들어갑니다.
+  1. 지역별 개수·합계·평균·비율·순위 질문은 `regional_summary`로 해석합니다. `supply_demand_gap`은 시설(공급)이 인구(수요)에 비해 부족한지를 물을 때만 쓰고, 시설 수나 인구 수 한 가지만 세거나 순위를 매기는 질문은 시설·연령 이름이 들어 있어도 `regional_summary`입니다. 시설의 위치·분포나 밀집한 곳을 지도로 보여 달라는 질문도 지역별 시설 수를 세는 `regional_summary`입니다('서울 어린이집 위치를 보여줘').
   2. 지원하는 분석 유형으로 표현되지 않으면 intent·region·analysis_unit을 null로 두고 이유를 씁니다. 짧거나 구어체라는 이유만으로 거절하지 않습니다.
   3. `region.name`은 지역 목록의 이름('서울' → '서울특별시', '부산 중구' → '부산광역시 중구'), `region.level`은 지역 자체의 단위(서울특별시 → sido)입니다. 결과를 나눌 단위는 `analysis_unit`에 쓰고, 사용자가 말한 지역을 바꾸지 않습니다. 질문에 시도가 없으면 추측해 붙이지 않습니다.
   4. `analysis_unit`은 결과를 보여줄 단위('동별' → emd, '구별'·'자치구 중' → sigungu)입니다. 사용자가 말한 단위를 바꾸지 않고, 말하지 않았으면 그 지역에서 분석 가능한 가장 세밀한 단위를 씁니다.
   5. `analysis_unit_phrase`에는 질문에서 결과 단위를 직접 말한 표현을 글자 그대로 옮겨 씁니다('인구가 가장 적은 구는?' → '구'). 지역 이름의 일부('강남구'의 '구')는 단위가 아니고, 단위를 말하지 않았으면 null입니다.
   6. assumptions에는 정책 정의를 반복하지 않고, 추가로 둔 가정만 씁니다.
   7. key_concepts에는 분석에 필요한 데이터 개념을 짧은 명사구로 씁니다(검색어로 쓰임).
-- 출력 `InterpretedQuery`: `intent`, `unsupported_reason`, `region{name, level}`, `analysis_unit`, `analysis_unit_phrase`, `restated_question`, `key_concepts`, `assumptions`
+  8. `map_focus_phrase`에는 질문에서 시설의 위치('위치', '어디에 있는지', '분포')나 밀집한 곳('밀집한 곳', '몰려 있는')을 지도로 보려는 표현을 글자 그대로 옮겨 씁니다. 개수·비율·순위만 묻는 표현('가장 많은 곳', '구별 수')만 있으면 null입니다.
+- 출력 `InterpretedQuery`: `intent`, `unsupported_reason`, `region{name, level}`, `region_phrase`, `analysis_unit`, `analysis_unit_phrase`, `map_focus_phrase`, `restated_question`, `key_concepts`, `assumptions`
 - 첫 해석이 `unsupported`이면 지역별 통계로 표현 가능한지 명시해 한 번 재판정합니다. 재판정도 `unsupported`일 때만 종료합니다.
 - LLM이 옮겨 적은 단위 표현이 질문에 없거나(공백 무시, 지역 이름 부분 제외) 고른 단위의 행정구역 글자(행정동 동·읍·면, 시군구 구·군·시, 시도 도·시)가 없으면, 코드가 해당 지역에서 가능한 가장 세밀한 경계 단위로 보정합니다. 글자 확인은 LLM이 '어린이집이 가장 많은 곳'처럼 단위가 아닌 말을 옮겨 적는 경우를 막습니다. '자치구 중', '가장 많은 구'처럼 표현이 다양해 어떤 말이 단위인지는 키워드 목록 대신 LLM이 고르고, 그 말이 질문에 실제로 있는지는 코드가 확인합니다. 참/거짓으로 물었을 때는 gpt-4o-mini가 단위를 자치구로 맞게 고르고도 "말하지 않았다"고 표시해 행정동으로 바뀌는 일이 24회 중 3회 있었습니다.
 - 분석 범위(`scope`, 화면 설정의 서울·전국 토글, 기본 서울)에 따라 해석에 보여 줄 지역 목록을 정합니다. 서울 범위면 서울과 그 안의 구(26곳)만 보여 주므로 프롬프트가 짧고(전국 14,770자 → 3,233자) '중구'가 서울 중구 하나로 정해집니다.
 - LLM은 질문에서 지역을 말한 표현도 옮겨 적습니다(`region_phrase`). 그 표현이 질문에 있고 해석한 지역을 가리킬 때만 LLM의 지역을 따르고, 아니면 분석 범위의 기준 지역(서울특별시 또는 대한민국) 전체를 분석하며 그 사실을 가정에 남깁니다. 지역을 말하지 않은 질문에 gpt-4o-mini가 '대한민국'(emd)처럼 지역을 채웠기 때문입니다.
+- 지도 초점 표현(`map_focus_phrase`)은 같은 방식으로 코드가 확인해 지도의 기본 보기를 정합니다(⑧, `domain/maps.py`의 `map_focus`). 표현이 질문에 있고 위치(위치·분포·어디에 있) 또는 밀집(밀집·밀도·몰려·모여·집중)을 뜻하는 말이 들어 있을 때만 따릅니다. '가장 많은 곳'처럼 순위를 묻는 말을 옮겨 적어도 지도는 바뀌지 않습니다.
 - 검사는 다음 순서로 진행합니다. 계획을 만들기 전에 끝내서 불필요한 LLM 호출을 줄입니다.
   1. 재판정 후에도 intent가 없으면 `UNSUPPORTED_QUESTION`
   2. 지역이나 단위가 없으면 `INCOMPLETE_INTERPRETATION`
@@ -358,6 +360,8 @@ SELECT u.unit_key, count(a.point_id) FROM units u LEFT JOIN assigned a USING (un
   - 지도 지표를 만든 Operation으로 성격을 봅니다. `calculate_ratio`·평균이면 비율·평균이라 단계 구분도만, 개수 세기·`sum`·`count`면 총량이라 비례 원이 기본이고 단계 구분도로 바꿔 볼 수 있습니다. 총량을 색으로 칠하면 넓은 지역이 진해 보이기 때문입니다.
   - 강조 방향(`emphasis`)은 지도 지표의 순위 방향을 따릅니다(순위가 없으면 분석 정책의 방향). 오름차순이면 작은 값, 내림차순이면 큰 값이 가장 눈에 띕니다.
   - 범례 양끝 문구는 분석 정책에 있으면 그것(공급 부족 ↔ 여유), 없으면 지표 성격으로 정합니다(총량은 적음 ↔ 많음, 비율·평균은 낮음 ↔ 높음).
+  - 지도 지표가 `aggregate_by_area`(Point 개수)이면 센 점의 위치를 `map_layer.points`로 함께 보내고(`point_locations`), 보기 목록에 점 지도·밀도 지도를 더합니다. 점은 계획의 필터가 적용된 View 그대로이고, 분석 지역 밖·위치가 없는 점은 빠지며, 경계선 위 점은 `aggregate_by_area`처럼 단위 키가 작은 단위 하나에만 들어갑니다. 점이 1만 개(`POINT_LIMIT`)를 넘으면 응답 크기 때문에 보내지 않고 지역별 보기만 둡니다(어린이집 3,895곳이 응답에 약 0.6MB).
+  - 기본 보기는 질문의 초점(①의 `map_focus_phrase`)이 위치면 점 지도, 밀집이면 밀도 지도, 없으면 비례 원입니다. 버튼 순서는 질문과 관계없이 원 크기·색 구간·점·밀도입니다.
 - 경위도 범위를 벗어나거나 Geometry가 없는 단위가 있으면 실패합니다.
 - 이 단계가 끝나면 읽기 전용 연결을 반납합니다.
 
@@ -789,7 +793,10 @@ app/
   "ranking": [{"rank": 1, "unit_key": "…", "unit_name": "…", "parent_name": "…", "value": 0.0, "values": {}}],
   "map_layer": {"type": "choropleth", "metric": "…", "metric_label": "…", "crs": "EPSG:4326",
                 "classification": {"method": "quantile", "class_count": 5, "breaks": [], "min": 0, "max": 0},
-                "feature_count": 427, "null_count": 0, "geojson": {"type": "FeatureCollection", "features": []}},
+                "feature_count": 427, "null_count": 0, "geojson": {"type": "FeatureCollection", "features": []},
+                "style": {"default_view": "choropleth", "views": ["choropleth"], "emphasis": "low",
+                          "legend_low": "공급 부족", "legend_high": "여유", "note": "…"},
+                "points": null},
   "analysis_method": ["분석 범위: …", "필터 — …", "…"],
   "datasets": [{"dataset_id": "…", "title": "…", "provider": "…", "source": "…", "license": "…", "reference_date": "…"}],
   "assumptions": ["…"],
@@ -899,18 +906,21 @@ frontend/
 
 ### 7.5 지도 렌더링
 
-- **데이터**: `map_layer.geojson`을 GeoJSON source로 올리고(`promoteId: unit_key`), 각 단위의 `label_point`로 만든 점 source를 하나 더 둡니다.
-- **보기**: `map_layer.style.default_view`로 시작합니다. `style.views`가 둘 이상이면 범례 위의 버튼("원 크기"·"색 구간")으로 바꿀 수 있고, 고른 보기는 그 결과에만 적용됩니다.
+- **데이터**: `map_layer.geojson`을 GeoJSON source로 올리고(`promoteId: unit_key`), 각 단위의 `label_point`로 만든 점 source를 하나 더 둡니다. `map_layer.points`가 있으면 시설 점 source를 묶음(cluster)용과 밀도용으로 두 개 둡니다.
+- **보기**: `map_layer.style.default_view`로 시작합니다. `style.views`가 둘 이상이면 범례 위의 버튼("원 크기"·"색 구간"·"점"·"밀도")으로 바꿀 수 있고, 고른 보기는 그 결과에만 적용됩니다.
   - 단계 구분도: 채움(투명도 0.85)과 경계선. 배경지도의 도로·면 위, 마지막 레이블 묶음 아래에 넣어 지명이 가려지지 않게 합니다.
   - 비례 원: 옅은 지역 경계선과, 지명 라벨 위에 그리는 원. 원 넓이가 값에 비례하도록 반지름은 값의 제곱근으로 키우고, 단위가 많으면 최대 크기를 줄입니다(`symbolMaxRadius`). 작은 원이 위에 오고, 값이 없는 지역은 원을 그리지 않습니다.
-  - hover·선택 강조는 두 보기 모두 같은 `unit_key`로 면 테두리와 원 테두리에 함께 걸립니다.
+  - 점 지도: 옅은 지역 경계선, 가까운 점을 묶은 원(숫자는 곳 수, 배율 14까지 묶음)과 낱개 점. 묶음을 누르면 묶음이 풀리는 배율로 확대합니다.
+  - 밀도 지도: 옅은 지역 경계선과 MapLibre heatmap. 서울 전체 배율에서도 몰린 곳만 진해지도록 강도를 낮게 시작합니다(배율 9→13에서 강도 0.12→0.9, 반경 6→22px). 밀도는 화면 배율에 따라 상대적이라 범례에 그렇게 적습니다.
+  - hover·선택 강조는 모든 보기에서 같은 `unit_key`로 면 테두리와 원 테두리에 함께 걸립니다. 점·밀도 보기에서는 투명한 면 레이어가 지역 hover·클릭을 받습니다. hover·클릭은 보이는 레이어 중 위에 그린 것(시설 점 → 비례 원 → 면)부터 잡습니다.
 - **색**: 백엔드가 계산한 분위 경계값으로 MapLibre `step` 식을 만듭니다.
   - 단일 색상(blue) 5단계 ordinal 램프입니다. `style.emphasis` 쪽(공급 부족처럼 작은 값, 또는 많은 곳처럼 큰 값)이 라이트 모드는 가장 진하게, 다크 모드는 가장 밝게 보입니다. dataviz 팔레트 검사(ordinal)를 통과했습니다.
   - 값이 없는 단위는 회색입니다.
   - 동일 값이 많아 구간이 5개보다 적으면 램프 양 끝을 유지하도록 색을 고릅니다.
-- **범례**: 단계 구분도는 구간을 `[경계값 이상, 다음 경계값 미만)`으로 `step` 식과 같게 보이고, 양끝에 `style.legend_low`·`legend_high`(예: "← 공급 부족 / 여유 →")를 씁니다. 비례 원은 최댓값과 그 1/4·1/16 크기의 원을 겹쳐 보입니다. 값 없음 개수를 표시하고, 바꿔 볼 보기가 있으면 이 보기를 고른 이유(`style.note`)도 보입니다.
-- **예전 실행 기록**: 이 기능 전에 저장된 실행에는 `style`과 `label_point`가 없어 예전처럼 단계 구분도로만 그립니다(`theme.ts`의 `layerStyle`).
-- **툴팁**: 자치구·동 이름, 지표 값(없으면 결측 사유), 다른 지표 값을 보여줍니다. 라벨은 LLM이 만든 문자열이므로 HTML 이스케이프 후 넣습니다.
+  - 밀도 지도는 같은 파랑의 100~700단계 7개를 고르게 쓴 연속 램프입니다(라이트는 옅음→진함, 다크는 어두움→밝음). 밀도 0은 투명하고, 0에 가까운 끝은 배경으로 스며듭니다. dataviz 검사에서 밝기 단조·단계 간격·단일 색상을 통과했습니다.
+- **범례**: 단계 구분도는 구간을 `[경계값 이상, 다음 경계값 미만)`으로 `step` 식과 같게 보이고, 양끝에 `style.legend_low`·`legend_high`(예: "← 공급 부족 / 여유 →")를 씁니다. 비례 원은 최댓값과 그 1/4·1/16 크기의 원을 겹쳐 보입니다. 점 지도는 한 곳과 묶음 표시, 밀도 지도는 드문 곳→밀집한 곳 색 띠를 보이고, 둘 다 제목에 Dataset 이름과 분석 지역 안의 점 수를 씁니다. 단계 구분도·비례 원에서는 값 없음 개수를 표시하고, 바꿔 볼 보기가 있으면 이 보기를 고른 이유(`style.note`)도 보입니다.
+- **예전 실행 기록**: 이 기능 전에 저장된 실행에는 `style`과 `label_point`가 없어 예전처럼 단계 구분도로만 그립니다(`theme.ts`의 `layerStyle`). `points`가 없는 실행은 시설 점 source가 비어 있습니다.
+- **툴팁**: 자치구·동 이름, 지표 값(없으면 결측 사유), 다른 지표 값을 보여줍니다. 시설 점은 시설 이름과 그 점을 센 행정구역, 묶음은 곳 수를 보여줍니다. 라벨은 LLM이 만든 문자열이고 시설 이름은 외부 데이터이므로 HTML 이스케이프 후 넣습니다.
 - **테마**: `prefers-color-scheme`을 따르고, 배경지도 스타일이 다르므로 테마가 바뀌면 지도를 다시 만듭니다.
 - **MapLibre v6 참고**: 번들러 환경에서는 worker 경로를 직접 지정해야 해서 `maplibre-gl-worker.mjs?worker&url` + `setWorkerUrl`을 씁니다.
 
@@ -1144,7 +1154,7 @@ FROM analysis.run GROUP BY 1, 2, 3 ORDER BY 1, 2;
 | 지원 CRS 추가 | `gis/crs.py`의 `SUPPORTED_SRIDS` |
 | 응답에 필드 추가 | `domain/results.py`(`FinalResponse`) → `workflows/response.py` → `frontend/src/types.ts` → 컴포넌트 |
 | 화면 수정 | `frontend/src/components/*`, 색·포맷은 `theme.ts` |
-| 지도 보기 규칙 (어떤 지표를 어떤 지도로, 강조 방향, 범례 문구) | `domain/maps.py`(`map_style`), 정책별 범례 문구는 `domain/policies.py`(`legend_labels`) → 화면 `Legend.tsx`·`ChoroplethMap.tsx` |
+| 지도 보기 규칙 (어떤 지표를 어떤 지도로, 강조 방향, 범례 문구, 위치·밀집 초점) | `domain/maps.py`(`map_style`, `map_focus`), 정책별 범례 문구는 `domain/policies.py`(`legend_labels`), 초점 표현은 해석 프롬프트 규칙 8 → 화면 `Legend.tsx`·`ChoroplethMap.tsx` |
 
 ---
 
@@ -1172,6 +1182,8 @@ FROM analysis.run GROUP BY 1, 2, 3 ORDER BY 1, 2;
 | Structured Output | LLM이 지정한 JSON Schema에 맞는 JSON만 내도록 하는 기능 |
 | Choropleth / 분위(quantile) | 단위별 값을 색으로 칠한 지도(단계 구분도) / 값을 개수가 비슷한 구간으로 나누는 방식 |
 | 비례 원(Proportional symbol) | 단위마다 값에 비례한 넓이의 원을 그린 지도. 개수·합계처럼 지역 크기의 영향을 받는 값에 쓴다 |
+| 점 지도(클러스터) | 시설 하나하나를 점으로 그리고, 가까운 점은 묶어 개수로 보이는 지도. 위치를 묻는 질문의 기본 보기 |
+| 밀도 지도(Heatmap) | 점이 몰린 정도를 연속된 색 번짐으로 그린 지도. 행정구역 경계와 관계없이 밀집한 곳을 묻는 질문의 기본 보기 |
 | CRS / SRID | 좌표계 / 좌표계 번호(예: EPSG:4326 경위도, EPSG:5179 UTM-K) |
 | pgvector / 임베딩 | PostgreSQL 벡터 검색 확장 / 텍스트를 의미 벡터로 바꾼 값 |
 | null_reason | 값을 계산할 수 없는 이유(`denominator_zero`, `denominator_missing`, `numerator_missing`, `no_matching_records`, `input_null`) |

@@ -1,9 +1,19 @@
-import { type ColorScheme, MAP_CHROME, classColors, formatValue, layerStyle, symbolMaxRadius } from "../theme";
+import {
+  type ColorScheme,
+  HEAT_COLORS,
+  MAP_CHROME,
+  classColors,
+  formatValue,
+  layerStyle,
+  symbolMaxRadius,
+} from "../theme";
 import type { MapLayer, MapView } from "../types";
 
 const VIEW_LABELS: Record<MapView, { label: string; title: string }> = {
   proportional_symbol: { label: "원 크기", title: "비례 원: 값에 비례한 넓이의 원" },
   choropleth: { label: "색 구간", title: "단계 구분도: 값 구간별 색으로 칠하기" },
+  point: { label: "점", title: "점 지도: 하나하나의 위치 (가까운 곳은 묶어 개수로 보인다)" },
+  heatmap: { label: "밀도", title: "밀도 지도: 점이 몰린 정도를 색 번짐으로" },
 };
 
 interface Props {
@@ -34,12 +44,11 @@ export function Legend({ layer, scheme, view, onViewChange }: Props) {
           ))}
         </div>
       )}
-      {view === "proportional_symbol" ? (
-        <SymbolScale layer={layer} scheme={scheme} />
-      ) : (
-        <ClassScale layer={layer} scheme={scheme} />
-      )}
-      {layer.null_count > 0 && (
+      {view === "proportional_symbol" && <SymbolScale layer={layer} scheme={scheme} />}
+      {view === "choropleth" && <ClassScale layer={layer} scheme={scheme} />}
+      {view === "point" && <PointScale layer={layer} scheme={scheme} />}
+      {view === "heatmap" && <HeatScale layer={layer} scheme={scheme} />}
+      {layer.null_count > 0 && (view === "choropleth" || view === "proportional_symbol") && (
         <div className="legend-class">
           <span className="swatch" style={{ background: MAP_CHROME[scheme].noData }} />
           <span className="legend-range">값 없음 {layer.null_count}개</span>
@@ -114,6 +123,56 @@ function SymbolScale({ layer, scheme }: { layer: MapLayer; scheme: ColorScheme }
           })}
         </svg>
       )}
+    </>
+  );
+}
+
+function PointsTitle({ layer, detail }: { layer: MapLayer; detail?: string }) {
+  const count = `분석 지역 안 ${(layer.points?.count ?? 0).toLocaleString("ko-KR")}곳`;
+  return (
+    <div className="legend-title">
+      {layer.points?.title} <span className="muted">({detail ? `${detail}, ${count}` : count})</span>
+    </div>
+  );
+}
+
+/** 점 지도 범례: 한 곳을 뜻하는 점과, 가까운 곳을 묶은 원(숫자는 곳 수). */
+function PointScale({ layer, scheme }: { layer: MapLayer; scheme: ColorScheme }) {
+  const chrome = MAP_CHROME[scheme];
+  return (
+    <>
+      <PointsTitle layer={layer} />
+      <div className="legend-class">
+        <svg className="legend-mark" width="22" height="22" aria-hidden="true">
+          <circle cx="11" cy="11" r="4" fill={chrome.symbol} stroke={chrome.separator} />
+        </svg>
+        <span className="legend-range">한 곳</span>
+      </div>
+      <div className="legend-class">
+        <svg className="legend-mark" width="22" height="22" aria-hidden="true">
+          <circle cx="11" cy="11" r="10" fill={chrome.symbol} fillOpacity={0.85} />
+          <text x="11" y="14.5" textAnchor="middle" fill={chrome.symbolText}>12</text>
+        </svg>
+        <span className="legend-range">가까운 곳 묶음 (숫자는 곳 수, 누르면 확대)</span>
+      </div>
+    </>
+  );
+}
+
+/** 밀도 지도 범례: 투명(점 없음)에서 가장 밀집한 색까지의 띠. 밀도는 화면 배율에 따라 상대적이다. */
+function HeatScale({ layer, scheme }: { layer: MapLayer; scheme: ColorScheme }) {
+  return (
+    <>
+      <PointsTitle layer={layer} detail="밀도" />
+      <div
+        className="legend-heat"
+        style={{ background: `linear-gradient(to right, transparent, ${HEAT_COLORS[scheme].join(", ")})` }}
+      />
+      <div className="legend-ends">
+        <span>← 드문 곳</span>
+        <span>밀집한 곳 →</span>
+      </div>
+      <div className="legend-note">색은 지금 화면 배율에서의 상대 밀도라 확대·축소하면 달라집니다.</div>
     </>
   );
 }

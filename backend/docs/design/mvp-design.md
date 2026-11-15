@@ -485,7 +485,8 @@ class MetricValues(BaseModel):    name; values: dict[key, float|int|None]
 | `aggregate` | 속성 그룹 집계 | view, group_by, field, function → MetricValues | group_by 1개, field 존재·숫자형(sum) | `FIELD_UNKNOWN`, `FIELD_NOT_NUMERIC`, `MULTI_GROUP_UNSUPPORTED`, `UNSUPPORTED_AGGREGATION` |
 | `calculate_ratio` | 분자/분모×scale | 두 MetricValues, scale, unit keys → MetricValues | 분모 0/없음 → `null` + 사유, 결과 유한값 | `NON_FINITE_RESULT` |
 | `rank` | 순위 | MetricValues, order → MetricValues | null 제외, 동순위 표준 경쟁 순위(1,2,2,4) | — |
-| `create_map_layer` | 지도 GeoJSON (단계 구분도 면 + 비례 원 대표점) | boundary view, 결과 행, metric, 지도 보기(`map_style`) → MapLayer | 출력 EPSG:4326, 좌표 경위도 범위, 모든 feature에 geometry·`label_point` | `OUTPUT_CRS_INVALID`, `GEOMETRY_MISSING` |
+| `create_map_layer` | 지도 GeoJSON (단계 구분도 면 + 비례 원 대표점) | boundary view, 결과 행, metric, 지도 보기(`map_style`), 점 위치 → MapLayer | 출력 EPSG:4326, 좌표 경위도 범위, 모든 feature에 geometry·`label_point` | `OUTPUT_CRS_INVALID`, `GEOMETRY_MISSING` |
+| `point_locations` | 지도 지표로 센 Point 위치 (점 지도·밀도 지도) | 필터가 적용된 Point view, boundary view, limit(1만) → PointLayer 또는 없음 | `aggregate_by_area`와 같은 단위 배정(분석 지역 밖·위치 없음 제외, 경계선 위 점은 한 단위), 출력 EPSG:4326, limit 초과면 보내지 않음 | `NOT_POINT`, `CRS_UNSUPPORTED` |
 | `transform_crs` (내부) | 연산 전 CRS 정규화 | geom SQL, src, dst → SQL 조각 | 지원 SRID {4326, 5179} | `CRS_UNSUPPORTED` |
 | `validate_geometry` (내부) | 유효성 점검 | view → {invalid, empty, null} 개수 | `ST_IsValid`, `ST_IsEmpty` | (호출자가 판정) |
 
@@ -581,7 +582,7 @@ UI ─POST /api/analyses {question}─▶ API ─▶ AnalysisWorkflow.run(questi
                         calculate_ratio(÷, ×1000) → daycare_per_1000_children
                         rank(asc) → shortage_rank → UnitRow 조립
  7 validate_result      ResultValidator → 오류면 RESULT_INVALID(지표가 모두 0이면 NO_MATCHING_DATA), 경고는 한계로 전달
- 8 create_map_layer     create_map_layer → GeoJSON(EPSG:4326) + 5분위(quantile) 구간 + 대표점 + 지도 보기(style)
+ 8 create_map_layer     create_map_layer → GeoJSON(EPSG:4326) + 5분위(quantile) 구간 + 대표점 + 지도 보기(style) + 점 위치(points)
  9 generate_explanation LLM(Explanation)       ← 상위 랭킹·요약 통계·경고·기준 시점 (주어진 수치만 사용)
 10 compose & persist    FinalResponse 조립(방법·가정·한계는 결정론적) → analysis.run / analysis.result 저장
  ◀─ {run_id, status, result, errors} ── UI: 지도 + Ranking + Metric + Dataset·기준 시점 + 방법·가정·한계
@@ -703,7 +704,7 @@ class FinalResponse(StrictModel):
     limitations: list[str]
 ```
 
-**UI (frontend/)**: 질문 입력, 단계 진행 표시, MapLibre 단계 구분도(5분위, 순위 방향 쪽을 진하게 강조, null은 회색, hover 툴팁)와 비례 원(개수·합계 지표의 기본 보기, 단계 구분도로 전환 가능), 랭킹 표(순위·자치구·동·어린이집 수·0~5세 인구·지표), Metric/Dataset(기준 시점)/분석 방법/가정/한계 패널, 실패 시 단계와 오류 목록. 배경지도는 키가 필요 없는 OpenFreeMap 벡터 스타일(positron / dark, © OpenMapTiles · OpenStreetMap)이다. 개발 서버는 `/api`를 FastAPI로 프록시한다.
+**UI (frontend/)**: 질문 입력, 단계 진행 표시, MapLibre 단계 구분도(5분위, 순위 방향 쪽을 진하게 강조, null은 회색, hover 툴팁)와 비례 원(개수·합계 지표의 기본 보기, 단계 구분도로 전환 가능), 점 지도·밀도 지도(지표가 시설 개수일 때, 위치·밀집 질문의 기본 보기), 랭킹 표(순위·자치구·동·어린이집 수·0~5세 인구·지표), Metric/Dataset(기준 시점)/분석 방법/가정/한계 패널, 실패 시 단계와 오류 목록. 배경지도는 키가 필요 없는 OpenFreeMap 벡터 스타일(positron / dark, © OpenMapTiles · OpenStreetMap)이다. 개발 서버는 `/api`를 FastAPI로 프록시한다.
 
 ---
 
@@ -814,3 +815,4 @@ Validation(5)을 LLM 연동(6)보다 먼저 한다. LLM 출력은 처음부터 �
 | 필터 근거 확인 (2026-11-15) | 질문에 근거가 없는 필터를 고치지 않고 오류로 알려 다시 만들게 한다. ① 범주 값(시설 유형·범주·이름) 조건은 값이 질문에 있거나 질문의 낱말이 값의 일부여야 한다(`FILTER_NOT_IN_QUESTION`) ② 일반 통계 계획의 나이 0~5세 조건은 질문이 어린이·영유아·유아·아동·아이나 0~5세를 말해야 한다(공급 부족 분석은 정책이 정하므로 제외, 같은 코드) ③ 경계가 아닌 데이터 표에도 행정코드·지역 이름 필터를 두지 않는다(`REGION_FILTER_UNSUPPORTED`) ④ 범주 컬럼의 값 유무(is_null 등) 조건도 질문에 없으면 같은 오류로 알린다. 플래너 프롬프트에는 이 규칙을 예시와 함께 넣지 않는다 | gpt-4o-mini가 '서울 자치구별 어린이집 수 순위'에 '시설 유형 = 국공립'(다른 실행에서는 '0', '어린이집')을, '인구 1,000명당 공공와이파이 수'에 0~5세 조건을, '부산 중구 인구 순위'에 지어낸 행정동 코드를 붙였다. 앞의 둘은 성공으로 나간 틀린 답이었다. 계획 보정처럼 자동으로 지우면 필요한 조건을 잘못 지울 때 다른 질문의 답이 되므로 오류로만 알린다. 다른 말로 표현한 값('공공' → '국공립')이나 목록에 없는 어린이 표현은 다시 만들거나 실패할 수 있다. 질문에 있는 말이지만 실제 값이 아닌 경우(시설 유형 = '어린이집')는 실제 값 정보가 필요해 남긴다. 처음에 플래너 규칙 3에 '행정코드·지역 이름', '시설 유형'을 예로 들어 넣었더니 gpt-4o-mini가 서울 기본 질문에 '시설 유형 값 없음', 강남구 질문에 잘못된 구 코드 필터를 새로 붙여 두 질문이 실패했다. 그래서 프롬프트 문구는 되돌렸다 |
 | 조건에 맞는 데이터 없음 (2026-11-15) | 필터 결과가 0건이면 `FILTER_EMPTY_RESULT` 대신 `NO_MATCHING_DATA`로 멈추고, 조건 문구와 조건에 쓴 문자열 컬럼의 실제 값(최대 20개)을 함께 안내한다. 값 있는 단위가 2개 이상인데 출력 지표가 모두 0이면 결과 검증이 `CONSTANT_METRIC` 대신 `NO_MATCHING_DATA`로 "이 지역에는 조건에 맞는 데이터가 없습니다"라고 알리고, 워크플로는 `RESULT_INVALID` 대신 이 코드로 멈춘다. 화면은 `DATA_NOT_AVAILABLE`·`NO_MATCHING_DATA`면 제목을 "데이터가 없습니다"로 바꾼다 | 조건에 맞는 데이터가 없는 질문(서울에 없는 시설 유형, 직장 어린이집이 없는 구 등)이 내부 코드(`FILTER_EMPTY_RESULT`)나 "값이 모두 같아 비교할 수 없다"는 계획 오류 문구로 끝나, '없다'는 답인지 시스템 실패인지 알 수 없었다. 실제 값을 함께 보여 주면 값 표기가 틀린 조건(시설 유형 = '어린이집' 등)도 알아볼 수 있다. 0이 아닌 같은 값(경계 행을 세어 모두 1 등)은 계획 실수 신호라 `CONSTANT_METRIC`으로 남긴다 |
 | 지도 보기 (2026-11-15) | 지도 지표를 만든 Operation으로 성격을 정해(`domain/maps.py`) 비율·평균은 단계 구분도, 개수·합계는 비례 원을 기본으로 하고 단계 구분도로 바꿔 볼 수 있게 했다. 단위마다 `label_point`(`ST_PointOnSurface`)를 담고, 색 강조 방향은 지도 지표의 순위 방향, 범례 양끝 문구는 정책(`legend_labels`) 또는 지표 성격으로 정한다(`MapLayer.style`). LLM 프롬프트·스키마는 바꾸지 않았다 | 원 요구사항 23번의 "기본 지도 표현: Choropleth"를 넓혔다(사용자 요청). 개수·합계를 색으로 칠하면 넓은 지역이 진해 보이고, 일반 통계에서도 가장 작은 값이 가장 진하고 범례가 "공급 부족"으로 나와 '많은 곳' 질문의 답과 반대로 읽혔다 |
+| 지도 보기 2단계: 점 지도·밀도 지도 (2026-11-15) | 지도 지표가 Point 개수(`aggregate_by_area`)이면 센 점의 위치를 `MapLayer.points`로 함께 보내고(`point_locations`, 필터·지역·단위 배정은 집계와 같음, 1만 개 초과면 보내지 않음) 점 지도(묶음)·밀도 지도를 보기 목록에 더한다. 해석 LLM이 지도로 위치·밀집을 보려는 표현을 옮겨 적고(`InterpretedQuery.map_focus_phrase`, 해석 규칙 8), 코드가 질문에 있는지와 위치·밀집을 뜻하는 말이 있는지 확인해(`map_focus`) 위치면 점 지도, 밀집이면 밀도 지도를 기본으로 한다. 해석 규칙 1에 '위치·밀집을 지도로 보여 달라는 질문도 지역별 시설 수를 세는 regional_summary'를 더했다. 밀도 색은 파랑 100~700단계 연속 램프다 | 사용자가 승인한 지도 보기 3단계 계획의 2단계. 위치·밀집 질문에 지역별 원·색만 보이면 시설이 실제로 어디 있는지 알 수 없다. 단위 표현처럼 키워드 목록만으로 고르면 '가장 많은 곳은 어디야'도 위치로 오인하므로 LLM이 표현을 고르고 코드가 확인한다. 점 수 한도는 응답 크기 때문이다(어린이집 3,895곳 ≈ 0.6MB, 저장은 압축돼 실행당 0.34MB). gpt-4o-mini 확인 5회: 위치·어디에 있는지 → 점 지도, 밀집한 곳 → 밀도 지도, 자치구별 수 → 비례 원, 공급 부족 → 단계 구분도로 모두 의도대로 골랐다. 같은 확인에서 개수 질문 4건 중 3건이 순위를 오름차순으로 만들어 가장 적은 곳이 1위가 됐다(기존 남은 문제 'desc 순위 규칙 미준수', 이번 변경과 무관) |

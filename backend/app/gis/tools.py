@@ -24,11 +24,12 @@ from app.domain.enums import (
     SpatialLevel,
 )
 from app.domain.filters import FilterCondition, FilterExpression, describe_filter, iter_conditions
-from app.domain.results import Classification, MapLayer, MapStyle, MetricValue, UnitRow
+from app.domain.results import Classification, MapLayer, MapStyle, MetricValue, PointLayer, UnitRow
 from app.gis.crs import MAP_OUTPUT_SRID, CrsError, parse_srid, transform_crs
 from app.gis.filter_sql import FilterCompileError, compile_filter
 
 QUANTILE_CLASSES = 5
+POINT_LIMIT = 10_000  # 점 지도로 보낼 최대 점 수. 넘으면 응답 크기·화면 성능 때문에 위치를 보내지 않는다
 _VALUE_EXAMPLES = 20  # 조건에 맞는 데이터가 없을 때 보여 줄 실제 값 수
 _REGION_CODE_COLUMN = {SpatialLevel.SIDO: SemanticType.SIDO_CODE, SpatialLevel.SIGUNGU: SemanticType.SIGUNGU_CODE}
 _SQL_AGGREGATES = {
@@ -381,6 +382,70 @@ def rank(metric: MetricValues, order: SortOrder, unit_keys: list[str], name: str
     )
 
 
+def point_locations(
+    conn: psycopg.Connection, view: DatasetView, boundary: BoundaryView, limit: int = POINT_LIMIT
+) -> PointLayer | None:
+    """aggregate_by_area가 센 Point를 EPSG:4326 GeoJSON으로 만든다 (점 지도·밀도 지도용).
+
+    필터가 적용된 View를 그대로 쓰고, 분석 지역 밖의 점과 위치가 없는 행은 빠진다. 경계선 위 점은 aggregate_by_area처럼
+    단위 키가 작은 단위 하나에만 배정한다. 점이 limit보다 많으면 None을 돌려준다 (지역별 지도만 보인다).
+    """
+    metadata = view.metadata
+    geometry_column = metadata.geometry_column
+    if geometry_column is None or metadata.spatial.geometry_type != GeometryType.POINT:
+        raise GisToolError("NOT_POINT", f"'{metadata.dataset_id}'는 Point Dataset이 아닙니다")
+    srid = _srid(metadata)
+    geom = sql.Identifier(geometry_column.name)
+    name_column = metadata.column_with(SemanticType.FACILITY_NAME)
+    boundary_where, boundary_params = boundary.where()
+    point_where, point_params = view.where()
+    query = sql.SQL(
+        """
+        WITH units AS NOT MATERIALIZED (
+            SELECT {key}::text AS unit_key, {boundary_geom} AS geom FROM {boundary_table} WHERE {boundary_where}
+        ),
+        points AS NOT MATERIALIZED (
+            SELECT ctid AS point_id, {name} AS name, {overlay_geom} AS geom, {map_geom} AS map_geom
+            FROM {point_table} WHERE {point_where}
+        ),
+        assigned AS (
+            SELECT DISTINCT ON (p.point_id) p.point_id, p.name, p.map_geom, u.unit_key
+            FROM points p JOIN units u ON ST_Covers(u.geom, p.geom)
+            ORDER BY p.point_id, u.unit_key
+        )
+        SELECT name, unit_key, ST_X(map_geom), ST_Y(map_geom) FROM assigned ORDER BY unit_key, point_id LIMIT {limit}
+        """
+    ).format(
+        key=sql.Identifier(boundary.key_field),
+        boundary_geom=sql.Identifier(boundary.metadata.geometry_column.name),
+        boundary_table=boundary.table,
+        boundary_where=boundary_where,
+        name=sql.SQL("{}::text").format(sql.Identifier(name_column.name)) if name_column else sql.NULL,
+        overlay_geom=transform_crs(geom, srid, boundary.srid),
+        map_geom=transform_crs(geom, srid, MAP_OUTPUT_SRID),
+        point_table=view.table,
+        point_where=point_where,
+        limit=sql.Literal(limit + 1),
+    )
+    rows = conn.execute(query, boundary_params + point_params).fetchall()
+    if len(rows) > limit:
+        return None
+    features = [
+        {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [round(x, 6), round(y, 6)]},
+            "properties": {"name": name, "unit_key": unit_key},
+        }
+        for name, unit_key, x, y in rows
+    ]
+    return PointLayer(
+        dataset_id=metadata.dataset_id,
+        title=metadata.title,
+        count=len(features),
+        geojson={"type": "FeatureCollection", "features": features},
+    )
+
+
 def create_map_layer(
     conn: psycopg.Connection,
     boundary: BoundaryView,
@@ -388,10 +453,12 @@ def create_map_layer(
     metric: str,
     metric_label: str,
     style: MapStyle,
+    points: PointLayer | None = None,
 ) -> MapLayer:
     """결과 행을 EPSG:4326 GeoJSON FeatureCollection과 분위 구간으로 만든다.
 
     단위마다 비례 원을 그릴 대표점(label_point)을 함께 담아, 화면이 같은 결과를 단계 구분도·비례 원으로 그린다.
+    points는 지도 지표로 센 Point 위치다 (point_locations, 점 지도·밀도 지도용).
     """
     bbox = boundary.bbox or []
     if len(bbox) != 4 or not (-180 <= bbox[0] <= bbox[2] <= 180 and -90 <= bbox[1] <= bbox[3] <= 90):
@@ -438,6 +505,7 @@ def create_map_layer(
         null_count=len(rows) - len(values),
         geojson={"type": "FeatureCollection", "features": features},
         style=style,
+        points=points,
     )
 
 

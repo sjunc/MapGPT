@@ -49,11 +49,12 @@ from app.domain.plan import (
     resolve_region,
     unit_named,
 )
-from app.domain.maps import map_style
+from app.domain.maps import map_focus, map_style, metric_operation
+from app.domain.operations import AggregateByAreaOperation
 from app.domain.results import ValidationIssue, ValidationReport
 from app.domain.state import AgentState, DatasetHit, DatasetSearch, InterpretedQuery, PlanAttempt, WorkflowError
 from app.executor.operation_executor import ExecutionContext, execute_operations, prepare_context
-from app.gis.tools import GisToolError, create_map_layer
+from app.gis.tools import GisToolError, create_map_layer, point_locations
 from app.llm.base import LLMError, LLMOutputError, StructuredLLM
 from app.llm.embeddings import Embedder, EmbeddingError
 from app.repositories.run_repository import save_run
@@ -533,15 +534,25 @@ def _validate_result(state: AgentState, ctx: _RunContext, update: Update) -> Non
 
 def _create_map_layer(state: AgentState, ctx: _RunContext, update: Update) -> None:
     plan = state.analysis_plan
-    label = next(op.label for op in plan.operations if op.output == plan.output.metric)
+    operation = metric_operation(plan)
+    boundary = ctx.gis.context.boundary
+    # 지도 지표가 Point 개수면 센 점의 위치도 보내 점 지도·밀도 지도로 볼 수 있게 한다 (필터가 적용된 View 그대로).
+    points = (
+        _gis_call(point_locations, ctx.gis.conn, ctx.gis.context.views[operation.input], boundary)
+        if isinstance(operation, AggregateByAreaOperation)
+        else None
+    )
+    # 질문이 위치·밀집을 보려는지는 해석 LLM이 옮겨 적은 표현을 코드가 확인해 정한다.
+    focus = map_focus(state.question, state.interpreted_query.map_focus_phrase)
     update["map_layer"] = _gis_call(
         create_map_layer,
         ctx.gis.conn,
-        ctx.gis.context.boundary,
+        boundary,
         state.execution_results.rows,
         plan.output.metric,
-        label,
-        map_style(plan),  # 지표 성격으로 정한 기본 보기와 강조 방향 (LLM 없음)
+        operation.label,
+        map_style(plan, focus, has_points=points is not None),  # 지표 성격과 질문의 초점으로 정한 보기
+        points,
     )
     ctx.gis.release()
 

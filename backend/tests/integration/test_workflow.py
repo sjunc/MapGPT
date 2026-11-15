@@ -46,6 +46,7 @@ def test_first_use_case_runs_end_to_end_and_records_provenance(pool, catalog, co
     assert response.map_layer.feature_count == 10 and response.map_layer.null_count == 2
     # 비율 지표는 단계 구분도이고, 공급 부족(작은 값)을 진하게 칠한다.
     assert (response.map_layer.style.default_view, response.map_layer.style.emphasis) == ("choropleth", "low")
+    assert response.map_layer.points is None  # 지도 지표가 점 개수가 아니라 비율이라 위치를 보내지 않는다
     assert [d.dataset_id for d in response.datasets] == ["emd_boundary", "population_by_age", "daycare_facility"]
     assert response.analysis_method[1] == "필터 — 행정동별 연령별 주민등록 인구(population_by_age): age 0~5"
     assert "'어린이'를 만 0~5세로 해석" in response.assumptions
@@ -758,3 +759,67 @@ def test_region_without_matching_facilities_says_no_data(pool, sigungu_catalog, 
     )
     assert error.issues == []  # 같은 문구를 issues에 다시 싣지 않는다
     assert state.map_layer is None and state.final_response is None
+
+
+def _daycare_count_llm(map_focus_phrase: str | None):
+    plan = AnalysisPlan.model_validate(
+        {
+            "intent": "regional_summary",
+            "region": {"name": "서울특별시", "level": "sido"},
+            "analysis_unit": "emd",
+            "datasets": ["daycare_facility", "emd_boundary"],
+            "operations": [
+                {
+                    "type": "aggregate_by_area",
+                    "input": "daycare_facility",
+                    "boundary": "emd_boundary",
+                    "aggregation": "count",
+                    "output": "daycare_count",
+                    "label": "어린이집 수",
+                },
+                {
+                    "type": "rank",
+                    "input": "daycare_count",
+                    "order": "desc",
+                    "output": "daycare_rank",
+                    "label": "어린이집 수 순위",
+                },
+            ],
+            "output": {"map_type": "choropleth", "metric": "daycare_count", "ranking": {"enabled": True, "limit": 10}},
+        }
+    )
+    return daycare_llm(
+        interpreted=[
+            interpreted(
+                intent="regional_summary",
+                map_focus_phrase=map_focus_phrase,
+                restated_question="서울특별시 행정동별 어린이집 수와 위치",
+                key_concepts=["어린이집 위치", "행정동 경계"],
+                assumptions=[],
+            )
+        ],
+        selection=[DatasetSelection(datasets=["daycare_facility", "emd_boundary"], rationale="어린이집과 경계")],
+        plans=[plan],
+    )
+
+
+@pytest.mark.parametrize(
+    ("question", "phrase", "view"),
+    [
+        ("서울 행정동 어린이집 위치를 보여줘", "위치", "point"),
+        ("서울에서 어린이집이 밀집한 행정동은?", "밀집한", "heatmap"),
+        ("서울 행정동별 어린이집 수", None, "proportional_symbol"),
+        # 해석 LLM이 순위 표현을 옮겨 적어도 위치·밀집을 뜻하지 않으면 기본 보기를 바꾸지 않는다.
+        ("서울에서 어린이집이 가장 많은 행정동은?", "가장 많은 행정동", "proportional_symbol"),
+    ],
+)
+def test_point_count_map_sends_locations_and_follows_the_question_focus(pool, catalog, question, phrase, view):
+    state = AnalysisWorkflow(_daycare_count_llm(phrase), pool, FakeEmbedder()).run(question)
+
+    assert state.status == RunStatus.SUCCEEDED, state.errors
+    layer = state.final_response.map_layer
+    assert layer.style.default_view == view
+    assert layer.style.views == ["proportional_symbol", "choropleth", "point", "heatmap"]
+    # 지도 지표로 센 어린이집(서울 안 14곳)의 위치를 함께 보낸다.
+    assert layer.points.count == len(layer.points.geojson["features"]) == 14
+    assert state.interpreted_query.map_focus_phrase == phrase

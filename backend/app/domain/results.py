@@ -99,6 +99,15 @@ class MapStyle(StrictModel):
     note: str  # 이 보기를 고른 이유 (화면에 그대로 보인다)
 
 
+class PointLayer(StrictModel):
+    """지도 지표로 센 Point(시설)의 위치 (EPSG:4326). 점 지도·밀도 지도에 쓴다."""
+
+    dataset_id: str
+    title: str  # Dataset 이름 (범례 제목)
+    count: int  # 분석 지역 안에 있어 지표에 센 점 수
+    geojson: dict[str, Any]  # Point FeatureCollection. properties: name(시설 이름, 없으면 null), unit_key(배정된 단위)
+
+
 class MapLayer(StrictModel):
     type: MapType
     metric: str
@@ -109,6 +118,8 @@ class MapLayer(StrictModel):
     null_count: int
     geojson: dict[str, Any]  # 단위마다 properties.label_point = [경도, 위도] (비례 원 위치)
     style: MapStyle
+    # 지도 지표가 Point 개수일 때만 있다. 점이 너무 많으면(gis.tools.POINT_LIMIT) 보내지 않는다.
+    points: PointLayer | None = None
 
 
 class MetricDescription(StrictModel):

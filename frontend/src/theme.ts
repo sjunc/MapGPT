@@ -13,14 +13,23 @@ export const CLASS_COLORS: Record<ColorScheme, string[]> = {
 // 배경지도: OpenFreeMap (API 키 불필요, © OpenMapTiles · OpenStreetMap)
 export const MAP_CHROME: Record<
   ColorScheme,
-  { noData: string; separator: string; hover: string; symbol: string; outline: string; basemapStyle: string }
+  {
+    noData: string;
+    separator: string;
+    hover: string;
+    symbol: string;
+    symbolText: string;
+    outline: string;
+    basemapStyle: string;
+  }
 > = {
   light: {
     noData: "#c3c2b7",
     separator: "#fcfcfb",
     hover: "#0b0b0b",
-    symbol: "#2a78d6", // 비례 원
-    outline: "#8d8b82", // 비례 원 보기의 지역 경계선
+    symbol: "#2a78d6", // 비례 원, 시설 점과 묶음
+    symbolText: "#ffffff", // 묶음 원 안의 시설 수
+    outline: "#8d8b82", // 비례 원·점·밀도 보기의 지역 경계선
     basemapStyle: "https://tiles.openfreemap.org/styles/positron",
   },
   dark: {
@@ -28,6 +37,7 @@ export const MAP_CHROME: Record<
     separator: "#1a1a19",
     hover: "#ffffff",
     symbol: "#6da7ec",
+    symbolText: "#0b0b0b",
     outline: "#8a8980",
     basemapStyle: "https://tiles.openfreemap.org/styles/dark",
   },
@@ -42,6 +52,15 @@ export function classColors(scheme: ColorScheme, classCount: number, emphasis: M
   if (classCount <= 1) return [ramp[2]];
   return Array.from({ length: classCount }, (_, i) => ramp[Math.round((i * (ramp.length - 1)) / (classCount - 1))]);
 }
+
+// 밀도 지도(연속 크기)의 순차 램프: 밀도 낮음 → 높음. 같은 파랑 100~700 단계를 고르게 써서, 밀도 0에 가까운 끝은
+// 배경으로 스며들고 가장 밀집한 곳이 가장 눈에 띈다 (라이트는 옅음→진함, 다크는 어두움→밝음).
+// dataviz validate_palette.js --ordinal: 밝기 단조·단계 간격·단일 색상 통과. 배경 대비 2:1은 띠 모양 순서형 색의
+// 기준이라 0에 가까운 끝이 스며들어야 하는 연속 램프에는 적용하지 않는다.
+export const HEAT_COLORS: Record<ColorScheme, string[]> = {
+  light: ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"],
+  dark: ["#0d366b", "#184f95", "#256abf", "#3987e5", "#6da7ec", "#9ec5f4", "#cde2fb"],
+};
 
 // 이 기능 전에 저장된 실행 기록은 지도 보기 정보가 없어 예전처럼 단계 구분도로만 그린다.
 const LEGACY_STYLE: MapStyle = {

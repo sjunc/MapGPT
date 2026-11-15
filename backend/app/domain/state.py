@@ -32,6 +32,11 @@ class InterpretedQuery(StrictModel):
         default=None,
         description="질문에서 결과를 나눌 단위를 직접 말한 표현을 질문 글자 그대로 옮긴 것 (예: '자치구', '행정동별'). 없으면 null",
     )
+    # 지도로 위치·밀집을 보려는 질문인지도 표현을 옮겨 적게 하고, 코드가 질문에 있는지와 뜻을 확인해 기본 지도를 정한다.
+    map_focus_phrase: str | None = Field(
+        default=None,
+        description="질문에서 시설의 위치나 밀집한 곳을 지도로 보려는 표현을 질문 글자 그대로 옮긴 것 (예: '위치', '밀집한 곳'). 없으면 null",
+    )
     restated_question: str = Field(description="분석 질문을 명확하게 다시 쓴 문장")
     key_concepts: list[str] = Field(description="필요한 데이터 개념 (예: 어린이집, 0~5세 인구, 행정동 경계)")
     assumptions: list[str] = Field(description="해석 과정에서 둔 가정")

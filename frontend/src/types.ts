@@ -1,5 +1,5 @@
 // 백엔드 backend/app/api/schemas.py · backend/app/domain/results.py 와 같은 계약
-import type { FeatureCollection, MultiPolygon } from "geojson";
+import type { FeatureCollection, MultiPolygon, Point } from "geojson";
 
 export type MetricValue = number | null;
 
@@ -26,7 +26,7 @@ export interface UnitProperties {
 }
 
 /** 결과 지도를 그리는 방식 (backend MapView) */
-export type MapView = "choropleth" | "proportional_symbol";
+export type MapView = "choropleth" | "proportional_symbol" | "point" | "heatmap";
 
 /** 지도 지표의 성격과 순위 방향으로 백엔드가 정한 지도 보기 (backend MapStyle) */
 export interface MapStyle {
@@ -41,6 +41,21 @@ export interface MapStyle {
   note: string;
 }
 
+export interface FacilityProperties {
+  /** 시설 이름 (Dataset에 이름 컬럼이 없으면 null) */
+  name: string | null;
+  /** 이 점을 센 분석 단위 */
+  unit_key: string;
+}
+
+/** 지도 지표로 센 Point(시설)의 위치 (backend PointLayer). 점 지도·밀도 지도에 쓴다 */
+export interface PointLayer {
+  dataset_id: string;
+  title: string;
+  count: number;
+  geojson: FeatureCollection<Point, FacilityProperties>;
+}
+
 export interface MapLayer {
   type: "choropleth";
   metric: string;
@@ -52,6 +67,8 @@ export interface MapLayer {
   geojson: FeatureCollection<MultiPolygon, UnitProperties>;
   /** 이 기능 전에 저장된 실행 기록에는 없다 (theme.ts layerStyle이 예전 표시로 채운다) */
   style?: MapStyle;
+  /** 지도 지표가 점 개수일 때만 있다 (점이 너무 많으면 없다). 이 기능 전에 저장된 실행 기록에는 없다 */
+  points?: PointLayer | null;
 }
 
 export interface DatasetUsage {

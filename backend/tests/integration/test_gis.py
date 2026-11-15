@@ -1,3 +1,5 @@
+from collections import Counter
+
 import pytest
 
 from app.catalog.definitions import DAYCARE_FACILITY, EMD_BOUNDARY, POPULATION_BY_AGE, SEOUL
@@ -146,3 +148,53 @@ def test_map_layer_is_wgs84_geojson_with_quantile_breaks_and_label_points(conn, 
         ring = feature["geometry"]["coordinates"][0][0]
         assert min(p[0] for p in ring) < x < max(p[0] for p in ring)
         assert min(p[1] for p in ring) < y < max(p[1] for p in ring)
+
+
+def test_point_locations_are_the_counted_points_in_wgs84(conn, datasets):
+    boundary = tools.get_boundary(conn, EMD_BOUNDARY, SEOUL)
+
+    points = tools.point_locations(conn, tools.get_dataset(conn, DAYCARE_FACILITY), boundary)
+
+    features = points.geojson["features"]
+    # 지역 밖(부산) 점은 빠지고, 경계선 위 점은 aggregate_by_area처럼 키가 작은 단위에 한 번만 들어간다.
+    assert points.count == len(features) == sum(EXPECTED["daycare_count"].values())
+    assert (points.dataset_id, points.title) == ("daycare_facility", DAYCARE_FACILITY.title)
+    by_name = {feature["properties"]["name"]: feature for feature in features}
+    assert "시설 busan" not in by_name
+    assert by_name["시설 ab_edge"]["properties"]["unit_key"] == "1111000100"
+    assert by_name["시설 a1"]["geometry"] == {"type": "Point", "coordinates": [126.92, 37.55]}
+    counted = Counter(feature["properties"]["unit_key"] for feature in features)
+    assert counted == {key: count for key, count in EXPECTED["daycare_count"].items() if count}
+
+
+def test_point_locations_follow_the_filter_and_stop_over_the_limit(conn, datasets):
+    boundary = tools.get_boundary(conn, EMD_BOUNDARY, SEOUL)
+    some = FilterCondition(field="facility_id", operator="in", value=["a1", "b1", "busan"])
+    view = tools.filter_dataset(conn, tools.get_dataset(conn, DAYCARE_FACILITY), some)
+
+    points = tools.point_locations(conn, view, boundary)
+
+    assert sorted(feature["properties"]["name"] for feature in points.geojson["features"]) == ["시설 a1", "시설 b1"]
+    # 점이 limit보다 많으면 위치를 보내지 않는다 (지역별 지도만 보인다).
+    assert tools.point_locations(conn, view, boundary, limit=1) is None
+
+
+def test_point_locations_stored_in_another_crs_are_output_in_wgs84(conn, datasets):
+    conn.execute(
+        "CREATE TABLE datasets.daycare_facility_5179 AS "
+        "SELECT facility_id, name, ST_Transform(geom, 5179)::geometry(Point, 5179) AS geom FROM datasets.daycare_facility"
+    )
+    metadata = DAYCARE_FACILITY.model_copy(
+        update={
+            "dataset_id": "daycare_facility_5179",
+            "spatial": DAYCARE_FACILITY.spatial.model_copy(update={"crs": "EPSG:5179"}),
+        }
+    )
+    try:
+        boundary = tools.get_boundary(conn, EMD_BOUNDARY, SEOUL)
+        points = tools.point_locations(conn, tools.get_dataset(conn, metadata), boundary)
+    finally:
+        conn.rollback()
+
+    a1 = next(feature for feature in points.geojson["features"] if feature["properties"]["name"] == "시설 a1")
+    assert a1["geometry"]["coordinates"] == pytest.approx([126.92, 37.55], abs=1e-6)
