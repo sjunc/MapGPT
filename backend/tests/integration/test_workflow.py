@@ -199,6 +199,22 @@ def test_mechanical_plan_mistakes_are_repaired_without_regenerating(pool, catalo
     assert state.final_response.ranking[0].unit_name == "카동"
 
 
+def test_filter_the_question_did_not_ask_for_is_sent_back_for_regeneration(pool, catalog):
+    # 실제 gpt-4o-mini 계획: 국공립을 묻지 않은 질문에 '시설 유형 = 국공립'을 붙여 국공립만 셌다.
+    data = load_plan_dict()
+    data["filters"].append(
+        {"dataset": "daycare_facility", "where": {"field": "facility_type", "operator": "eq", "value": "국공립"}}
+    )
+    llm = daycare_llm(plans=[AnalysisPlan.model_validate(data), load_plan()])
+
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run(QUESTION)
+
+    assert state.status == RunStatus.SUCCEEDED, state.errors
+    assert [attempt.validation.ok for attempt in state.plan_history] == [False, True]
+    assert "[FILTER_NOT_IN_QUESTION]" in llm.prompts_for(AnalysisPlan)[1]
+    assert [f.dataset for f in state.analysis_plan.filters] == ["population_by_age"]
+
+
 def test_plan_schema_failure_counts_as_invalid_plan(pool, catalog):
     llm = daycare_llm(plans=[LLMOutputError("AnalysisPlan 스키마 불일치"), load_plan()])
 

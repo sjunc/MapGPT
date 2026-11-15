@@ -57,7 +57,7 @@ from app.llm.base import LLMError, LLMOutputError, StructuredLLM
 from app.llm.embeddings import Embedder, EmbeddingError
 from app.repositories.run_repository import save_run
 from app.validation.plan_repair import repair_plan
-from app.validation.plan_validator import validate_plan
+from app.validation.plan_validator import question_issues, validate_plan
 from app.validation.result_validator import validate_result
 from app.workflows.response import compose_response, explanation_facts
 
@@ -352,6 +352,7 @@ def _validate_plan(state: AgentState, ctx: _RunContext, update: Update) -> None:
     original = state.analysis_plan if repairs else None  # 실행 기록에 LLM이 낸 원래 계획도 남긴다
     report = validate_plan(plan, _candidates(state), state.selected_datasets, state.resolved_region)
     report.issues.extend(_consistency_issues(state.interpreted_query, plan))
+    report.issues.extend(question_issues(plan, _candidates(state), state.question))
     report.issues.extend(repairs)
     if not report.ok and len(state.plan_history) + 1 >= MAX_PLAN_ATTEMPTS:
         fallback = _fallback_regional_summary_plan(state, _candidates(state))

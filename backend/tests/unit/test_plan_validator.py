@@ -4,7 +4,7 @@ from app.catalog.definitions import TRUSTED_DATASETS
 from app.domain.catalog import RegionRef
 from app.domain.enums import SpatialLevel
 from app.domain.plan import AnalysisPlan
-from app.validation.plan_validator import validate_plan
+from app.validation.plan_validator import question_issues, validate_plan
 from tests.support import load_plan_dict
 
 SELECTED = list(TRUSTED_DATASETS)
@@ -47,7 +47,7 @@ def test_operation_dataset_must_be_declared():
     ("condition", "code"),
     [
         ({"field": "ages", "operator": "between", "value": [0, 5]}, "FILTER_FIELD_UNKNOWN"),
-        ({"field": "adm_cd", "operator": "between", "value": [0, 5]}, "FILTER_TYPE_MISMATCH"),
+        ({"field": "reference_date", "operator": "between", "value": [0, 5]}, "FILTER_TYPE_MISMATCH"),
     ],
 )
 def test_filter_fields_and_types_are_checked(condition, code):
@@ -229,3 +229,77 @@ def test_unused_dataset_is_a_warning():
     report = validate_plan(AnalysisPlan.model_validate(data), TRUSTED_DATASETS, SELECTED)
 
     assert [i.code for i in report.warnings] == ["UNUSED_DATASET"]
+
+
+def test_region_conditions_on_data_tables_are_rejected():
+    # 실제 gpt-4o-mini 계획: 인구 표에 지어낸 행정동 코드('부산중구행정동코드1')를 걸어 결과가 비었다.
+    data = load_plan_dict()
+    data["filters"][0]["where"] = {"field": "adm_cd", "operator": "in", "value": ["부산중구행정동코드1"]}
+
+    assert _codes(data) == ["REGION_FILTER_UNSUPPORTED"]
+
+
+def _question_codes(question: str, filters: list[dict], intent: str = "supply_demand_gap") -> list[str]:
+    data = load_plan_dict()
+    data["intent"] = intent
+    data["filters"] = filters
+    return [issue.code for issue in question_issues(AnalysisPlan.model_validate(data), TRUSTED_DATASETS, question)]
+
+
+_PUBLIC = {"dataset": "daycare_facility", "where": {"field": "facility_type", "operator": "eq", "value": "국공립"}}
+
+
+@pytest.mark.parametrize(
+    ("question", "codes"),
+    [
+        ("서울 자치구별 어린이집 수 순위", ["FILTER_NOT_IN_QUESTION"]),  # 실제 gpt-4o-mini가 붙인 조건
+        ("서울 국공립 어린이집이 가장 많은 자치구는?", []),
+        ("서울에서 공립 어린이집이 부족한 동은?", []),  # 질문의 낱말이 값의 일부
+    ],
+)
+def test_category_filter_values_must_come_from_the_question(question, codes):
+    assert _question_codes(question, [_PUBLIC]) == codes
+
+
+_CHILD = {"dataset": "population_by_age", "where": {"field": "age", "operator": "between", "value": [0, 5]}}
+_CHILD_BOUNDS = {
+    "dataset": "population_by_age",
+    "where": {
+        "logic": "and",
+        "conditions": [
+            {"field": "age", "operator": "gte", "value": 0},
+            {"field": "age", "operator": "lte", "value": 5},
+        ],
+    },
+}
+
+
+@pytest.mark.parametrize(
+    ("question", "filters", "intent", "codes"),
+    [
+        # 실제 gpt-4o-mini: 일반 통계 질문에 공급 부족 정책의 어린이 범위를 붙였다.
+        ("서울 행정동별 인구 1,000명당 공공와이파이 수", [_CHILD], "regional_summary", ["FILTER_NOT_IN_QUESTION"]),
+        (
+            "서울 행정동별 인구 1,000명당 공공와이파이 수",
+            [_CHILD_BOUNDS],
+            "regional_summary",
+            ["FILTER_NOT_IN_QUESTION"],
+        ),
+        ("서울 행정동별 어린이 인구 순위", [_CHILD], "regional_summary", []),
+        ("서울에서 0~5세 인구가 가장 많은 행정동은?", [_CHILD], "regional_summary", []),
+        ("서울 행정동별 인구 1,500명당 공공와이파이 수", [_CHILD], "regional_summary", ["FILTER_NOT_IN_QUESTION"]),
+        # 공급 부족 분석은 정책이 수요 인구를 0~5세로 정하므로 질문에 없어도 된다.
+        ("강남구에서 보육시설이 가장 부족한 행정동은?", [_CHILD], "supply_demand_gap", []),
+    ],
+)
+def test_child_age_condition_needs_the_question_to_mention_children(question, filters, intent, codes):
+    assert _question_codes(question, filters, intent) == codes
+
+
+def test_null_checks_on_category_columns_are_not_in_the_question():
+    # 실제 gpt-4o-mini 계획: 서울 기본 질문에 '시설 유형 값 없음'을 붙여 결과가 비었다.
+    unknown_type = {"dataset": "daycare_facility", "where": {"field": "facility_type", "operator": "is_null"}}
+
+    assert _question_codes("서울에서 어린이 인구 대비 어린이집이 부족한 행정동을 알려줘.", [unknown_type]) == [
+        "FILTER_NOT_IN_QUESTION"
+    ]

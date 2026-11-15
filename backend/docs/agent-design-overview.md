@@ -295,6 +295,7 @@ DB에 없는 데이터라도 출처 등록 파일(`backend/sources/*.yaml`)로 �
 
 - [Plan Validator](../app/validation/plan_validator.py)는 DB 없이 메타데이터만으로 판정하는 순수 함수입니다. 규칙 목록은 3.6절에 있습니다.
 - 검증 전에 [Plan Repair](../app/validation/plan_repair.py)가 LLM이 반복하는 기계적인 실수 가운데 의도가 하나로 정해지는 것만 고칩니다. 위치가 없는 인구 표의 공간 집계 → 행정코드별 인구 합계, 같은 Dataset에 나뉜 필터 → AND 하나(같은 조건의 반복, 서로 다른 컬럼, 한 컬럼의 하한·상한 한 쌍일 때만), 확정 지역을 다시 말한 경계 필터(지역 이름·코드와 정확히 같을 때만) → 제거, 순위를 지도 지표로 지정 → 순위를 매긴 지표입니다. 뜻이 갈릴 수 있는 경우(인구 컬럼이 없는 표, 같은 컬럼의 다른 조건, OR 묶음)는 고치지 않고 다시 만들게 둡니다. 고친 계획도 같은 Validator를 통과해야 실행되고, 고친 내용은 `PLAN_REPAIRED` 경고로, LLM이 낸 원래 계획은 `original_plan`으로 계획 시도 기록에 남습니다. 순위표 줄 수(`ranking.limit`)는 스키마에서 1~50 안으로 맞춥니다. gpt-4o-mini에서 계획 단계까지 간 실행의 약 80%가 계획을 두 번 만들었기 때문입니다.
+- 질문에 근거가 없는 필터는 고치지 않고 오류(`FILTER_NOT_IN_QUESTION`)로 알려 다시 만들게 합니다. 범주 값(시설 유형 등)은 질문에 그 값이 있거나 질문의 낱말이 값의 일부여야 하고('공립' → '국공립'), 범주 컬럼의 값 유무 조건은 두지 않으며, 일반 통계 계획의 나이 0~5세 조건은 질문이 어린이·영유아·유아·아동·아이나 0~5세를 말해야 합니다(공급 부족 분석은 정책이 정함). 필요한 조건을 잘못 지우면 다른 질문의 답이 되므로 자동으로 지우지 않습니다. 프롬프트에는 이 규칙을 예시와 함께 넣지 않습니다. '시설 유형', '행정코드'를 예로 들자 gpt-4o-mini가 오히려 그런 필터를 붙였기 때문입니다. gpt-4o-mini가 '어린이집 수 순위'에 '시설 유형 = 국공립'을, '인구 1,000명당 와이파이'에 0~5세 조건을 붙여 틀린 답을 냈기 때문입니다.
 - Plan Validator에 더해, 계획이 해석 결과(intent·지역·단위)를 바꾸지 않았는지 검사합니다(`PLAN_INTERPRETATION_MISMATCH`). LLM이 지원 범위로 몰래 바꾸는 것을 막기 위해서입니다.
 - 결과에 따라 다음으로 진행합니다.
   - 오류가 없으면 `load_data`로 갑니다.
@@ -490,11 +491,11 @@ LLM 출력은 세 겹으로 검사합니다.
 |---|---|
 | Dataset 참조 | `UNKNOWN_DATASET`(후보에 없음), `DATASET_NOT_DECLARED`(참조했지만 `datasets`에 없음), `DATASET_NOT_SELECTED`(선택 단계에서 고르지 않음), `UNUSED_DATASET`(경고) |
 | 지역·분석 단위 | `REGION_NOT_COVERED`, `UNIT_BOUNDARY_MISSING`, `UNIT_BOUNDARY_AMBIGUOUS`, `CRS_UNSUPPORTED` |
-| 필터 | `FILTER_FIELD_UNKNOWN`, `FILTER_TYPE_MISMATCH`, `DUPLICATE_FILTER`, `BOUNDARY_FILTER_UNSUPPORTED` |
+| 필터 | `FILTER_FIELD_UNKNOWN`, `FILTER_TYPE_MISMATCH`, `DUPLICATE_FILTER`, `BOUNDARY_FILTER_UNSUPPORTED`, `REGION_FILTER_UNSUPPORTED`(데이터 표의 행정코드·지역 이름 조건) |
 | Operation | `GEOMETRY_REQUIRED`, `GEOMETRY_TYPE_INVALID`, `BOUNDARY_NOT_ANALYSIS_UNIT`, `JOIN_KEY_INCOMPATIBLE`(의미 유형·코드 체계·단위 일치), `FIELD_UNKNOWN`, `FIELD_NOT_NUMERIC`, `POPULATION_NOT_SUMMED`(인구 컬럼은 합계만. 행 개수·평균은 지역 인구가 아님), `RATIO_OPERAND_INVALID`(분자와 분모가 같거나, 같은 Dataset·필터·집계로 만든 같은 값이거나, 순위 결과), `OPERATION_INPUT_UNKNOWN`, `OUTPUT_NAME_CONFLICT` |
 | 출력 | `OUTPUT_METRIC_NOT_COMPUTED`, `OUTPUT_METRIC_IS_RANK`, `RANKING_NOT_DEFINED` |
 | 분석 정책 | `POLICY_VIOLATION`(출력 지표가 scale 1,000인 비율이고 오름차순 순위가 켜져 있어야 함) |
-| 워크플로가 추가 | `PLAN_REPAIRED`(경고: 계획 보정이 고친 내용), `PLAN_SCHEMA_INVALID`(스키마 불일치), `PLAN_INTERPRETATION_MISMATCH`(해석과 다른 intent·지역·단위) |
+| 워크플로가 추가 | `PLAN_REPAIRED`(경고: 계획 보정이 고친 내용), `FILTER_NOT_IN_QUESTION`(질문에 근거가 없는 범주 값·어린이 나이 조건), `PLAN_SCHEMA_INVALID`(스키마 불일치), `PLAN_INTERPRETATION_MISMATCH`(해석과 다른 intent·지역·단위) |
 
 **Result Validator 규칙**
 

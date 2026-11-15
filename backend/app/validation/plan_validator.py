@@ -3,11 +3,22 @@
 DB 없이 Dataset 메타데이터만으로 판정한다. 오류가 하나라도 있으면 실행하지 않는다.
 """
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from app.domain.catalog import DatasetMetadata, RegionRef
-from app.domain.enums import AggregationFunction, DataType, GeometryType, SemanticType, Severity
+from app.domain.enums import (
+    AggregationFunction,
+    AnalysisIntent,
+    DataType,
+    FilterOperator,
+    GeometryType,
+    LogicalOperator,
+    SemanticType,
+    Severity,
+)
+from app.domain.filters import FilterExpression, FilterGroup, iter_conditions
 from app.domain.operations import (
     AggregateByAreaOperation,
     AggregateOperation,
@@ -15,12 +26,25 @@ from app.domain.operations import (
     RankOperation,
 )
 from app.domain.plan import AnalysisPlan, resolve_region, unit_boundary_candidates
-from app.domain.policies import POLICIES
+from app.domain.policies import CHILD_AGE_PATTERN, CHILD_AGE_RANGE, CHILD_WORDS, POLICIES
 from app.domain.results import RESERVED_PROPERTY_NAMES, ValidationIssue, ValidationReport
 from app.gis.crs import CrsError, parse_srid
 from app.gis.filter_sql import find_filter_problems
 
 _NUMERIC = {DataType.INTEGER, DataType.FLOAT}
+# 지역 조건 컬럼. 지역은 region과 분석 단위 경계가 정하므로 데이터 표에 이런 필터를 두지 않는다.
+_REGION_SEMANTICS = {
+    SemanticType.ADMINISTRATIVE_CODE,
+    SemanticType.ADMINISTRATIVE_NAME,
+    SemanticType.SIDO_CODE,
+    SemanticType.SIDO_NAME,
+    SemanticType.SIGUNGU_CODE,
+    SemanticType.SIGUNGU_NAME,
+}
+# 질문이 값을 말해야 하는 범주 컬럼 (예: 시설 유형 = 국공립)
+_CATEGORY_SEMANTICS = {SemanticType.FACILITY_TYPE, SemanticType.FACILITY_NAME, SemanticType.CATEGORY, SemanticType.TEXT}
+_VALUE_OPERATORS = {FilterOperator.EQ, FilterOperator.NEQ, FilterOperator.IN, FilterOperator.NOT_IN}
+_NULL_OPERATORS = {FilterOperator.IS_NULL, FilterOperator.IS_NOT_NULL}
 
 
 @dataclass(frozen=True)
@@ -137,6 +161,20 @@ class _PlanChecker:
                     "분석 단위 경계 Dataset에는 필터를 둘 수 없습니다. 지역 범위는 region으로 지정하세요",
                     path,
                 )
+            else:
+                region_fields = [
+                    condition.field
+                    for condition in iter_conditions(dataset_filter.where)
+                    if (column := metadata.column(condition.field)) is not None
+                    and column.semantic_type in _REGION_SEMANTICS
+                ]
+                if region_fields:
+                    self.error(
+                        "REGION_FILTER_UNSUPPORTED",
+                        f"'{dataset_filter.dataset}'에 지역 조건({', '.join(region_fields)}) 필터를 둘 수 없습니다. "
+                        "지역 범위는 region과 분석 단위 경계가 정합니다",
+                        path,
+                    )
             for problem in find_filter_problems(dataset_filter.where, metadata):
                 self.error(problem.code, problem.message, f"{path}.where")
 
@@ -306,6 +344,95 @@ class _PlanChecker:
 
     def _rank_of(self, metric: str) -> RankOperation | None:
         return next((op for op in self.plan.operations if isinstance(op, RankOperation) and op.input == metric), None)
+
+
+def question_issues(
+    plan: AnalysisPlan, datasets: Mapping[str, DatasetMetadata], question: str
+) -> list[ValidationIssue]:
+    """질문에 근거가 없는 필터. 질문이 있어야 판단할 수 있어 validate_plan과 따로 둔다.
+
+    고치지 않고 오류로 알려 다시 만들게 한다. 필요한 조건을 잘못 지우면 다른 질문의 답이 되기 때문이다.
+    """
+    issues = []
+    text = "".join(question.split())
+    words = [word for word in question.split() if len(word) >= 2]
+    for i, dataset_filter in enumerate(plan.filters):
+        metadata = datasets.get(dataset_filter.dataset)
+        if metadata is None:
+            continue
+        path = f"filters[{i}]"
+        for condition in iter_conditions(dataset_filter.where):
+            column = metadata.column(condition.field)
+            if column is None or column.semantic_type not in _CATEGORY_SEMANTICS:
+                continue
+            if condition.operator in _NULL_OPERATORS:
+                # 값이 있는지 없는지는 질문이 말할 일이 거의 없다 (실제 gpt-4o-mini가 '시설 유형 값 없음'을 붙였다).
+                issues.append(
+                    ValidationIssue(
+                        code="FILTER_NOT_IN_QUESTION",
+                        severity=Severity.ERROR,
+                        message=f"'{dataset_filter.dataset}.{condition.field}' 값 유무 조건은 질문에 없습니다. "
+                        "질문이 묻지 않은 조건은 빼세요",
+                        path=f"{path}.where",
+                    )
+                )
+                continue
+            if condition.operator not in _VALUE_OPERATORS:
+                continue
+            values = condition.value if isinstance(condition.value, list) else [condition.value]
+            missing = [str(value) for value in values if not _value_in_question(str(value), text, words)]
+            if missing:
+                issues.append(
+                    ValidationIssue(
+                        code="FILTER_NOT_IN_QUESTION",
+                        severity=Severity.ERROR,
+                        message=f"'{dataset_filter.dataset}.{condition.field}' 조건의 값 {missing}은(는) 질문에 없습니다. "
+                        "질문이 묻지 않은 조건은 빼세요",
+                        path=f"{path}.where",
+                    )
+                )
+        if (
+            plan.intent == AnalysisIntent.REGIONAL_SUMMARY
+            and _age_range(dataset_filter.where, metadata) == CHILD_AGE_RANGE
+            and not _child_in_question(question)
+        ):
+            issues.append(
+                ValidationIssue(
+                    code="FILTER_NOT_IN_QUESTION",
+                    severity=Severity.ERROR,
+                    message=f"질문이 어린이(0~5세)를 말하지 않았는데 '{dataset_filter.dataset}'에 나이 0~5세 조건이 있습니다. "
+                    "질문이 묻지 않은 연령 조건은 빼세요",
+                    path=f"{path}.where",
+                )
+            )
+    return issues
+
+
+def _value_in_question(value: str, text: str, words: list[str]) -> bool:
+    """값이 질문에 있거나, 질문의 낱말이 값의 일부다 (예: '공립' → '국공립'). 공백은 무시한다."""
+    compact = "".join(value.split())
+    return bool(compact) and (compact in text or any(word in compact for word in words))
+
+
+def _age_range(where: FilterExpression, metadata: DatasetMetadata) -> tuple[object, object] | None:
+    """나이 컬럼 조건이 나타내는 범위 (between 또는 ≥·≤ 한 쌍). 그 밖의 형태는 None."""
+    if isinstance(where, FilterGroup) and where.logic != LogicalOperator.AND:
+        return None
+    ages = [
+        condition
+        for condition in iter_conditions(where)
+        if (column := metadata.column(condition.field)) is not None and column.semantic_type == SemanticType.AGE
+    ]
+    if len(ages) == 1 and ages[0].operator == FilterOperator.BETWEEN:
+        return tuple(ages[0].value)
+    bounds = {condition.operator: condition.value for condition in ages}
+    if len(ages) == 2 and FilterOperator.GTE in bounds and FilterOperator.LTE in bounds:
+        return (bounds[FilterOperator.GTE], bounds[FilterOperator.LTE])
+    return None
+
+
+def _child_in_question(question: str) -> bool:
+    return any(word in question for word in CHILD_WORDS) or re.search(CHILD_AGE_PATTERN, question) is not None
 
 
 def _same_computation(first: object, second: object) -> bool:
