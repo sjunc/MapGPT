@@ -121,6 +121,8 @@ class MapView(StrEnum):
     PROPORTIONAL_SYMBOL = "proportional_symbol"  # 비례 원: 값에 비례한 넓이의 원을 지역 안에 그린다
     POINT = "point"  # 점 지도: 지표로 센 시설 하나하나의 위치 (가까운 점은 묶어 개수로 보인다)
     HEATMAP = "heatmap"  # 밀도 지도: 지표로 센 점이 몰린 정도를 연속된 색 번짐으로 보인다
+    HEXBIN = "hexbin"  # 육각 격자: 같은 크기 육각형 칸마다 지표로 센 점의 개수를 색으로 보인다
+    BIVARIATE = "bivariate"  # 이변량 지도: 비율의 분자·분모를 3단계씩 나눠 3×3 색으로 함께 보인다
 
 
 class MapFocus(StrEnum):

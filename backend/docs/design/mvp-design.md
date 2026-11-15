@@ -487,6 +487,8 @@ class MetricValues(BaseModel):    name; values: dict[key, float|int|None]
 | `rank` | 순위 | MetricValues, order → MetricValues | null 제외, 동순위 표준 경쟁 순위(1,2,2,4) | — |
 | `create_map_layer` | 지도 GeoJSON (단계 구분도 면 + 비례 원 대표점) | boundary view, 결과 행, metric, 지도 보기(`map_style`), 점 위치 → MapLayer | 출력 EPSG:4326, 좌표 경위도 범위, 모든 feature에 geometry·`label_point` | `OUTPUT_CRS_INVALID`, `GEOMETRY_MISSING` |
 | `point_locations` | 지도 지표로 센 Point 위치 (점 지도·밀도 지도) | 필터가 적용된 Point view, boundary view, limit(1만) → PointLayer 또는 없음 | `aggregate_by_area`와 같은 단위 배정(분석 지역 밖·위치 없음 제외, 경계선 위 점은 한 단위), 출력 EPSG:4326, limit 초과면 보내지 않음 | `NOT_POINT`, `CRS_UNSUPPORTED` |
+| `hex_bins` | 지도 지표로 센 Point의 육각 격자 | 필터가 적용된 Point view, boundary view, 목표 칸 수(1,000) → HexLayer | EPSG:5179에서 `ST_HexagonGrid`(칸 크기는 분석 지역 범위로 50m 단위), 점 위치와 같은 점 선택, 칸 경계 위 점은 한 칸, 점이 있는 칸만, 출력 EPSG:4326 | `NOT_POINT`, `CRS_UNSUPPORTED` |
+| `bivariate_spec` | 비율 지표의 이변량 구간 | 결과 행, 분모·분자 (output, 라벨) → BivariateSpec | 두 값이 모두 있는 단위로 각각 3분위 경계값 | — |
 | `transform_crs` (내부) | 연산 전 CRS 정규화 | geom SQL, src, dst → SQL 조각 | 지원 SRID {4326, 5179} | `CRS_UNSUPPORTED` |
 | `validate_geometry` (내부) | 유효성 점검 | view → {invalid, empty, null} 개수 | `ST_IsValid`, `ST_IsEmpty` | (호출자가 판정) |
 
@@ -503,7 +505,7 @@ SELECT u.key, count(a.id) FROM units u LEFT JOIN assigned a USING (key) GROUP BY
 
 시설이 없는 행정동은 0이다. 지역 밖 점(미배정)의 수는 `stats.unassigned_points`에 기록하고 결과 검증에서 경고로 보고한다.
 
-**CRS Policy (`gis/crs.py`)**: 지도 출력은 EPSG:4326이다. Point-in-Polygon처럼 위상 연산은 경계 Dataset의 SRID로 맞춘다. 거리·면적 연산(EPSG:5179)은 두 번째 Vertical Slice에서 정책에 추가한다. LLM은 CRS를 결정하지 않는다.
+**CRS Policy (`gis/crs.py`)**: 지도 출력은 EPSG:4326이다. Point-in-Polygon처럼 위상 연산은 경계 Dataset의 SRID로 맞춘다. 거리·면적 연산(EPSG:5179)은 두 번째 Vertical Slice에서 정책에 추가한다. 지도 보기의 육각 격자는 같은 넓이의 칸을 미터로 만들어야 해서 EPSG:5179(`AREA_SRID`)에서 만든다. LLM은 CRS를 결정하지 않는다.
 
 ---
 
@@ -582,7 +584,7 @@ UI ─POST /api/analyses {question}─▶ API ─▶ AnalysisWorkflow.run(questi
                         calculate_ratio(÷, ×1000) → daycare_per_1000_children
                         rank(asc) → shortage_rank → UnitRow 조립
  7 validate_result      ResultValidator → 오류면 RESULT_INVALID(지표가 모두 0이면 NO_MATCHING_DATA), 경고는 한계로 전달
- 8 create_map_layer     create_map_layer → GeoJSON(EPSG:4326) + 5분위(quantile) 구간 + 대표점 + 지도 보기(style) + 점 위치(points)
+ 8 create_map_layer     create_map_layer → GeoJSON(EPSG:4326) + 5분위(quantile) 구간 + 대표점 + 지도 보기(style) + 점 위치(points)·육각 격자(hexbins)·이변량 구간(bivariate)
  9 generate_explanation LLM(Explanation)       ← 상위 랭킹·요약 통계·경고·기준 시점 (주어진 수치만 사용)
 10 compose & persist    FinalResponse 조립(방법·가정·한계는 결정론적) → analysis.run / analysis.result 저장
  ◀─ {run_id, status, result, errors} ── UI: 지도 + Ranking + Metric + Dataset·기준 시점 + 방법·가정·한계
@@ -704,7 +706,7 @@ class FinalResponse(StrictModel):
     limitations: list[str]
 ```
 
-**UI (frontend/)**: 질문 입력, 단계 진행 표시, MapLibre 단계 구분도(5분위, 순위 방향 쪽을 진하게 강조, null은 회색, hover 툴팁)와 비례 원(개수·합계 지표의 기본 보기, 단계 구분도로 전환 가능), 점 지도·밀도 지도(지표가 시설 개수일 때, 위치·밀집 질문의 기본 보기), 랭킹 표(순위·자치구·동·어린이집 수·0~5세 인구·지표), Metric/Dataset(기준 시점)/분석 방법/가정/한계 패널, 실패 시 단계와 오류 목록. 배경지도는 키가 필요 없는 OpenFreeMap 벡터 스타일(positron / dark, © OpenMapTiles · OpenStreetMap)이다. 개발 서버는 `/api`를 FastAPI로 프록시한다.
+**UI (frontend/)**: 질문 입력, 단계 진행 표시, MapLibre 단계 구분도(5분위, 순위 방향 쪽을 진하게 강조, null은 회색, hover 툴팁)와 비례 원(개수·합계 지표의 기본 보기, 단계 구분도로 전환 가능), 점 지도·밀도 지도·육각 격자(지표가 시설 개수일 때, 위치·밀집 질문의 기본 보기), 이변량 지도(비율 지표의 분자·분모), 랭킹 표(순위·자치구·동·어린이집 수·0~5세 인구·지표), Metric/Dataset(기준 시점)/분석 방법/가정/한계 패널, 실패 시 단계와 오류 목록. 배경지도는 키가 필요 없는 OpenFreeMap 벡터 스타일(positron / dark, © OpenMapTiles · OpenStreetMap)이다. 개발 서버는 `/api`를 FastAPI로 프록시한다.
 
 ---
 
@@ -816,3 +818,4 @@ Validation(5)을 LLM 연동(6)보다 먼저 한다. LLM 출력은 처음부터 �
 | 조건에 맞는 데이터 없음 (2026-11-15) | 필터 결과가 0건이면 `FILTER_EMPTY_RESULT` 대신 `NO_MATCHING_DATA`로 멈추고, 조건 문구와 조건에 쓴 문자열 컬럼의 실제 값(최대 20개)을 함께 안내한다. 값 있는 단위가 2개 이상인데 출력 지표가 모두 0이면 결과 검증이 `CONSTANT_METRIC` 대신 `NO_MATCHING_DATA`로 "이 지역에는 조건에 맞는 데이터가 없습니다"라고 알리고, 워크플로는 `RESULT_INVALID` 대신 이 코드로 멈춘다. 화면은 `DATA_NOT_AVAILABLE`·`NO_MATCHING_DATA`면 제목을 "데이터가 없습니다"로 바꾼다 | 조건에 맞는 데이터가 없는 질문(서울에 없는 시설 유형, 직장 어린이집이 없는 구 등)이 내부 코드(`FILTER_EMPTY_RESULT`)나 "값이 모두 같아 비교할 수 없다"는 계획 오류 문구로 끝나, '없다'는 답인지 시스템 실패인지 알 수 없었다. 실제 값을 함께 보여 주면 값 표기가 틀린 조건(시설 유형 = '어린이집' 등)도 알아볼 수 있다. 0이 아닌 같은 값(경계 행을 세어 모두 1 등)은 계획 실수 신호라 `CONSTANT_METRIC`으로 남긴다 |
 | 지도 보기 (2026-11-15) | 지도 지표를 만든 Operation으로 성격을 정해(`domain/maps.py`) 비율·평균은 단계 구분도, 개수·합계는 비례 원을 기본으로 하고 단계 구분도로 바꿔 볼 수 있게 했다. 단위마다 `label_point`(`ST_PointOnSurface`)를 담고, 색 강조 방향은 지도 지표의 순위 방향, 범례 양끝 문구는 정책(`legend_labels`) 또는 지표 성격으로 정한다(`MapLayer.style`). LLM 프롬프트·스키마는 바꾸지 않았다 | 원 요구사항 23번의 "기본 지도 표현: Choropleth"를 넓혔다(사용자 요청). 개수·합계를 색으로 칠하면 넓은 지역이 진해 보이고, 일반 통계에서도 가장 작은 값이 가장 진하고 범례가 "공급 부족"으로 나와 '많은 곳' 질문의 답과 반대로 읽혔다 |
 | 지도 보기 2단계: 점 지도·밀도 지도 (2026-11-15) | 지도 지표가 Point 개수(`aggregate_by_area`)이면 센 점의 위치를 `MapLayer.points`로 함께 보내고(`point_locations`, 필터·지역·단위 배정은 집계와 같음, 1만 개 초과면 보내지 않음) 점 지도(묶음)·밀도 지도를 보기 목록에 더한다. 해석 LLM이 지도로 위치·밀집을 보려는 표현을 옮겨 적고(`InterpretedQuery.map_focus_phrase`, 해석 규칙 8), 코드가 질문에 있는지와 위치·밀집을 뜻하는 말이 있는지 확인해(`map_focus`) 위치면 점 지도, 밀집이면 밀도 지도를 기본으로 한다. 해석 규칙 1에 '위치·밀집을 지도로 보여 달라는 질문도 지역별 시설 수를 세는 regional_summary'를 더했다. 밀도 색은 파랑 100~700단계 연속 램프다 | 사용자가 승인한 지도 보기 3단계 계획의 2단계. 위치·밀집 질문에 지역별 원·색만 보이면 시설이 실제로 어디 있는지 알 수 없다. 단위 표현처럼 키워드 목록만으로 고르면 '가장 많은 곳은 어디야'도 위치로 오인하므로 LLM이 표현을 고르고 코드가 확인한다. 점 수 한도는 응답 크기 때문이다(어린이집 3,895곳 ≈ 0.6MB, 저장은 압축돼 실행당 0.34MB). gpt-4o-mini 확인 5회: 위치·어디에 있는지 → 점 지도, 밀집한 곳 → 밀도 지도, 자치구별 수 → 비례 원, 공급 부족 → 단계 구분도로 모두 의도대로 골랐다. 같은 확인에서 개수 질문 4건 중 3건이 순위를 오름차순으로 만들어 가장 적은 곳이 1위가 됐다(기존 남은 문제 'desc 순위 규칙 미준수', 이번 변경과 무관) |
+| 지도 보기 3단계: 육각 격자·이변량 지도 (2026-11-16) | 지도 지표가 Point 개수면 같은 크기 육각형 칸마다 센 격자(`MapLayer.hexbins`, `hex_bins`)를 함께 보낸다. EPSG:5179에서 `ST_HexagonGrid`로 만들고, 칸 크기는 분석 지역 범위에 칸이 1,000개쯤 들어가도록 50m 단위로 정한다. 서버에서 세므로 점이 1만 개를 넘어 위치를 못 보낼 때도 보내고, 그때 위치·밀집 질문은 육각 격자가 기본이다. 지도 지표가 비율이면 분모(x)·분자(y)를 3분위씩 나눈 구간(`MapLayer.bivariate`, `bivariate_spec`)을 보내 이변량 지도로 바꿔 볼 수 있게 한다(기본은 단계 구분도). 색은 브랜드 파랑(분자)·주황(분모)을 섞은 3×3이다. 발산형 색(평균 대비 위·아래)은 넣지 않았다 | 사용자가 승인한 지도 보기 3단계 계획. 행정동은 넓이가 수십 배 달라 같은 수라도 밀도가 다르게 보이는데, 같은 넓이 칸은 이를 피하고 정확한 수를 보인다(밀도 지도는 화면 배율에 따른 상대값이다). 점 한도를 넘는 큰 Dataset의 대안도 된다. 비율 하나로는 공급이 적어서인지 수요가 많아서인지 알 수 없어, 공급 부족 분석의 분자·분모를 함께 보게 했다. 이변량 색은 팔레트 지침에 없어 dataviz 검증 함수로 이웃 칸 구분을 계산해 골랐다(라이트 일반 15.4·색각이상 12.0, 다크 일반 10.3·색각이상 8.2; 다크는 일반 시각 기준 15에 못 미쳐 툴팁의 두 값으로 보완). 칸 경계 위 점은 `ST_HexagonGrid`가 점의 사각 범위로 칸을 찾아 두 칸을 돌려주므로 `ST_Intersects`로 거른 뒤 한 칸만 센다(거르지 않으면 서울 최대 칸이 28→32로 잘못 셌다). 발산형 색은 '기준 대비 많음·적음'을 정할 기준값이 분석마다 달라 일반 규칙을 세우기 어려워 미뤘다 |

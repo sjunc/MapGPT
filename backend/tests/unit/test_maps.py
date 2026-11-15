@@ -44,19 +44,24 @@ def test_rate_metric_keeps_the_choropleth_and_supply_wording():
     style = map_style(plan)
 
     assert metric_kind(plan) == MetricKind.RATE
-    assert (style.default_view, style.views) == (MapView.CHOROPLETH, [MapView.CHOROPLETH])
+    # 비율은 분자·분모를 함께 보는 이변량 지도로도 바꿔 볼 수 있다.
+    assert (style.default_view, style.views) == (MapView.CHOROPLETH, [MapView.CHOROPLETH, MapView.BIVARIATE])
     assert (style.emphasis, style.legend_low, style.legend_high) == ("low", "공급 부족", "여유")
 
 
-@pytest.mark.parametrize("operation", [COUNT_BY_AREA, _aggregate("sum"), _aggregate("count")])
-def test_total_metric_defaults_to_proportional_symbols(operation):
+@pytest.mark.parametrize(
+    ("operation", "extra"),
+    [(COUNT_BY_AREA, [MapView.HEXBIN]), (_aggregate("sum"), []), (_aggregate("count"), [])],
+)
+def test_total_metric_defaults_to_proportional_symbols(operation, extra):
     plan = _summary_plan(operation)
 
     style = map_style(plan)
 
     assert metric_kind(plan) == MetricKind.TOTAL
     assert style.default_view == MapView.PROPORTIONAL_SYMBOL
-    assert style.views == [MapView.PROPORTIONAL_SYMBOL, MapView.CHOROPLETH]
+    # Point 개수는 위치를 보내지 않아도 서버에서 센 육각 격자로 볼 수 있다.
+    assert style.views == [MapView.PROPORTIONAL_SYMBOL, MapView.CHOROPLETH, *extra]
     assert (style.emphasis, style.legend_low, style.legend_high) == ("high", "적음", "많음")
 
 
@@ -118,7 +123,25 @@ def test_point_counts_can_also_be_seen_as_points_and_density(focus, view):
 
     assert style.default_view == view
     # 버튼 순서는 질문과 관계없이 같다: 지역별 보기 다음에 점 보기
-    assert style.views == [MapView.PROPORTIONAL_SYMBOL, MapView.CHOROPLETH, MapView.POINT, MapView.HEATMAP]
+    assert style.views == [
+        MapView.PROPORTIONAL_SYMBOL,
+        MapView.CHOROPLETH,
+        MapView.POINT,
+        MapView.HEATMAP,
+        MapView.HEXBIN,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("focus", "view"),
+    [(None, MapView.PROPORTIONAL_SYMBOL), (MapFocus.LOCATION, MapView.HEXBIN), (MapFocus.DENSITY, MapView.HEXBIN)],
+)
+def test_too_many_points_fall_back_to_the_hexagon_grid(focus, view):
+    # 점이 너무 많아 위치를 보내지 못하면 위치·밀집 질문은 같은 크기 육각형 칸마다 센 개수로 보인다.
+    style = map_style(_summary_plan(COUNT_BY_AREA), focus, has_points=False)
+
+    assert style.default_view == view
+    assert style.views == [MapView.PROPORTIONAL_SYMBOL, MapView.CHOROPLETH, MapView.HEXBIN]
 
 
 def test_focus_without_point_locations_keeps_the_regional_views():
@@ -134,4 +157,4 @@ def test_focus_without_point_locations_keeps_the_regional_views():
 def test_rate_metric_stays_a_choropleth_when_location_is_asked():
     style = map_style(load_plan(), MapFocus.LOCATION, has_points=True)
 
-    assert (style.default_view, style.views) == (MapView.CHOROPLETH, [MapView.CHOROPLETH])
+    assert (style.default_view, style.views) == (MapView.CHOROPLETH, [MapView.CHOROPLETH, MapView.BIVARIATE])

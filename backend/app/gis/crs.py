@@ -3,6 +3,7 @@
 - 지도 반환: EPSG:4326
 - 위상 연산(점-폴리곤 포함): 경계 Dataset의 CRS로 맞춘다.
 - 거리·면적 연산(EPSG:5179 등)은 해당 Operation이 추가될 때 정책을 확장한다.
+- 육각 격자: 같은 넓이의 칸을 미터로 만들어야 해서 EPSG:5179(UTM-K)에서 만든다.
 """
 
 import re
@@ -10,6 +11,7 @@ import re
 from psycopg import sql
 
 MAP_OUTPUT_SRID = 4326
+AREA_SRID = 5179  # 미터 단위 격자·면적 (UTM-K)
 SUPPORTED_SRIDS = frozenset({4326, 5179})
 
 

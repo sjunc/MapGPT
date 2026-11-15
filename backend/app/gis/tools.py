@@ -24,12 +24,24 @@ from app.domain.enums import (
     SpatialLevel,
 )
 from app.domain.filters import FilterCondition, FilterExpression, describe_filter, iter_conditions
-from app.domain.results import Classification, MapLayer, MapStyle, MetricValue, PointLayer, UnitRow
-from app.gis.crs import MAP_OUTPUT_SRID, CrsError, parse_srid, transform_crs
+from app.domain.results import (
+    BivariateAxis,
+    BivariateSpec,
+    Classification,
+    HexLayer,
+    MapLayer,
+    MapStyle,
+    MetricValue,
+    PointLayer,
+    UnitRow,
+)
+from app.gis.crs import AREA_SRID, MAP_OUTPUT_SRID, CrsError, parse_srid, transform_crs
 from app.gis.filter_sql import FilterCompileError, compile_filter
 
 QUANTILE_CLASSES = 5
 POINT_LIMIT = 10_000  # 점 지도로 보낼 최대 점 수. 넘으면 응답 크기·화면 성능 때문에 위치를 보내지 않는다
+HEX_TARGET_CELLS = 1_000  # 분석 지역 범위(사각형)에 들어갈 육각형 칸 수의 목표. 칸 크기를 이것으로 정한다
+_HEX_AREA_FACTOR = 3 * math.sqrt(3) / 2  # 한 변이 s인 정육각형의 넓이 = 이 값 × s²
 _VALUE_EXAMPLES = 20  # 조건에 맞는 데이터가 없을 때 보여 줄 실제 값 수
 _REGION_CODE_COLUMN = {SpatialLevel.SIDO: SemanticType.SIDO_CODE, SpatialLevel.SIGUNGU: SemanticType.SIGUNGU_CODE}
 _SQL_AGGREGATES = {
@@ -446,6 +458,101 @@ def point_locations(
     )
 
 
+def hex_bins(
+    conn: psycopg.Connection, view: DatasetView, boundary: BoundaryView, target_cells: int = HEX_TARGET_CELLS
+) -> HexLayer:
+    """aggregate_by_area가 센 Point를 같은 크기 육각형 칸마다 센다 (EPSG:5179에서 만들고 EPSG:4326으로 낸다).
+
+    칸 크기는 분석 지역 범위에 칸이 target_cells개쯤 들어가도록 50m 단위로 정한다(서울 650m, 구 하나 200m 안팎).
+    분석 지역 밖·위치 없는 점은 빠지고, 칸 경계 위 점은 번호가 작은 칸 하나에만 센다. 점이 있는 칸만 보낸다.
+    """
+    metadata = view.metadata
+    geometry_column = metadata.geometry_column
+    if geometry_column is None or metadata.spatial.geometry_type != GeometryType.POINT:
+        raise GisToolError("NOT_POINT", f"'{metadata.dataset_id}'는 Point Dataset이 아닙니다")
+    srid = _srid(metadata)
+    geom = sql.Identifier(geometry_column.name)
+    boundary_geom = sql.Identifier(boundary.metadata.geometry_column.name)
+    boundary_where, boundary_params = boundary.where()
+    point_where, point_params = view.where()
+    width, height = conn.execute(
+        sql.SQL(
+            "SELECT ST_XMax(e) - ST_XMin(e), ST_YMax(e) - ST_YMin(e) FROM (SELECT ST_Extent({}) AS e FROM {} WHERE {}) t"
+        ).format(transform_crs(boundary_geom, boundary.srid, AREA_SRID), boundary.table, boundary_where),
+        boundary_params,
+    ).fetchone()
+    size = max(100, round(math.sqrt(width * height / (_HEX_AREA_FACTOR * target_cells)) / 50) * 50)
+    query = sql.SQL(
+        """
+        WITH units AS NOT MATERIALIZED (
+            SELECT {boundary_geom} AS geom FROM {boundary_table} WHERE {boundary_where}
+        ),
+        points AS NOT MATERIALIZED (
+            SELECT ctid AS point_id, {overlay_geom} AS geom, {grid_geom} AS grid_geom FROM {point_table} WHERE {point_where}
+        ),
+        inside AS (
+            SELECT DISTINCT ON (p.point_id) p.point_id, p.grid_geom
+            FROM points p JOIN units u ON ST_Covers(u.geom, p.geom)
+            ORDER BY p.point_id
+        ),
+        cells AS (
+            SELECT DISTINCT ON (p.point_id) p.point_id, h.i, h.j, h.geom
+            FROM inside p CROSS JOIN LATERAL ST_HexagonGrid({size}, p.grid_geom) AS h
+            WHERE ST_Intersects(h.geom, p.grid_geom)
+            ORDER BY p.point_id, h.i, h.j
+        )
+        SELECT count(*), ST_AsGeoJSON({map_geom}, 6)::json FROM cells GROUP BY i, j ORDER BY i, j
+        """
+    ).format(
+        boundary_geom=boundary_geom,
+        boundary_table=boundary.table,
+        boundary_where=boundary_where,
+        overlay_geom=transform_crs(geom, srid, boundary.srid),
+        grid_geom=transform_crs(geom, srid, AREA_SRID),
+        point_table=view.table,
+        point_where=point_where,
+        size=sql.Literal(size),
+        map_geom=transform_crs(sql.SQL("any_value(geom)"), AREA_SRID, MAP_OUTPUT_SRID),
+    )
+    rows = conn.execute(query, boundary_params + point_params).fetchall()
+    counts = [count for count, _ in rows]
+    breaks = quantile_breaks(counts, QUANTILE_CLASSES)
+    return HexLayer(
+        cell_size_m=size,
+        cell_area_km2=round(_HEX_AREA_FACTOR * size**2 / 1e6, 3),
+        count=sum(counts),
+        classification=Classification(
+            method="quantile",
+            class_count=len(breaks) + 1 if counts else 0,
+            breaks=breaks,
+            min=min(counts, default=None),
+            max=max(counts, default=None),
+        ),
+        geojson={
+            "type": "FeatureCollection",
+            "features": [
+                {"type": "Feature", "geometry": geometry, "properties": {"count": count}} for count, geometry in rows
+            ],
+        },
+    )
+
+
+def bivariate_spec(rows: list[UnitRow], x: tuple[str, str], y: tuple[str, str]) -> BivariateSpec:
+    """비율의 분모(x)·분자(y)를 3분위로 나눈다. 두 값이 모두 있는 단위만 쓴다 (그 단위만 이변량 색을 칠한다).
+
+    x, y는 (operation output, 라벨)이다.
+    """
+    pairs = [
+        (row.values[x[0]], row.values[y[0]])
+        for row in rows
+        if row.values.get(x[0]) is not None and row.values.get(y[0]) is not None
+    ]
+    return BivariateSpec(
+        x=BivariateAxis(metric=x[0], label=x[1], breaks=quantile_breaks([a for a, _ in pairs], 3)),
+        y=BivariateAxis(metric=y[0], label=y[1], breaks=quantile_breaks([b for _, b in pairs], 3)),
+    )
+
+
 def create_map_layer(
     conn: psycopg.Connection,
     boundary: BoundaryView,
@@ -454,11 +561,14 @@ def create_map_layer(
     metric_label: str,
     style: MapStyle,
     points: PointLayer | None = None,
+    hexbins: HexLayer | None = None,
+    bivariate: BivariateSpec | None = None,
 ) -> MapLayer:
     """결과 행을 EPSG:4326 GeoJSON FeatureCollection과 분위 구간으로 만든다.
 
     단위마다 비례 원을 그릴 대표점(label_point)을 함께 담아, 화면이 같은 결과를 단계 구분도·비례 원으로 그린다.
-    points는 지도 지표로 센 Point 위치다 (point_locations, 점 지도·밀도 지도용).
+    points는 지도 지표로 센 Point 위치(point_locations, 점 지도·밀도 지도용), hexbins는 그 육각 격자(hex_bins),
+    bivariate는 비율 지표의 분자·분모 구간(bivariate_spec)이다.
     """
     bbox = boundary.bbox or []
     if len(bbox) != 4 or not (-180 <= bbox[0] <= bbox[2] <= 180 and -90 <= bbox[1] <= bbox[3] <= 90):
@@ -506,6 +616,8 @@ def create_map_layer(
         geojson={"type": "FeatureCollection", "features": features},
         style=style,
         points=points,
+        hexbins=hexbins,
+        bivariate=bivariate,
     )
 
 

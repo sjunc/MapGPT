@@ -198,3 +198,41 @@ def test_point_locations_stored_in_another_crs_are_output_in_wgs84(conn, dataset
 
     a1 = next(feature for feature in points.geojson["features"] if feature["properties"]["name"] == "시설 a1")
     assert a1["geometry"]["coordinates"] == pytest.approx([126.92, 37.55], abs=1e-6)
+
+
+def test_hex_bins_count_each_point_in_the_region_once(conn, datasets):
+    boundary = tools.get_boundary(conn, EMD_BOUNDARY, SEOUL)
+
+    hexes = tools.hex_bins(conn, tools.get_dataset(conn, DAYCARE_FACILITY), boundary)
+
+    features = hexes.geojson["features"]
+    # 지역 밖(부산) 점은 빠지고, 경계선 위 점도 한 칸에만 들어간다.
+    assert hexes.count == sum(feature["properties"]["count"] for feature in features) == 14
+    # 분석 지역 범위(EPSG:5179 사각형)에 칸이 1,000개쯤 들어가는 50m 단위 크기
+    assert hexes.cell_size_m == 700 and hexes.cell_area_km2 == pytest.approx(1.273, abs=0.001)
+    for feature in features:
+        ring = feature["geometry"]["coordinates"][0]
+        assert feature["geometry"]["type"] == "Polygon" and len(ring) == 7  # 닫힌 육각형
+        assert all(126.8 < x < 127.4 and 37.3 < y < 37.8 for x, y in ring)
+    assert (hexes.classification.min, hexes.classification.max) == (1, max(f["properties"]["count"] for f in features))
+
+
+def test_hex_bins_follow_the_filter(conn, datasets):
+    boundary = tools.get_boundary(conn, EMD_BOUNDARY, SEOUL)
+    some = FilterCondition(field="facility_id", operator="in", value=["a1", "a2", "busan"])
+    view = tools.filter_dataset(conn, tools.get_dataset(conn, DAYCARE_FACILITY), some)
+
+    hexes = tools.hex_bins(conn, view, boundary)
+
+    assert hexes.count == 2
+
+
+def test_bivariate_spec_splits_ratio_operands_into_terciles(conn, datasets):
+    plan = load_plan()
+    result = execute_operations(prepare_context(conn, plan, datasets, SEOUL))
+
+    spec = tools.bivariate_spec(result.rows, ("child_population", "0~5세 인구"), ("daycare_count", "어린이집 수"))
+
+    # 두 값이 모두 있는 9개 단위(인구 행이 없는 다동 제외)로 3분위 경계값을 정한다. 같은 값이 많으면 경계가 줄어든다.
+    assert (spec.x.metric, spec.x.label, spec.x.breaks) == ("child_population", "0~5세 인구", [50.0, 100.0])
+    assert (spec.y.metric, spec.y.label, spec.y.breaks) == ("daycare_count", "어린이집 수", [1.0])

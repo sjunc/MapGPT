@@ -108,6 +108,29 @@ class PointLayer(StrictModel):
     geojson: dict[str, Any]  # Point FeatureCollection. properties: name(시설 이름, 없으면 null), unit_key(배정된 단위)
 
 
+class HexLayer(StrictModel):
+    """지도 지표로 센 Point를 같은 크기 육각형 칸마다 센 격자 (EPSG:4326). 점이 많아 위치를 못 보낼 때도 있다."""
+
+    cell_size_m: int  # 육각형 한 변 길이 (EPSG:5179 미터)
+    cell_area_km2: float
+    count: int  # 칸으로 센 점 수 (분석 지역 안)
+    classification: Classification  # 칸별 점 수의 분위 구간
+    geojson: dict[str, Any]  # 점이 있는 칸만 담은 Polygon FeatureCollection. properties: count
+
+
+class BivariateAxis(StrictModel):
+    metric: str  # operation output
+    label: str
+    breaks: list[float]  # 3분위 경계값 (최대 2개, 같은 값이 많으면 줄어든다)
+
+
+class BivariateSpec(StrictModel):
+    """비율 지표의 분모(x)·분자(y)를 3분위씩 나눈 이변량 지도 구간. 화면이 3×3 색으로 두 값을 함께 그린다."""
+
+    x: BivariateAxis  # 분모 (예: 0~5세 인구, 수요)
+    y: BivariateAxis  # 분자 (예: 어린이집 수, 공급)
+
+
 class MapLayer(StrictModel):
     type: MapType
     metric: str
@@ -120,6 +143,8 @@ class MapLayer(StrictModel):
     style: MapStyle
     # 지도 지표가 Point 개수일 때만 있다. 점이 너무 많으면(gis.tools.POINT_LIMIT) 보내지 않는다.
     points: PointLayer | None = None
+    hexbins: HexLayer | None = None  # 지도 지표가 Point 개수일 때만 있다
+    bivariate: BivariateSpec | None = None  # 지도 지표가 비율(calculate_ratio)일 때만 있다
 
 
 class MetricDescription(StrictModel):

@@ -14,6 +14,8 @@ from app.llm.base import LLMError, LLMOutputError
 from app.llm.embeddings import EmbeddingError
 from app.repositories.catalog_repository import upsert_dataset
 from app.repositories.run_repository import get_run
+from app.gis.tools import point_locations
+from app.workflows import analysis_workflow
 from app.workflows.analysis_workflow import AnalysisWorkflow
 from tests.fakes import FakeEmbedder, daycare_llm, interpreted
 from tests.integration.synthetic import UNITS, load_synthetic
@@ -47,6 +49,10 @@ def test_first_use_case_runs_end_to_end_and_records_provenance(pool, catalog, co
     # 비율 지표는 단계 구분도이고, 공급 부족(작은 값)을 진하게 칠한다.
     assert (response.map_layer.style.default_view, response.map_layer.style.emphasis) == ("choropleth", "low")
     assert response.map_layer.points is None  # 지도 지표가 점 개수가 아니라 비율이라 위치를 보내지 않는다
+    # 비율의 분자(어린이집 수)·분모(0~5세 인구)를 함께 보는 이변량 지도
+    assert response.map_layer.style.views == ["choropleth", "bivariate"]
+    bivariate = response.map_layer.bivariate
+    assert (bivariate.x.metric, bivariate.y.metric) == ("child_population", "daycare_count")
     assert [d.dataset_id for d in response.datasets] == ["emd_boundary", "population_by_age", "daycare_facility"]
     assert response.analysis_method[1] == "필터 — 행정동별 연령별 주민등록 인구(population_by_age): age 0~5"
     assert "'어린이'를 만 0~5세로 해석" in response.assumptions
@@ -819,7 +825,26 @@ def test_point_count_map_sends_locations_and_follows_the_question_focus(pool, ca
     assert state.status == RunStatus.SUCCEEDED, state.errors
     layer = state.final_response.map_layer
     assert layer.style.default_view == view
-    assert layer.style.views == ["proportional_symbol", "choropleth", "point", "heatmap"]
-    # 지도 지표로 센 어린이집(서울 안 14곳)의 위치를 함께 보낸다.
+    assert layer.style.views == ["proportional_symbol", "choropleth", "point", "heatmap", "hexbin"]
+    # 지도 지표로 센 어린이집(서울 안 14곳)의 위치와 육각 격자를 함께 보낸다.
     assert layer.points.count == len(layer.points.geojson["features"]) == 14
+    assert layer.hexbins.count == 14
+    assert layer.bivariate is None
     assert state.interpreted_query.map_focus_phrase == phrase
+
+
+def test_too_many_points_are_shown_on_the_hexagon_grid(pool, catalog, monkeypatch):
+    # 점이 한도를 넘으면 위치를 보내지 않고, 위치를 물은 질문은 육각 격자를 기본으로 보인다.
+    monkeypatch.setattr(
+        analysis_workflow,
+        "point_locations",
+        lambda conn, view, boundary: point_locations(conn, view, boundary, limit=1),
+    )
+
+    state = AnalysisWorkflow(_daycare_count_llm("위치"), pool, FakeEmbedder()).run("서울 행정동 어린이집 위치를 보여줘")
+
+    assert state.status == RunStatus.SUCCEEDED, state.errors
+    layer = state.final_response.map_layer
+    assert layer.points is None and layer.hexbins.count == 14
+    assert layer.style.default_view == "hexbin"
+    assert layer.style.views == ["proportional_symbol", "choropleth", "hexbin"]

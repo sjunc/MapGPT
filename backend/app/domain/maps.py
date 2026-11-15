@@ -5,7 +5,13 @@
 """
 
 from app.domain.enums import AggregationFunction, MapFocus, MapView, MetricKind, SortOrder
-from app.domain.operations import AggregateOperation, CalculateRatioOperation, Operation, RankOperation
+from app.domain.operations import (
+    AggregateByAreaOperation,
+    AggregateOperation,
+    CalculateRatioOperation,
+    Operation,
+    RankOperation,
+)
 from app.domain.plan import AnalysisPlan
 from app.domain.policies import POLICIES
 from app.domain.results import MapStyle
@@ -27,6 +33,7 @@ _NOTES = {
     MapView.PROPORTIONAL_SYMBOL: "개수·합계라서 원의 넓이로 비교합니다. 색으로 칠하면 넓은 지역이 진해 보일 수 있습니다.",
     MapView.POINT: "위치를 물어 하나하나를 점으로 보입니다. 가까운 점은 묶어 개수로 보이고, 확대하면 풀립니다.",
     MapView.HEATMAP: "밀집한 곳을 물어 점이 몰린 정도를 색 번짐으로 보입니다. 행정구역 경계와 관계없이 퍼져 보입니다.",
+    MapView.HEXBIN: "위치·밀집을 물었지만 점이 많아, 같은 크기 육각형 칸마다 센 개수로 보입니다.",
     MapView.CHOROPLETH: "비율·평균이라서 지역 크기와 관계없이 값 구간별 색으로 비교합니다.",
 }
 
@@ -34,6 +41,18 @@ _NOTES = {
 def metric_operation(plan: AnalysisPlan) -> Operation:
     """지도 지표(output.metric)를 만든 Operation."""
     return next(op for op in plan.operations if op.output == plan.output.metric)
+
+
+def point_count_operation(plan: AnalysisPlan) -> AggregateByAreaOperation | None:
+    """지도 지표가 Point 개수면 그 Operation. 센 점의 위치와 육각 격자를 함께 보낼 수 있다."""
+    operation = metric_operation(plan)
+    return operation if isinstance(operation, AggregateByAreaOperation) else None
+
+
+def ratio_operation(plan: AnalysisPlan) -> CalculateRatioOperation | None:
+    """지도 지표가 비율이면 그 Operation. 분자·분모를 함께 보는 이변량 지도를 그릴 수 있다."""
+    operation = metric_operation(plan)
+    return operation if isinstance(operation, CalculateRatioOperation) else None
 
 
 def metric_kind(plan: AnalysisPlan) -> MetricKind:
@@ -58,7 +77,10 @@ def map_focus(question: str, phrase: str | None) -> MapFocus | None:
 
 
 def map_style(plan: AnalysisPlan, focus: MapFocus | None = None, has_points: bool = False) -> MapStyle:
-    """has_points: 지도 지표로 센 Point의 위치를 함께 보내는지 (점 지도·밀도 지도를 그릴 수 있는지)."""
+    """has_points: 지도 지표로 센 Point의 위치를 함께 보내는지 (점 지도·밀도 지도를 그릴 수 있는지).
+
+    Point 개수 지표는 위치를 보내지 못해도(점이 너무 많을 때) 육각 격자로 볼 수 있고, 비율 지표는 이변량 지도로 볼 수 있다.
+    """
     kind = metric_kind(plan)
     policy = POLICIES[plan.intent]
     # 표의 순위와 같은 쪽을 강조한다. 지도 지표의 순위가 없으면 분석 정책의 기본 방향을 따른다.
@@ -69,13 +91,16 @@ def map_style(plan: AnalysisPlan, focus: MapFocus | None = None, has_points: boo
     low, high = policy.legend_labels or _KIND_LABELS[kind]
     common = {"emphasis": "low" if order == SortOrder.ASC else "high", "legend_low": low, "legend_high": high}
     if kind != MetricKind.TOTAL:
-        return MapStyle(
-            default_view=MapView.CHOROPLETH, views=[MapView.CHOROPLETH], note=_NOTES[MapView.CHOROPLETH], **common
-        )
+        views = [MapView.CHOROPLETH, MapView.BIVARIATE] if ratio_operation(plan) else [MapView.CHOROPLETH]
+        return MapStyle(default_view=MapView.CHOROPLETH, views=views, note=_NOTES[MapView.CHOROPLETH], **common)
     # 버튼 순서는 질문과 관계없이 같다: 지역별 보기 다음에 점 보기
     views = [MapView.PROPORTIONAL_SYMBOL, MapView.CHOROPLETH]
     default = MapView.PROPORTIONAL_SYMBOL
     if has_points:
         views += [MapView.POINT, MapView.HEATMAP]
         default = _FOCUS_VIEWS.get(focus, default)
+    if point_count_operation(plan):
+        views.append(MapView.HEXBIN)
+        if focus and not has_points:
+            default = MapView.HEXBIN
     return MapStyle(default_view=default, views=views, note=_NOTES[default], **common)

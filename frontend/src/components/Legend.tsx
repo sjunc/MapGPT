@@ -1,4 +1,5 @@
 import {
+  BIVARIATE_COLORS,
   type ColorScheme,
   HEAT_COLORS,
   MAP_CHROME,
@@ -7,13 +8,15 @@ import {
   layerStyle,
   symbolMaxRadius,
 } from "../theme";
-import type { MapLayer, MapView } from "../types";
+import type { BivariateAxis, Classification, MapLayer, MapStyle, MapView } from "../types";
 
 const VIEW_LABELS: Record<MapView, { label: string; title: string }> = {
   proportional_symbol: { label: "원 크기", title: "비례 원: 값에 비례한 넓이의 원" },
   choropleth: { label: "색 구간", title: "단계 구분도: 값 구간별 색으로 칠하기" },
   point: { label: "점", title: "점 지도: 하나하나의 위치 (가까운 곳은 묶어 개수로 보인다)" },
   heatmap: { label: "밀도", title: "밀도 지도: 점이 몰린 정도를 색 번짐으로" },
+  hexbin: { label: "육각 격자", title: "육각 격자: 같은 크기 육각형 칸마다 센 개수" },
+  bivariate: { label: "두 지표", title: "이변량 지도: 비율을 만든 두 지표를 3단계씩 함께" },
 };
 
 interface Props {
@@ -45,7 +48,31 @@ export function Legend({ layer, scheme, view, onViewChange }: Props) {
         </div>
       )}
       {view === "proportional_symbol" && <SymbolScale layer={layer} scheme={scheme} />}
-      {view === "choropleth" && <ClassScale layer={layer} scheme={scheme} />}
+      {view === "choropleth" && (
+        <ClassScale
+          title={layer.metric_label}
+          classification={layer.classification}
+          scheme={scheme}
+          emphasis={style.emphasis}
+          ends={[style.legend_low, style.legend_high]}
+        />
+      )}
+      {view === "hexbin" && layer.hexbins && (
+        <>
+          <ClassScale
+            title={`${layer.metric_label} · 육각형 칸마다`}
+            classification={layer.hexbins.classification}
+            scheme={scheme}
+            emphasis="high"
+            ends={["적음", "많음"]}
+          />
+          <div className="legend-note">
+            한 칸: 한 변 {layer.hexbins.cell_size_m.toLocaleString("ko-KR")}m, 약{" "}
+            {formatValue(layer.hexbins.cell_area_km2)}km² · 분석 지역 안 {layer.hexbins.count.toLocaleString("ko-KR")}곳
+          </div>
+        </>
+      )}
+      {view === "bivariate" && <BivariateScale layer={layer} scheme={scheme} />}
       {view === "point" && <PointScale layer={layer} scheme={scheme} />}
       {view === "heatmap" && <HeatScale layer={layer} scheme={scheme} />}
       {layer.null_count > 0 && (view === "choropleth" || view === "proportional_symbol") && (
@@ -59,11 +86,17 @@ export function Legend({ layer, scheme, view, onViewChange }: Props) {
   );
 }
 
+interface ClassScaleProps {
+  title: string;
+  classification: Classification;
+  scheme: ColorScheme;
+  emphasis: MapStyle["emphasis"];
+  ends: [string, string];
+}
+
 /** 분위 구간 범례. 구간은 [경계값 이상, 다음 경계값 미만)이다 (MapLibre step 식과 같음). */
-function ClassScale({ layer, scheme }: { layer: MapLayer; scheme: ColorScheme }) {
-  const { classification } = layer;
-  const style = layerStyle(layer);
-  const colors = classColors(scheme, classification.class_count, style.emphasis);
+function ClassScale({ title, classification, scheme, emphasis, ends }: ClassScaleProps) {
+  const colors = classColors(scheme, classification.class_count, emphasis);
   const breaks = classification.breaks;
   const label = (i: number) => {
     if (breaks.length === 0) return `${formatValue(classification.min)}~${formatValue(classification.max)}`;
@@ -74,7 +107,7 @@ function ClassScale({ layer, scheme }: { layer: MapLayer; scheme: ColorScheme })
   return (
     <>
       <div className="legend-title">
-        {layer.metric_label} <span className="muted">(분위 {colors.length}구간)</span>
+        {title} <span className="muted">(분위 {colors.length}구간)</span>
       </div>
       <div className="legend-scale">
         {colors.map((color, i) => (
@@ -85,8 +118,8 @@ function ClassScale({ layer, scheme }: { layer: MapLayer; scheme: ColorScheme })
         ))}
       </div>
       <div className="legend-ends">
-        <span>← {style.legend_low}</span>
-        <span>{style.legend_high} →</span>
+        <span>← {ends[0]}</span>
+        <span>{ends[1]} →</span>
       </div>
     </>
   );
@@ -173,6 +206,36 @@ function HeatScale({ layer, scheme }: { layer: MapLayer; scheme: ColorScheme }) 
         <span>밀집한 곳 →</span>
       </div>
       <div className="legend-note">색은 지금 화면 배율에서의 상대 밀도라 확대·축소하면 달라집니다.</div>
+    </>
+  );
+}
+
+function breaksText(axis: BivariateAxis): string {
+  return axis.breaks.length > 0 ? axis.breaks.map((value) => formatValue(value)).join(" · ") : "구분 없음";
+}
+
+/** 이변량 지도 범례: 위로 갈수록 분자, 오른쪽으로 갈수록 분모가 큰 3×3 격자. */
+function BivariateScale({ layer, scheme }: { layer: MapLayer; scheme: ColorScheme }) {
+  const spec = layer.bivariate;
+  if (!spec) return null;
+  const colors = BIVARIATE_COLORS[scheme];
+  return (
+    <>
+      <div className="legend-title">
+        {spec.y.label} × {spec.x.label} <span className="muted">(각각 3분위)</span>
+      </div>
+      <div className="bivariate">
+        <span>↑ {spec.y.label}</span>
+        <div className="bivariate-grid" aria-hidden="true">
+          {[2, 1, 0].flatMap((y) => [0, 1, 2].map((x) => <span key={`${x}-${y}`} style={{ background: colors[y][x] }} />))}
+        </div>
+        <span>{spec.x.label} →</span>
+      </div>
+      <div className="legend-note">
+        오른쪽 아래: {spec.x.label} 많음 · {spec.y.label} 적음
+        <br />
+        경계값: {spec.x.label} {breaksText(spec.x)} / {spec.y.label} {breaksText(spec.y)}
+      </div>
     </>
   );
 }

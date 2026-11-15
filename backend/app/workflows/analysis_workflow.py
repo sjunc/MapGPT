@@ -49,12 +49,11 @@ from app.domain.plan import (
     resolve_region,
     unit_named,
 )
-from app.domain.maps import map_focus, map_style, metric_operation
-from app.domain.operations import AggregateByAreaOperation
+from app.domain.maps import map_focus, map_style, metric_operation, point_count_operation, ratio_operation
 from app.domain.results import ValidationIssue, ValidationReport
 from app.domain.state import AgentState, DatasetHit, DatasetSearch, InterpretedQuery, PlanAttempt, WorkflowError
 from app.executor.operation_executor import ExecutionContext, execute_operations, prepare_context
-from app.gis.tools import GisToolError, create_map_layer, point_locations
+from app.gis.tools import GisToolError, bivariate_spec, create_map_layer, hex_bins, point_locations
 from app.llm.base import LLMError, LLMOutputError, StructuredLLM
 from app.llm.embeddings import Embedder, EmbeddingError
 from app.repositories.run_repository import save_run
@@ -536,23 +535,33 @@ def _create_map_layer(state: AgentState, ctx: _RunContext, update: Update) -> No
     plan = state.analysis_plan
     operation = metric_operation(plan)
     boundary = ctx.gis.context.boundary
-    # 지도 지표가 Point 개수면 센 점의 위치도 보내 점 지도·밀도 지도로 볼 수 있게 한다 (필터가 적용된 View 그대로).
-    points = (
-        _gis_call(point_locations, ctx.gis.conn, ctx.gis.context.views[operation.input], boundary)
-        if isinstance(operation, AggregateByAreaOperation)
-        else None
-    )
+    rows = state.execution_results.rows
+    # 지도 지표가 Point 개수면 센 점의 위치와 육각 격자도 보내 점 지도·밀도 지도·육각 격자로 볼 수 있게 한다
+    # (필터가 적용된 View 그대로). 점이 너무 많으면 위치는 빠지고 육각 격자만 간다.
+    points = hexbins = bivariate = None
+    if counted := point_count_operation(plan):
+        view = ctx.gis.context.views[counted.input]
+        points = _gis_call(point_locations, ctx.gis.conn, view, boundary)
+        hexbins = _gis_call(hex_bins, ctx.gis.conn, view, boundary)
+    # 비율 지표면 분자·분모를 함께 보는 이변량 지도 구간을 만든다.
+    if ratio := ratio_operation(plan):
+        labels = {op.output: op.label for op in plan.operations}
+        bivariate = bivariate_spec(
+            rows, (ratio.denominator, labels[ratio.denominator]), (ratio.numerator, labels[ratio.numerator])
+        )
     # 질문이 위치·밀집을 보려는지는 해석 LLM이 옮겨 적은 표현을 코드가 확인해 정한다.
     focus = map_focus(state.question, state.interpreted_query.map_focus_phrase)
     update["map_layer"] = _gis_call(
         create_map_layer,
         ctx.gis.conn,
         boundary,
-        state.execution_results.rows,
+        rows,
         plan.output.metric,
         operation.label,
         map_style(plan, focus, has_points=points is not None),  # 지표 성격과 질문의 초점으로 정한 보기
         points,
+        hexbins,
+        bivariate,
     )
     ctx.gis.release()
 

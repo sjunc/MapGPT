@@ -1,5 +1,5 @@
 // 백엔드 backend/app/api/schemas.py · backend/app/domain/results.py 와 같은 계약
-import type { FeatureCollection, MultiPolygon, Point } from "geojson";
+import type { FeatureCollection, MultiPolygon, Point, Polygon } from "geojson";
 
 export type MetricValue = number | null;
 
@@ -26,7 +26,7 @@ export interface UnitProperties {
 }
 
 /** 결과 지도를 그리는 방식 (backend MapView) */
-export type MapView = "choropleth" | "proportional_symbol" | "point" | "heatmap";
+export type MapView = "choropleth" | "proportional_symbol" | "point" | "heatmap" | "hexbin" | "bivariate";
 
 /** 지도 지표의 성격과 순위 방향으로 백엔드가 정한 지도 보기 (backend MapStyle) */
 export interface MapStyle {
@@ -56,12 +56,44 @@ export interface PointLayer {
   geojson: FeatureCollection<Point, FacilityProperties>;
 }
 
+/** 분위 구간 (backend Classification). 구간은 [경계값 이상, 다음 경계값 미만)이다 */
+export interface Classification {
+  method: "quantile";
+  class_count: number;
+  breaks: number[];
+  min: number | null;
+  max: number | null;
+}
+
+/** 지도 지표로 센 점을 같은 크기 육각형 칸마다 센 격자 (backend HexLayer). 점이 있는 칸만 온다 */
+export interface HexLayer {
+  /** 육각형 한 변 길이(m) */
+  cell_size_m: number;
+  cell_area_km2: number;
+  count: number;
+  classification: Classification;
+  geojson: FeatureCollection<Polygon, { count: number }>;
+}
+
+export interface BivariateAxis {
+  metric: string;
+  label: string;
+  /** 3분위 경계값 (최대 2개, 같은 값이 많으면 줄어든다) */
+  breaks: number[];
+}
+
+/** 비율 지표의 분모(x)·분자(y)를 3분위씩 나눈 이변량 지도 구간 (backend BivariateSpec) */
+export interface BivariateSpec {
+  x: BivariateAxis;
+  y: BivariateAxis;
+}
+
 export interface MapLayer {
   type: "choropleth";
   metric: string;
   metric_label: string;
   crs: string;
-  classification: { method: "quantile"; class_count: number; breaks: number[]; min: number | null; max: number | null };
+  classification: Classification;
   feature_count: number;
   null_count: number;
   geojson: FeatureCollection<MultiPolygon, UnitProperties>;
@@ -69,6 +101,10 @@ export interface MapLayer {
   style?: MapStyle;
   /** 지도 지표가 점 개수일 때만 있다 (점이 너무 많으면 없다). 이 기능 전에 저장된 실행 기록에는 없다 */
   points?: PointLayer | null;
+  /** 지도 지표가 점 개수일 때만 있다 */
+  hexbins?: HexLayer | null;
+  /** 지도 지표가 비율일 때만 있다 */
+  bivariate?: BivariateSpec | null;
 }
 
 export interface DatasetUsage {

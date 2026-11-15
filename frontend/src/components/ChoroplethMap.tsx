@@ -14,6 +14,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { useEffect, useRef } from "react";
 import {
+  BIVARIATE_COLORS,
   type ColorScheme,
   HEAT_COLORS,
   MAP_CHROME,
@@ -23,7 +24,7 @@ import {
   layerStyle,
   symbolMaxRadius,
 } from "../theme";
-import type { FacilityProperties, FinalResponse, MapView, UnitProperties } from "../types";
+import type { BivariateAxis, FacilityProperties, FinalResponse, MapView, UnitProperties } from "../types";
 import { MapResetControl } from "./MapResetControl";
 
 setWorkerUrl(maplibreWorkerUrl);
@@ -32,26 +33,41 @@ const SOURCE = "units";
 const POINT_SOURCE = "unit-points";
 const FACILITY_SOURCE = "facilities"; // 점 지도: 가까운 점을 묶는다
 const HEAT_SOURCE = "facilities-heat"; // 밀도 지도: 같은 점을 묶지 않고 쓴다
+const HEX_SOURCE = "hexbins";
 const LAYERS = ["units-fill", "units-separator", "units-hover"];
 const SYMBOL_LAYERS = ["units-outline", "unit-symbols"];
 const FACILITY_LAYERS = ["facility-clusters", "facility-cluster-count", "facility-points"];
 const HEAT_LAYER = "facility-heat";
-const HIT_LAYER = "units-hit"; // 점·밀도 보기에서 지역 hover·클릭을 받는 투명한 면
+const HIT_LAYER = "units-hit"; // 점·밀도·육각 격자 보기에서 지역 hover·클릭을 받는 투명한 면
+const HEX_LAYERS = ["hex-fill", "hex-line"];
+const BIVARIATE_LAYER = "units-bivariate";
 // 보기마다 보이는 레이어. hover·선택 테두리(units-hover)는 모든 보기에서 보인다.
 const VIEW_LAYERS: Record<MapView, string[]> = {
   choropleth: [LAYERS[0], LAYERS[1]],
   proportional_symbol: SYMBOL_LAYERS,
   point: [SYMBOL_LAYERS[0], HIT_LAYER, ...FACILITY_LAYERS],
   heatmap: [SYMBOL_LAYERS[0], HIT_LAYER, HEAT_LAYER],
+  hexbin: [SYMBOL_LAYERS[0], HIT_LAYER, ...HEX_LAYERS],
+  bivariate: [BIVARIATE_LAYER, LAYERS[1]],
 };
 const VIEW_SWITCHED_LAYERS = [...new Set(Object.values(VIEW_LAYERS).flat())];
 // hover·클릭을 받는 레이어. 보이는 레이어 중 위에 그린 것(시설 점)이 먼저 잡힌다.
-const INTERACTIVE_LAYERS = [FACILITY_LAYERS[0], FACILITY_LAYERS[2], SYMBOL_LAYERS[1], LAYERS[0], HIT_LAYER];
+const INTERACTIVE_LAYERS = [
+  FACILITY_LAYERS[0],
+  FACILITY_LAYERS[2],
+  SYMBOL_LAYERS[1],
+  HEX_LAYERS[0],
+  LAYERS[0],
+  BIVARIATE_LAYER,
+  HIT_LAYER,
+];
 const VIEW_NAMES: Record<MapView, string> = {
   choropleth: "단계 구분도",
   proportional_symbol: "비례 원",
   point: "점",
   heatmap: "밀도",
+  hexbin: "육각 격자",
+  bivariate: "이변량",
 };
 const NO_POINTS: FeatureCollection<Point, FacilityProperties> = { type: "FeatureCollection", features: [] };
 
@@ -106,6 +122,35 @@ function heatmapColor(scheme: ColorScheme): ExpressionSpecification {
   ] as ExpressionSpecification;
 }
 
+/** 육각형 칸의 점 수를 분위 구간 색으로 칠한다. 많은 칸이 가장 눈에 띈다. */
+function hexColor(result: FinalResponse, scheme: ColorScheme): ExpressionSpecification | string {
+  const hexbins = result.map_layer.hexbins;
+  if (!hexbins) return MAP_CHROME[scheme].noData;
+  const colors = classColors(scheme, hexbins.classification.class_count, "high");
+  const stops = hexbins.classification.breaks.flatMap((limit, i) => [limit, colors[i + 1]]);
+  return (stops.length > 0 ? ["step", ["get", "count"], colors[0], ...stops] : colors[0]) as ExpressionSpecification;
+}
+
+/** 이변량 축의 3분위 칸 번호(0~2). 같은 값이 많아 경계값이 2개보다 적으면 양 끝 칸을 쓴다. */
+function axisClass(axis: BivariateAxis): ExpressionSpecification | number {
+  const count = axis.breaks.length;
+  const cell = (i: number) => (count === 0 ? 1 : Math.round((i * 2) / count));
+  const stops = axis.breaks.flatMap((limit, i) => [limit, cell(i + 1)]);
+  return stops.length > 0 ? (["step", ["to-number", ["get", axis.metric]], cell(0), ...stops] as ExpressionSpecification) : 1;
+}
+
+/** 분모(x)·분자(y) 칸 번호로 3×3 색을 고른다. 두 값 중 하나라도 없으면 회색이다. */
+function bivariateColor(result: FinalResponse, scheme: ColorScheme): ExpressionSpecification | string {
+  const spec = result.map_layer.bivariate;
+  if (!spec) return MAP_CHROME[scheme].noData;
+  return [
+    "case",
+    ["any", ["==", ["get", spec.x.metric], null], ["==", ["get", spec.y.metric], null]],
+    MAP_CHROME[scheme].noData,
+    ["to-color", ["at", ["+", ["*", 3, axisClass(spec.y)], axisClass(spec.x)], ["literal", BIVARIATE_COLORS[scheme].flat()]]],
+  ] as ExpressionSpecification;
+}
+
 function applyView(map: MapLibreMap, view: MapView) {
   const visible = new Set(VIEW_LAYERS[view]);
   for (const layer of VIEW_SWITCHED_LAYERS) {
@@ -146,6 +191,13 @@ function facilityHtml(result: FinalResponse, properties: FacilityProperties): st
     <div class="tooltip-value">${escapeHtml(place)}</div></div>`;
 }
 
+function hexHtml(result: FinalResponse, count: number): string {
+  const hexbins = result.map_layer.hexbins;
+  const size = hexbins ? ` (한 변 ${hexbins.cell_size_m.toLocaleString("ko-KR")}m)` : "";
+  return `<div class="tooltip"><strong>${count.toLocaleString("ko-KR")}곳</strong>
+    <div class="tooltip-value">이 육각형 칸${size} 안의 수</div></div>`;
+}
+
 function clusterHtml(count: number): string {
   return `<div class="tooltip"><strong>${count.toLocaleString("ko-KR")}곳</strong>
     <div class="tooltip-value">가까운 곳을 묶었습니다. 누르면 확대합니다.</div></div>`;
@@ -154,6 +206,7 @@ function clusterHtml(count: number): string {
 function featureHtml(result: FinalResponse, feature: MapGeoJSONFeature): string {
   if (feature.layer.id === FACILITY_LAYERS[0]) return clusterHtml(feature.properties.point_count as number);
   if (feature.layer.id === FACILITY_LAYERS[2]) return facilityHtml(result, feature.properties as FacilityProperties);
+  if (feature.layer.id === HEX_LAYERS[0]) return hexHtml(result, feature.properties.count as number);
   return tooltipHtml(result, feature.properties as UnitProperties);
 }
 
@@ -238,6 +291,9 @@ function applyResult(map: MapLibreMap, result: FinalResponse, scheme: ColorSchem
   (map.getSource(POINT_SOURCE) as GeoJSONSource).setData(unitPoints(result));
   (map.getSource(FACILITY_SOURCE) as GeoJSONSource).setData(facilityPoints(result));
   (map.getSource(HEAT_SOURCE) as GeoJSONSource).setData(facilityPoints(result));
+  (map.getSource(HEX_SOURCE) as GeoJSONSource).setData(result.map_layer.hexbins?.geojson ?? NO_POINTS);
+  map.setPaintProperty(HEX_LAYERS[0], "fill-color", hexColor(result, scheme));
+  map.setPaintProperty(BIVARIATE_LAYER, "fill-color", bivariateColor(result, scheme));
   map.setPaintProperty("units-fill", "fill-color", fillColor(result, scheme));
   map.setPaintProperty(SYMBOL_LAYERS[1], "circle-radius", symbolRadius(result));
   map.setFilter(SYMBOL_LAYERS[1], ["!=", value, null]); // 값이 없는 지역은 원을 그리지 않는다
@@ -400,6 +456,27 @@ export function ChoroplethMap({
         },
         LAYERS[2], // hover·선택 테두리가 밀도 위에 보이도록
       );
+      // 육각 격자: 밀도와 같은 자리(지역 경계선·hover 테두리 아래)에 칸을 칠한다.
+      instance.addSource(HEX_SOURCE, { type: "geojson", data: latest.current.result.map_layer.hexbins?.geojson ?? NO_POINTS });
+      instance.addLayer(
+        { id: HEX_LAYERS[0], type: "fill", source: HEX_SOURCE, layout: { visibility: "none" }, paint: { "fill-opacity": 0.85 } },
+        LAYERS[2],
+      );
+      instance.addLayer(
+        {
+          id: HEX_LAYERS[1],
+          type: "line",
+          source: HEX_SOURCE,
+          layout: { visibility: "none" },
+          paint: { "line-width": 0.6, "line-color": chrome.separator },
+        },
+        LAYERS[2],
+      );
+      // 이변량 지도: 단계 구분도와 같은 면을 분자·분모 3×3 색으로 칠한다.
+      instance.addLayer(
+        { id: BIVARIATE_LAYER, type: "fill", source: SOURCE, layout: { visibility: "none" }, paint: { "fill-opacity": 0.85 } },
+        LAYERS[1],
+      );
       instance.addSource(FACILITY_SOURCE, {
         type: "geojson",
         data: facilityPoints(latest.current.result),
@@ -538,7 +615,7 @@ export function ChoroplethMap({
     applyResult(map.current, result, scheme, panelOpen, view);
   }, [result, scheme]);
 
-  // 지도 보기(단계 구분도·비례 원·점·밀도)를 바꾼다.
+  // 지도 보기(단계 구분도·비례 원·점·밀도·육각 격자·이변량)를 바꾼다.
   useEffect(() => {
     if (!map.current || !ready.current) return;
     applyView(map.current, view);
