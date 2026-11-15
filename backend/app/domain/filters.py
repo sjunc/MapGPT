@@ -71,3 +71,40 @@ def iter_conditions(expression: FilterExpression) -> Iterator[FilterCondition]:
         yield expression
     else:
         yield from expression.conditions
+
+
+_SYMBOLS = {
+    FilterOperator.EQ: "=",
+    FilterOperator.NEQ: "≠",
+    FilterOperator.GT: ">",
+    FilterOperator.GTE: "≥",
+    FilterOperator.LT: "<",
+    FilterOperator.LTE: "≤",
+}
+
+
+def describe_filter(expression: FilterExpression) -> str:
+    """사람이 읽는 조건 문구 (예: 'age 0~5', 'facility_type = 국공립')."""
+    if isinstance(expression, FilterCondition):
+        return _describe_condition(expression)
+    parts = [_describe_condition(c) for c in expression.conditions]
+    if expression.logic == LogicalOperator.NOT:
+        return f"NOT ({parts[0]})"
+    return (" 그리고 " if expression.logic == LogicalOperator.AND else " 또는 ").join(parts)
+
+
+def _describe_condition(c: FilterCondition) -> str:
+    op, value = c.operator, c.value
+    if op in _SYMBOLS:
+        return f"{c.field} {_SYMBOLS[op]} {value}"
+    if op == FilterOperator.BETWEEN:
+        return f"{c.field} {value[0]}~{value[1]}"
+    if op == FilterOperator.IN:
+        return f"{c.field} ∈ {value}"
+    if op == FilterOperator.NOT_IN:
+        return f"{c.field} ∉ {value}"
+    if op == FilterOperator.CONTAINS:
+        return f"{c.field}에 '{value}' 포함"
+    if op == FilterOperator.STARTS_WITH:
+        return f"{c.field}가 '{value}'로 시작"
+    return f"{c.field} 값 {'없음' if op == FilterOperator.IS_NULL else '있음'}"

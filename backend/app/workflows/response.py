@@ -5,8 +5,8 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.domain.catalog import AUTO_DISCOVERED_CATEGORY, DatasetMetadata
-from app.domain.enums import FilterOperator, LogicalOperator, SortOrder
-from app.domain.filters import FilterCondition, FilterExpression
+from app.domain.enums import SortOrder
+from app.domain.filters import describe_filter
 from app.domain.operations import (
     AggregateByAreaOperation,
     AggregateOperation,
@@ -27,14 +27,6 @@ from app.domain.results import (
 )
 from app.domain.state import InterpretedQuery
 
-_SYMBOLS = {
-    FilterOperator.EQ: "=",
-    FilterOperator.NEQ: "≠",
-    FilterOperator.GT: ">",
-    FilterOperator.GTE: "≥",
-    FilterOperator.LT: "<",
-    FilterOperator.LTE: "≤",
-}
 _LEVEL_NAMES = {"sido": "시도", "sigungu": "시군구", "emd": "행정동"}
 _RANK_DIRECTIONS = {SortOrder.ASC: "오름차순(값이 작을수록 1위)", SortOrder.DESC: "내림차순(값이 클수록 1위)"}
 
@@ -162,7 +154,7 @@ def _method(plan: AnalysisPlan, datasets: Mapping[str, DatasetMetadata], result:
         f"분석 범위: {plan.region.name} {_LEVEL_NAMES[plan.analysis_unit]} {len(result.rows)}개 "
         f"(공간 연산 CRS {result.analysis_crs}, 지도 출력 EPSG:4326)"
     ]
-    steps += [f"필터 — {title(f.dataset)}: {_render_filter(f.where)}" for f in plan.filters]
+    steps += [f"필터 — {title(f.dataset)}: {describe_filter(f.where)}" for f in plan.filters]
     for op in plan.operations:
         if isinstance(op, AggregateByAreaOperation):
             steps.append(
@@ -185,32 +177,6 @@ def _method(plan: AnalysisPlan, datasets: Mapping[str, DatasetMetadata], result:
                 f"{op.label}({op.output}): {op.input}을 {_RANK_DIRECTIONS[op.order]}으로 순위화. 같은 값은 같은 순위"
             )
     return steps
-
-
-def _render_filter(expression: FilterExpression) -> str:
-    if isinstance(expression, FilterCondition):
-        return _render_condition(expression)
-    parts = [_render_condition(c) for c in expression.conditions]
-    if expression.logic == LogicalOperator.NOT:
-        return f"NOT ({parts[0]})"
-    return (" 그리고 " if expression.logic == LogicalOperator.AND else " 또는 ").join(parts)
-
-
-def _render_condition(c: FilterCondition) -> str:
-    op, value = c.operator, c.value
-    if op in _SYMBOLS:
-        return f"{c.field} {_SYMBOLS[op]} {value}"
-    if op == FilterOperator.BETWEEN:
-        return f"{c.field} {value[0]}~{value[1]}"
-    if op == FilterOperator.IN:
-        return f"{c.field} ∈ {value}"
-    if op == FilterOperator.NOT_IN:
-        return f"{c.field} ∉ {value}"
-    if op == FilterOperator.CONTAINS:
-        return f"{c.field}에 '{value}' 포함"
-    if op == FilterOperator.STARTS_WITH:
-        return f"{c.field}가 '{value}'로 시작"
-    return f"{c.field} 값 {'없음' if op == FilterOperator.IS_NULL else '있음'}"
 
 
 def _temporal_note(datasets: list[DatasetMetadata]) -> list[str]:
