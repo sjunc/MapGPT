@@ -104,6 +104,13 @@ function tooltipHtml(result: FinalResponse, properties: UnitProperties): string 
     <div class="tooltip-value">${escapeHtml(metric_label)}: <b>${valueText}</b></div><table>${rows}</table></div>`;
 }
 
+// 데스크톱에서 오른쪽 아래 범례가 결과 지역을 가리지 않도록, 지도를 맞출 때 범례 윗변 아래를 비운다.
+// 모바일에서는 범례가 지도 위에 없다(크기 0).
+function legendClearance(rect: DOMRect): number {
+  const legend = document.querySelector<HTMLElement>(".map-legend")?.getBoundingClientRect();
+  return legend && legend.height > 0 ? Math.ceil(rect.bottom - legend.top + 16) : 0;
+}
+
 function fitResultBounds(map: MapLibreMap, result: FinalResponse, panelOpen: boolean) {
   const bounds = new LngLatBounds();
 
@@ -125,7 +132,7 @@ function fitResultBounds(map: MapLibreMap, result: FinalResponse, panelOpen: boo
   const panelRect = panel?.getBoundingClientRect();
 
   const requestedLeft = !mobile && panelRect ? panelRect.right - rect.left + 24 : 24;
-  const requestedBottom = mobile && panelRect ? rect.bottom - panelRect.top + 24 : 110;
+  const requestedBottom = mobile && panelRect ? rect.bottom - panelRect.top + 24 : Math.max(110, legendClearance(rect));
 
   const top = Math.min(100, Math.floor(rect.height * 0.2));
   const right = 24;
@@ -161,7 +168,7 @@ function focusFeature(map: MapLibreMap, result: FinalResponse, key: string, pane
     rect.width - right - 80,
   ));
   const bottom = Math.max(0, Math.min(
-    mobile && panelRect ? Math.ceil(rect.bottom - panelRect.top + 24) : 110,
+    mobile && panelRect ? Math.ceil(rect.bottom - panelRect.top + 24) : Math.max(110, legendClearance(rect)),
     rect.height - top - 80,
   ));
 
