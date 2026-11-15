@@ -140,6 +140,17 @@ def test_ratio_operands_must_differ_and_not_be_ranks():
     assert _codes(ranked) == ["RATIO_OPERAND_INVALID"]
 
 
+def test_ratio_of_two_identical_computations_is_rejected():
+    # 실제 gpt-4o-mini 계획: '어린이 인구 ÷ 인구'를 같은 Dataset·필터로 두 번 합계해 모든 행정동이 1000이 됐다.
+    data = load_plan_dict()
+    data["operations"][0] = {**data["operations"][1], "output": "daycare_count", "label": "어린이 인구(중복)"}
+
+    report = validate_plan(AnalysisPlan.model_validate(data), TRUSTED_DATASETS, SELECTED)
+
+    assert [issue.code for issue in report.errors] == ["RATIO_OPERAND_INVALID"]
+    assert "같은 필터·집계로 계산해 값이 같으므로" in report.errors[0].message
+
+
 def test_output_metric_must_be_computed():
     data = load_plan_dict()
     data["output"]["metric"] = "unknown_metric"

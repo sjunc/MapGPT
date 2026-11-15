@@ -78,12 +78,13 @@ def test_ratio_scale_must_be_positive():
         AnalysisPlan.model_validate(data)
 
 
-def test_ranking_limit_is_bounded():
+@pytest.mark.parametrize(("limit", "expected"), [(500, 50), (100, 50), (0, 10), (-3, 10), (25, 25)])
+def test_ranking_limit_is_brought_into_range(limit, expected):
+    # 순위표 줄 수일 뿐이라, gpt-4o-mini가 준 100·0 같은 값으로 계획을 다시 만들지 않고 범위 안으로 맞춘다.
     data = load_plan_dict()
-    data["output"]["ranking"]["limit"] = 500
+    data["output"]["ranking"]["limit"] = limit
 
-    with pytest.raises(ValidationError):
-        AnalysisPlan.model_validate(data)
+    assert AnalysisPlan.model_validate(data).output.ranking.limit == expected
 
 
 @pytest.mark.parametrize(

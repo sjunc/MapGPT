@@ -56,6 +56,7 @@ from app.gis.tools import GisToolError, create_choropleth_layer
 from app.llm.base import LLMError, LLMOutputError, StructuredLLM
 from app.llm.embeddings import Embedder, EmbeddingError
 from app.repositories.run_repository import save_run
+from app.validation.plan_repair import repair_plan
 from app.validation.plan_validator import validate_plan
 from app.validation.result_validator import validate_result
 from app.workflows.response import compose_response, explanation_facts
@@ -346,8 +347,12 @@ def _build_analysis_plan(state: AgentState, ctx: _RunContext, update: Update) ->
 
 
 def _validate_plan(state: AgentState, ctx: _RunContext, update: Update) -> None:
-    report = validate_plan(state.analysis_plan, _candidates(state), state.selected_datasets, state.resolved_region)
-    report.issues.extend(_consistency_issues(state.interpreted_query, state.analysis_plan))
+    # 반복되는 기계적인 실수는 다시 만들게 하지 않고 고친다. 고친 계획도 같은 검증을 통과해야 실행된다.
+    plan, repairs = repair_plan(state.analysis_plan, _candidates(state), state.resolved_region)
+    original = state.analysis_plan if repairs else None  # 실행 기록에 LLM이 낸 원래 계획도 남긴다
+    report = validate_plan(plan, _candidates(state), state.selected_datasets, state.resolved_region)
+    report.issues.extend(_consistency_issues(state.interpreted_query, plan))
+    report.issues.extend(repairs)
     if not report.ok and len(state.plan_history) + 1 >= MAX_PLAN_ATTEMPTS:
         fallback = _fallback_regional_summary_plan(state, _candidates(state))
         if fallback is not None:
@@ -370,18 +375,22 @@ def _validate_plan(state: AgentState, ctx: _RunContext, update: Update) -> None:
                     plan_validation=fallback_report,
                     plan_history=[
                         *state.plan_history,
-                        PlanAttempt(plan=state.analysis_plan, validation=report),
+                        PlanAttempt(plan=plan, validation=report, original_plan=original),
                         PlanAttempt(plan=fallback, validation=fallback_report),
                     ],
                 )
                 return
-    _record_plan_attempt(state, update, state.analysis_plan, report)
+    _record_plan_attempt(state, update, plan, report, original)
 
 
 def _record_plan_attempt(
-    state: AgentState, update: Update, plan: AnalysisPlan | None, report: ValidationReport
+    state: AgentState,
+    update: Update,
+    plan: AnalysisPlan | None,
+    report: ValidationReport,
+    original_plan: AnalysisPlan | None = None,
 ) -> None:
-    history = [*state.plan_history, PlanAttempt(plan=plan, validation=report)]
+    history = [*state.plan_history, PlanAttempt(plan=plan, validation=report, original_plan=original_plan)]
     update.update(analysis_plan=plan, plan_validation=report, plan_history=history)
     if not report.ok and len(history) >= MAX_PLAN_ATTEMPTS:
         raise WorkflowFailure("PLAN_INVALID", "검증을 통과하는 분석 계획을 만들지 못했습니다", report.errors)

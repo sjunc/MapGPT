@@ -101,7 +101,7 @@ def test_plan_that_stays_invalid_is_never_executed(pool, catalog, conn):
 
 
 def _invalid_population_plan(filters: list[dict]) -> AnalysisPlan:
-    """인구 표를 공간 집계하려는(GEOMETRY_REQUIRED) regional_summary 계획."""
+    """인구를 나이별로 묶으려는(JOIN_KEY_INCOMPATIBLE) regional_summary 계획. 계획 보정으로도 고칠 수 없다."""
     data = load_plan_dict()
     data.update(
         intent="regional_summary",
@@ -109,10 +109,10 @@ def _invalid_population_plan(filters: list[dict]) -> AnalysisPlan:
         filters=filters,
         operations=[
             {
-                "type": "aggregate_by_area",
+                "type": "aggregate",
                 "input": "population_by_age",
-                "boundary": "emd_boundary",
-                "aggregation": "count",
+                "group_by": ["age"],
+                "aggregation": {"field": "population", "function": "sum"},
                 "output": "population_total",
                 "label": "인구수",
             },
@@ -172,6 +172,31 @@ def test_fallback_is_not_used_when_it_would_drop_a_data_condition(pool, catalog)
     assert state.status == RunStatus.FAILED
     assert state.errors[0].code == "PLAN_INVALID"
     assert [attempt.validation.ok for attempt in state.plan_history] == [False, False]
+
+
+def test_mechanical_plan_mistakes_are_repaired_without_regenerating(pool, catalog):
+    # gpt-4o-mini가 자주 낸 실수 두 가지: 같은 필터를 두 번 걸고, 위치가 없는 인구 표를 공간 집계했다.
+    data = load_plan_dict()
+    data["filters"].append(data["filters"][0])
+    data["operations"][1] = {
+        "type": "aggregate_by_area",
+        "input": "population_by_age",
+        "boundary": "emd_boundary",
+        "aggregation": "count",
+        "output": "child_population",
+        "label": "0~5세 인구",
+    }
+    llm = daycare_llm(plans=[AnalysisPlan.model_validate(data)])
+
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run(QUESTION)
+
+    assert state.status == RunStatus.SUCCEEDED, state.errors
+    assert len(llm.prompts_for(AnalysisPlan)) == 1  # 다시 만들지 않았다
+    [attempt] = state.plan_history
+    assert [issue.code for issue in attempt.validation.warnings] == ["PLAN_REPAIRED", "PLAN_REPAIRED"]
+    assert attempt.plan.operations[1].type == "aggregate"
+    assert attempt.original_plan.operations[1].type == "aggregate_by_area"  # LLM이 낸 원래 계획도 남는다
+    assert state.final_response.ranking[0].unit_name == "카동"
 
 
 def test_plan_schema_failure_counts_as_invalid_plan(pool, catalog):

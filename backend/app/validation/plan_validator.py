@@ -236,6 +236,18 @@ class _PlanChecker:
         denominator = self.require_metric(op.denominator, f"{path}.denominator")
         if op.numerator == op.denominator:
             self.error("RATIO_OPERAND_INVALID", "분자와 분모가 같습니다", path)
+        elif (
+            numerator is not None
+            and denominator is not None
+            and _same_computation(self.plan.operations[numerator.index], self.plan.operations[denominator.index])
+        ):
+            # 필터는 Dataset마다 하나라, 같은 Dataset을 같은 방식으로 집계한 두 지표는 이름만 달라도 값이 같다.
+            self.error(
+                "RATIO_OPERAND_INVALID",
+                f"'{op.numerator}'와 '{op.denominator}'는 같은 Dataset을 같은 필터·집계로 계산해 값이 같으므로 "
+                "비율이 모든 지역에서 같아집니다",
+                path,
+            )
         for metric, name in ((numerator, "numerator"), (denominator, "denominator")):
             if metric is not None and metric.operation == "rank":
                 self.error(
@@ -294,6 +306,15 @@ class _PlanChecker:
 
     def _rank_of(self, metric: str) -> RankOperation | None:
         return next((op for op in self.plan.operations if isinstance(op, RankOperation) and op.input == metric), None)
+
+
+def _same_computation(first: object, second: object) -> bool:
+    """같은 입력을 같은 방식으로 집계해 항상 같은 값을 내는 두 operation인지 본다."""
+    if isinstance(first, AggregateOperation) and isinstance(second, AggregateOperation):
+        return (first.input, first.group_by, first.aggregation) == (second.input, second.group_by, second.aggregation)
+    if isinstance(first, AggregateByAreaOperation) and isinstance(second, AggregateByAreaOperation):
+        return (first.input, first.boundary) == (second.input, second.boundary)
+    return False
 
 
 def validate_plan(

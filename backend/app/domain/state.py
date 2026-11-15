@@ -92,6 +92,8 @@ class PlanAttempt(StrictModel):
 
     plan: AnalysisPlan | None
     validation: ValidationReport
+    # 계획 보정이 고쳤으면 LLM이 낸 원래 계획 (plan은 고친 계획, 고친 내용은 validation의 PLAN_REPAIRED 경고)
+    original_plan: AnalysisPlan | None = None
 
 
 class WorkflowError(StrictModel):

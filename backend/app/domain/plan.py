@@ -1,6 +1,6 @@
 from collections.abc import Iterable, Mapping
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from app.domain.base import StrictModel
 from app.domain.catalog import DatasetMetadata, RegionRef
@@ -22,6 +22,14 @@ class DatasetFilter(StrictModel):
 class RankingSpec(StrictModel):
     enabled: bool
     limit: int = Field(default=10, ge=1, le=50)
+
+    @field_validator("limit", mode="before")
+    @classmethod
+    def _limit_in_range(cls, value: object) -> object:
+        # 순위표에 보일 줄 수일 뿐이라, LLM이 범위 밖 값(0, 100)을 주면 계획을 다시 만들지 않고 범위 안으로 맞춘다.
+        if isinstance(value, int) and not isinstance(value, bool):
+            return 10 if value < 1 else min(value, 50)
+        return value
 
 
 class OutputSpec(StrictModel):

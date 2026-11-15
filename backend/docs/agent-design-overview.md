@@ -278,7 +278,7 @@ DB에 없는 데이터라도 출처 등록 파일(`backend/sources/*.yaml`)로 �
 #### ③ build_analysis_plan: 분석 계획 생성
 
 - 입력은 해석 결과 JSON과 **선택된 Dataset의 상세 메타데이터**입니다. 상세 메타데이터에는 컬럼 타입·의미 유형, join key, 공간·시간 정보가 들어가고, bbox와 feature 수는 빠집니다.
-- 프롬프트에는 분석 정책, Operation 의미, 작성 규칙 8개가 들어갑니다.
+- 프롬프트에는 분석 정책, Operation 의미, 작성 규칙 9개가 들어갑니다.
   1. intent·region·analysis_unit은 해석 결과를 그대로 씁니다.
   2. 사용하는 Dataset을 `datasets`에 모두 선언하고, 주어진 Dataset만 씁니다.
   3. 질문이나 정책이 요구하는 행 조건만 필터로 둡니다(기준일·유형 나열 같은 요구되지 않은 조건 금지). 경계 Dataset에는 필터를 두지 않습니다.
@@ -287,12 +287,14 @@ DB에 없는 데이터라도 출처 등록 파일(`backend/sources/*.yaml`)로 �
   6. `output.metric`은 지도에 칠할 지표입니다. 순위(rank) 결과는 쓸 수 없습니다.
   7. ranking을 켜면 해당 지표의 rank Operation이 있어야 합니다.
   8. `regional_summary` 순위는 질문이 적은·낮은 쪽부터 묻지 않는 한 내림차순(desc)입니다. 방향을 말하지 않은 '순위'·'~별 개수' 질문도 같습니다.
+  9. `regional_summary`에서는 질문이 비율('~당', '대비', '비율')을 묻지 않으면 비율을 만들지 않고, 질문이 말하지 않은 연령 조건을 더하지 않습니다. 다른 분석 유형의 정의(예: 어린이 인구 = 0~5세)는 질문이 그 개념을 말할 때만 씁니다. gpt-4o-mini가 '인구 순위' 질문에 '어린이 인구 ÷ 인구'를 만들었기 때문입니다.
 - 재생성할 때는 이전 계획과 검증 오류 목록(`[코드] 경로: 메시지`)을 함께 보냅니다.
 - 응답이 스키마를 통과하지 못하면(`LLMOutputError`) 실행하지 않고 `PLAN_SCHEMA_INVALID` 시도로 기록한 뒤 재생성합니다.
 
 #### ④ validate_plan: 계획 검증과 재생성
 
 - [Plan Validator](../app/validation/plan_validator.py)는 DB 없이 메타데이터만으로 판정하는 순수 함수입니다. 규칙 목록은 3.6절에 있습니다.
+- 검증 전에 [Plan Repair](../app/validation/plan_repair.py)가 LLM이 반복하는 기계적인 실수 가운데 의도가 하나로 정해지는 것만 고칩니다. 위치가 없는 인구 표의 공간 집계 → 행정코드별 인구 합계, 같은 Dataset에 나뉜 필터 → AND 하나(같은 조건의 반복, 서로 다른 컬럼, 한 컬럼의 하한·상한 한 쌍일 때만), 확정 지역을 다시 말한 경계 필터(지역 이름·코드와 정확히 같을 때만) → 제거, 순위를 지도 지표로 지정 → 순위를 매긴 지표입니다. 뜻이 갈릴 수 있는 경우(인구 컬럼이 없는 표, 같은 컬럼의 다른 조건, OR 묶음)는 고치지 않고 다시 만들게 둡니다. 고친 계획도 같은 Validator를 통과해야 실행되고, 고친 내용은 `PLAN_REPAIRED` 경고로, LLM이 낸 원래 계획은 `original_plan`으로 계획 시도 기록에 남습니다. 순위표 줄 수(`ranking.limit`)는 스키마에서 1~50 안으로 맞춥니다. gpt-4o-mini에서 계획 단계까지 간 실행의 약 80%가 계획을 두 번 만들었기 때문입니다.
 - Plan Validator에 더해, 계획이 해석 결과(intent·지역·단위)를 바꾸지 않았는지 검사합니다(`PLAN_INTERPRETATION_MISMATCH`). LLM이 지원 범위로 몰래 바꾸는 것을 막기 위해서입니다.
 - 결과에 따라 다음으로 진행합니다.
   - 오류가 없으면 `load_data`로 갑니다.
@@ -478,7 +480,7 @@ output 이름과 라벨은 LLM이 정하므로 실행마다 다를 수 있습니
 
 LLM 출력은 세 겹으로 검사합니다.
 
-1. **Pydantic 스키마**: 필드·타입, Operation union 구분, 필터 값 형태, output 이름 패턴(`^[a-z][a-z0-9_]{0,62}$`)
+1. **Pydantic 스키마**: 필드·타입, Operation union 구분, 필터 값 형태, output 이름 패턴, 순위표 줄 수(범위 밖이면 1~50으로 맞춤)(`^[a-z][a-z0-9_]{0,62}$`)
 2. **Plan Validator**: 메타데이터 기준 의미 검사(아래 표)
 3. **Result Validator**: 실행 결과 검사(아래 표)
 
@@ -489,10 +491,10 @@ LLM 출력은 세 겹으로 검사합니다.
 | Dataset 참조 | `UNKNOWN_DATASET`(후보에 없음), `DATASET_NOT_DECLARED`(참조했지만 `datasets`에 없음), `DATASET_NOT_SELECTED`(선택 단계에서 고르지 않음), `UNUSED_DATASET`(경고) |
 | 지역·분석 단위 | `REGION_NOT_COVERED`, `UNIT_BOUNDARY_MISSING`, `UNIT_BOUNDARY_AMBIGUOUS`, `CRS_UNSUPPORTED` |
 | 필터 | `FILTER_FIELD_UNKNOWN`, `FILTER_TYPE_MISMATCH`, `DUPLICATE_FILTER`, `BOUNDARY_FILTER_UNSUPPORTED` |
-| Operation | `GEOMETRY_REQUIRED`, `GEOMETRY_TYPE_INVALID`, `BOUNDARY_NOT_ANALYSIS_UNIT`, `JOIN_KEY_INCOMPATIBLE`(의미 유형·코드 체계·단위 일치), `FIELD_UNKNOWN`, `FIELD_NOT_NUMERIC`, `POPULATION_NOT_SUMMED`(인구 컬럼은 합계만. 행 개수·평균은 지역 인구가 아님), `RATIO_OPERAND_INVALID`, `OPERATION_INPUT_UNKNOWN`, `OUTPUT_NAME_CONFLICT` |
+| Operation | `GEOMETRY_REQUIRED`, `GEOMETRY_TYPE_INVALID`, `BOUNDARY_NOT_ANALYSIS_UNIT`, `JOIN_KEY_INCOMPATIBLE`(의미 유형·코드 체계·단위 일치), `FIELD_UNKNOWN`, `FIELD_NOT_NUMERIC`, `POPULATION_NOT_SUMMED`(인구 컬럼은 합계만. 행 개수·평균은 지역 인구가 아님), `RATIO_OPERAND_INVALID`(분자와 분모가 같거나, 같은 Dataset·필터·집계로 만든 같은 값이거나, 순위 결과), `OPERATION_INPUT_UNKNOWN`, `OUTPUT_NAME_CONFLICT` |
 | 출력 | `OUTPUT_METRIC_NOT_COMPUTED`, `OUTPUT_METRIC_IS_RANK`, `RANKING_NOT_DEFINED` |
 | 분석 정책 | `POLICY_VIOLATION`(출력 지표가 scale 1,000인 비율이고 오름차순 순위가 켜져 있어야 함) |
-| 워크플로가 추가 | `PLAN_SCHEMA_INVALID`(스키마 불일치), `PLAN_INTERPRETATION_MISMATCH`(해석과 다른 intent·지역·단위) |
+| 워크플로가 추가 | `PLAN_REPAIRED`(경고: 계획 보정이 고친 내용), `PLAN_SCHEMA_INVALID`(스키마 불일치), `PLAN_INTERPRETATION_MISMATCH`(해석과 다른 intent·지역·단위) |
 
 **Result Validator 규칙**
 
