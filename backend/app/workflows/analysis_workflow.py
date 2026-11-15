@@ -350,6 +350,15 @@ def _fallback_regional_summary_plan(state: AgentState, datasets: dict[str, Datas
     interpreted = state.interpreted_query
     if interpreted.intent != AnalysisIntent.REGIONAL_SUMMARY:
         return None
+    # 대체 계획은 필터 없이 집계하므로, LLM 계획에 데이터 조건(예: 나이 0~5세)이 있었다면 그 조건을 버린 다른 질문에
+    # 답하게 된다. 경계 Dataset 필터는 지역 조건이라(지역은 region으로 정해진다) 버려도 답이 바뀌지 않는다.
+    attempted = [attempt.plan for attempt in state.plan_history if attempt.plan is not None]
+    if any(
+        not (condition.dataset in datasets and datasets[condition.dataset].is_polygon)
+        for plan in [*attempted, state.analysis_plan]
+        for condition in plan.filters
+    ):
+        return None
     boundary = next(
         (
             datasets[dataset_id]

@@ -1,6 +1,8 @@
 import pytest
 
 from app.catalog.definitions import TRUSTED_DATASETS
+from app.domain.catalog import RegionRef
+from app.domain.enums import SpatialLevel
 from app.domain.plan import AnalysisPlan
 from app.validation.plan_validator import validate_plan
 from tests.support import load_plan_dict
@@ -118,6 +120,15 @@ def test_sum_requires_numeric_field():
     assert _codes(data) == ["FIELD_NOT_NUMERIC"]
 
 
+@pytest.mark.parametrize("function", ["count", "avg"])
+def test_population_is_only_summed(function):
+    # 나이별 인구 행의 개수(모두 111)나 평균은 지역 인구가 아니다 (예: '평균 소득'으로 이름 붙인 나이별 평균).
+    data = load_plan_dict()
+    data["operations"][1]["aggregation"]["function"] = function
+
+    assert _codes(data) == ["POPULATION_NOT_SUMMED"]
+
+
 def test_ratio_operands_must_differ_and_not_be_ranks():
     data = load_plan_dict()
     data["operations"][2]["denominator"] = "daycare_count"
@@ -159,6 +170,17 @@ def test_region_outside_dataset_coverage_is_rejected():
 
     # 전국 인구는 부산을 포함하지만 서울 경계와 어린이집은 포함하지 않는다.
     assert _codes(data) == ["REGION_NOT_COVERED"] * 2
+
+
+def test_region_not_covered_names_the_checked_region():
+    # 범위는 해석 단계에서 확정한 지역(대한민국)으로 검사하므로, 계획에 적힌 지역(서울특별시)이 아니라 그 지역을 알린다.
+    country = RegionRef(name="대한민국", level=SpatialLevel.COUNTRY, code="KR")
+
+    report = validate_plan(AnalysisPlan.model_validate(load_plan_dict()), TRUSTED_DATASETS, SELECTED, country)
+
+    messages = [issue.message for issue in report.errors if issue.code == "REGION_NOT_COVERED"]
+    assert len(messages) == 2  # 서울 경계와 서울 어린이집
+    assert all(message.startswith("분석 지역 '대한민국'(country)은") for message in messages)
 
 
 def test_analysis_unit_needs_a_polygon_dataset_at_that_level():

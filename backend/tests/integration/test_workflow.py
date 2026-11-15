@@ -100,12 +100,13 @@ def test_plan_that_stays_invalid_is_never_executed(pool, catalog, conn):
     assert get_run(conn, state.run_id)["status"] == "failed"
 
 
-def test_invalid_regional_summary_uses_validated_metadata_fallback(pool, catalog):
+def _invalid_population_plan(filters: list[dict]) -> AnalysisPlan:
+    """인구 표를 공간 집계하려는(GEOMETRY_REQUIRED) regional_summary 계획."""
     data = load_plan_dict()
     data.update(
         intent="regional_summary",
         datasets=["population_by_age", "emd_boundary"],
-        filters=[],
+        filters=filters,
         operations=[
             {
                 "type": "aggregate_by_area",
@@ -125,19 +126,31 @@ def test_invalid_regional_summary_uses_validated_metadata_fallback(pool, catalog
         ],
         output={"map_type": "choropleth", "metric": "population_total", "ranking": {"enabled": True, "limit": 10}},
     )
-    invalid = AnalysisPlan.model_validate(data)
-    llm = daycare_llm(
+    return AnalysisPlan.model_validate(data)
+
+
+def _population_llm(plan: AnalysisPlan, concept: str):
+    return daycare_llm(
         interpreted=[
             interpreted(
                 intent="regional_summary",
-                restated_question="서울특별시에서 인구가 많은 행정동",
-                key_concepts=["인구수"],
+                restated_question=f"서울특별시에서 {concept}가 많은 행정동",
+                key_concepts=[concept],
                 assumptions=[],
             )
         ],
         selection=[DatasetSelection(datasets=["population_by_age", "emd_boundary"], rationale="인구와 경계")],
-        plans=[invalid],
+        plans=[plan],
     )
+
+
+# 경계 Dataset 필터는 지역 조건이라(지역은 region으로 정해진다) 대체 계획이 버려도 답이 바뀌지 않는다.
+@pytest.mark.parametrize(
+    "filters",
+    [[], [{"dataset": "emd_boundary", "where": {"field": "sido_nm", "operator": "eq", "value": "서울특별시"}}]],
+)
+def test_invalid_regional_summary_uses_validated_metadata_fallback(pool, catalog, filters):
+    llm = _population_llm(_invalid_population_plan(filters), "인구수")
 
     state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("서울에서 인구가 많은 행정동을 알려줘")
 
@@ -147,6 +160,18 @@ def test_invalid_regional_summary_uses_validated_metadata_fallback(pool, catalog
     assert state.analysis_plan.operations[0].aggregation.field == "population"
     assert state.final_response.metric.label == "인구수"
     assert any("최소 집계 계획" in assumption for assumption in state.final_response.assumptions)
+
+
+def test_fallback_is_not_used_when_it_would_drop_a_data_condition(pool, catalog):
+    # 대체 계획은 필터 없이 집계하므로 0~5세 조건이 있던 질문에 전체 인구로 답하게 된다. 틀린 답 대신 실패로 끝낸다.
+    age = {"dataset": "population_by_age", "where": {"field": "age", "operator": "between", "value": [0, 5]}}
+    llm = _population_llm(_invalid_population_plan([age]), "0~5세 인구")
+
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run("서울에서 0~5세 인구가 가장 많은 행정동은?")
+
+    assert state.status == RunStatus.FAILED
+    assert state.errors[0].code == "PLAN_INVALID"
+    assert [attempt.validation.ok for attempt in state.plan_history] == [False, False]
 
 
 def test_plan_schema_failure_counts_as_invalid_plan(pool, catalog):

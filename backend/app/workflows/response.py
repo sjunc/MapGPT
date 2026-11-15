@@ -36,6 +36,7 @@ _SYMBOLS = {
     FilterOperator.LTE: "≤",
 }
 _LEVEL_NAMES = {"sido": "시도", "sigungu": "시군구", "emd": "행정동"}
+_RANK_DIRECTIONS = {SortOrder.ASC: "오름차순(값이 작을수록 1위)", SortOrder.DESC: "내림차순(값이 클수록 1위)"}
 
 
 def compose_response(
@@ -96,9 +97,14 @@ def explanation_facts(response: FinalResponse, plan: AnalysisPlan, result: Execu
     """설명 LLM에 넘길 사실. 여기에 없는 수치는 설명에 쓰지 않도록 지시한다."""
     labels = response.metric_labels
     values = [row.values[plan.output.metric] for row in result.rows if row.values[plan.output.metric] is not None]
+    rank_op = next(
+        (op for op in plan.operations if isinstance(op, RankOperation) and op.output == response.rank_metric), None
+    )
     return {
         "question": response.question,
         "metric": response.metric.model_dump(),
+        # 1위가 가장 큰 값이라고 가정해 설명이 거꾸로 되지 않도록 순위 방향을 함께 준다.
+        "ranking_order": _RANK_DIRECTIONS[rank_op.order] if rank_op else None,
         "ranking_top": [
             {
                 "rank": item.rank,
@@ -175,8 +181,9 @@ def _method(plan: AnalysisPlan, datasets: Mapping[str, DatasetMetadata], result:
                 "분모가 0이거나 없으면 값 없음(null)으로 두고 순위에서 제외"
             )
         elif isinstance(op, RankOperation):
-            direction = "오름차순(값이 작을수록 1위)" if op.order == SortOrder.ASC else "내림차순(값이 클수록 1위)"
-            steps.append(f"{op.label}({op.output}): {op.input}을 {direction}으로 순위화. 같은 값은 같은 순위")
+            steps.append(
+                f"{op.label}({op.output}): {op.input}을 {_RANK_DIRECTIONS[op.order]}으로 순위화. 같은 값은 같은 순위"
+            )
     return steps
 
 

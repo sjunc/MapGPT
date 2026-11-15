@@ -15,7 +15,9 @@ def _datasets(feature_count: int | None = 10, bbox: list[float] | None = BBOX) -
     return {**TRUSTED_DATASETS, "emd_boundary": boundary.model_copy(update={"spatial": spatial})}
 
 
-def _row(i: int, count=2, children=100, ratio=None, rank=1, reasons=None) -> UnitRow:
+def _row(i: int, count=None, children=100, ratio=None, rank=1, reasons=None) -> UnitRow:
+    if count is None:
+        count = i + 1  # 단위마다 값이 달라야 정상 결과다 (모두 같으면 CONSTANT_METRIC)
     if ratio is None and children:
         ratio = count / children * 1000
     return UnitRow(
@@ -97,6 +99,20 @@ def test_high_null_rate_fails():
     ]
 
     assert _codes(_result(rows))[0] == ["HIGH_NULL_RATE"]
+
+
+def test_constant_metric_fails():
+    # 예: 경계 행을 세면 모든 행정동이 1이 된다. 비교할 수 없으므로 순위·지도로 내보내지 않는다.
+    result = _result([_row(i, count=1) for i in range(10)])
+
+    [issue] = validate_result(result, PLAN, _datasets()).errors
+
+    assert issue.code == "CONSTANT_METRIC"
+    assert "'0~5세 어린이 1,000명당 어린이집 수' 값이 모두 10입니다" in issue.message
+
+
+def test_single_unit_is_not_a_constant_metric():
+    assert _codes(_result([_row(0)]), datasets=_datasets(feature_count=None)) == ([], ["UNIT_COUNT_CHECK_SKIPPED"])
 
 
 def test_result_outside_region_bbox_fails():

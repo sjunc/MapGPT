@@ -525,8 +525,9 @@ SELECT u.key, count(a.id) FROM units u LEFT JOIN assigned a USING (key) GROUP BY
 | Output metric이 실제 계산되는가 | `OUTPUT_METRIC_NOT_COMPUTED`, `RANKING_NOT_DEFINED` (ranking.enabled면 output.metric에 대한 rank 존재) |
 | (보완) 분석 단위·지역 | `UNIT_BOUNDARY_MISSING`/`AMBIGUOUS`(analysis_unit의 Polygon Dataset이 정확히 1개), `REGION_NOT_COVERED` (region이 Dataset coverage와 일치) |
 | (보완) 분석 정책 준수 | `POLICY_VIOLATION` (supply_demand_gap: output.metric이 ratio이고 scale=1000, rank=asc) |
+| (보완) 인구 집계 | `POPULATION_NOT_SUMMED` (인구 컬럼은 sum만. 나이별 행의 개수·평균은 지역 인구가 아님) |
 
-**재생성 루프**: Pydantic 파싱 실패나 Plan Validator 오류가 나면 오류 목록을 LLM에 피드백해 **최대 1회** 다시 만든다. `regional_summary`가 그래도 실패하면 메타데이터 기반 최소 대체 Plan을 같은 Validator로 검사해 실행하고, 대체 Plan도 만들 수 없으면 `PLAN_INVALID`로 종료한다.
+**재생성 루프**: Pydantic 파싱 실패나 Plan Validator 오류가 나면 오류 목록을 LLM에 피드백해 **최대 1회** 다시 만든다. `regional_summary`가 그래도 실패하면 메타데이터 기반 최소 대체 Plan을 같은 Validator로 검사해 실행하고, 대체 Plan도 만들 수 없으면 `PLAN_INVALID`로 종료한다. 대체 Plan은 필터를 쓰지 않으므로, 실패한 계획에 경계가 아닌 Dataset 필터(질문의 조건)가 있었으면 만들지 않는다.
 
 ---
 
@@ -802,3 +803,4 @@ Validation(5)을 LLM 연동(6)보다 먼저 한다. LLM 출력은 처음부터 �
 | 등록 출처 수집 (2026-11-14) | 출처 등록 파일(`backend/sources/*.yaml`, PyYAML `safe_load` + Pydantic 검증)로 승인한 서울 OpenAPI 출처를 카탈로그에 "받기 전" 항목으로 올리고, 선택되면 `acquire_data` 단계가 계획 전에 받아 적재. 등록 출처는 `public_api` 분류이고 컬럼 의미는 등록 파일 값을 쓰며, 대상 지역 밖 좌표는 위치를 만들지 않음. 질문 처리 중 한도 10만 행, 다시 받는 주기 기본 30일, 원본 사본 재사용, 동시 수집은 advisory lock | DB에 없는 데이터를 공공 API로 받아 답하려는 요구. 전달 문서 36번(검증 없이 쓰지 않음)과 데이터 전달 문서 5.3의 선언 파일·신뢰 단계를 따르되, 서울 일반 인증키 하나로 모든 일반 OpenAPI를 부를 수 있어 서울부터 시작. YAML은 데이터 전달 문서의 선언 파일 예시와 같고 데이터 쪽에서 가장 흔한 형식 |
 | 하위 지역 분석 (2026-11-14) | Dataset 범위가 분석 지역을 포함하면(행정안전부 계층 코드 앞자리로 판단: 강남구 11680 ⊂ 서울 11) 그 Dataset을 쓴다. 해석에서 확정한 지역(`resolved_region`)을 분석 단위 계산·경계 보정·계획 검증·실행 준비에 넘기고, 범위가 더 넓은 점 데이터의 지역 밖 점은 `UNASSIGNED_POINTS`로 알리지 않는다 | 서울 범위 Dataset(어린이집·공공와이파이)으로 "서울특별시 강남구" 같은 시군구 지역을 분석하면 `REGION_NOT_COVERED`로 멈췄음. 코드를 모르는 이름만으로는 판단하지 않아 서울 데이터를 서울 밖에 쓰는 일은 계속 막힌다 |
 | 데이터 없음 안내 (2026-11-15) | 선택 결과에 `required_data`(필요한 데이터마다 그 데이터를 주는 후보 Dataset, 없으면 null)를 두고, 출처가 null이거나 후보에 없는 ID면 선택 단계에서 `DATA_NOT_AVAILABLE`로 멈추며 검색 후보(경계 제외)를 함께 안내한다. 선택한 Dataset 범위가 분석 지역을 포함하지 않을 때도 계획 전에 같은 코드로 멈춘다 | 약국처럼 등록되지 않은 데이터를 물으면 LLM이 없는 ID(`pharmacy_facility`)를 지어내 `INVALID_DATASET_SELECTION`이라는 내부 문구로 멈췄고, 모델에 따라 비슷한 다른 데이터로 대신 답할 위험이 있었음. 범위 밖 지역은 계획을 두 번 만든 뒤에야 계획 검증에서 멈췄음. 처음에는 '없는 데이터' 목록만 받았는데, gpt-4o-mini가 '어린이 인구'·'0~5세 인구'처럼 필터로 만드는 데이터와 지역이 붙은 표현을 없다고 적어 성공해야 할 질문 5개 중 4개를 막았음. 출처를 묻는 형식으로 바꿔 고르면서 없다고 하는 모순이 생기지 않게 했다 |
+| 틀린 답 막기 (2026-11-15) | 계획 검증에 `POPULATION_NOT_SUMMED`(인구 컬럼은 합계만), 결과 검증에 `CONSTANT_METRIC`(값 있는 단위가 2개 이상인데 출력 지표가 모두 같으면 오류)를 추가했다. 실패한 계획에 경계가 아닌 Dataset 필터가 있었으면 `regional_summary` 대체 Plan을 쓰지 않는다. 설명용 사실에 순위 방향(`ranking_order`)을 넣고 설명 규칙에 반영했으며, 플래너에 "`regional_summary` 순위는 적은 쪽을 묻지 않는 한 desc" 규칙을 추가했다. `REGION_NOT_COVERED` 문구는 계획에 적힌 지역 대신 실제로 검사한 지역을 쓴다 | gpt-4o-mini 재현에서 성공한 7건 중 5건이 틀린 답이었음. '평균 소득'을 0~5세 인구의 나이별 평균으로 답했고, '부유한 동네'·'평균 소득'(gpt-4o-mini)과 '0~5세 인구'(qwen3.5:9b)에는 대체 Plan이 조건을 버리고 전체 인구로 답했으며, 오름차순 순위의 최솟값을 '가장 많다'고 설명했음. 팀원이 본 '모두 1'(경계 행 세기 등)도 검증을 그대로 통과했음. 대체 Plan(BE/jjc 추가)은 조건이 없는 질문(공공와이파이 개수 등)에는 계속 쓴다 |

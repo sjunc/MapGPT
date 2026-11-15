@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from app.domain.catalog import DatasetMetadata, RegionRef
-from app.domain.enums import AggregationFunction, DataType, GeometryType, Severity
+from app.domain.enums import AggregationFunction, DataType, GeometryType, SemanticType, Severity
 from app.domain.operations import (
     AggregateByAreaOperation,
     AggregateOperation,
@@ -84,7 +84,7 @@ class _PlanChecker:
                 where = f"'{coverage.name}'({coverage.level})" if coverage else "지정되지 않은 지역"
                 self.error(
                     "REGION_NOT_COVERED",
-                    f"분석 지역 '{self.plan.region.name}'({self.plan.region.level})은 '{dataset_id}'의 범위({where})가 아닙니다",
+                    f"분석 지역 '{self.region.name}'({self.region.level})은 '{dataset_id}'의 범위({where})가 아닙니다",
                     "region",
                 )
             if metadata.geometry_column is not None:
@@ -200,6 +200,14 @@ class _PlanChecker:
             and column.data_type not in _NUMERIC
         ):
             self.error("FIELD_NOT_NUMERIC", f"'{column.name}'은 숫자 컬럼이 아닙니다", f"{path}.aggregation")
+        elif column.semantic_type == SemanticType.POPULATION and op.aggregation.function != AggregationFunction.SUM:
+            # 인구 행의 개수나 평균(예: 나이별 인구의 평균)은 지역 인구가 아니어서 다른 지표처럼 보이는 틀린 답이 된다.
+            self.error(
+                "POPULATION_NOT_SUMMED",
+                f"'{column.name}'은 인구 수라 합계(sum)로만 집계합니다. "
+                f"{op.aggregation.function}는 행의 개수나 평균일 뿐 지역 인구가 아닙니다",
+                f"{path}.aggregation",
+            )
 
     def check_join_key(self, metadata: DatasetMetadata, field: str, path: str) -> None:
         if metadata.column(field) is None:

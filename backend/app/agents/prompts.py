@@ -123,7 +123,8 @@ def plan_prompt(
 4. operations는 실행 순서대로 쓰고, 뒤의 operation은 앞에서 만든 output만 참조한다.
 5. output 이름은 snake_case 영문으로 서로 겹치지 않고 Dataset ID·컬럼명과도 겹치지 않는다. label은 짧은 한국어 이름이다.
 6. output.metric에는 지도에 색으로 표시할 지표 값의 output 이름을 쓴다 (예: calculate_ratio의 output). rank의 output(순위)은 output.metric이 될 수 없다.
-7. ranking.enabled가 true면 output.metric을 input으로 하는 rank operation이 있어야 한다."""
+7. ranking.enabled가 true면 output.metric을 input으로 하는 rank operation이 있어야 한다.
+8. regional_summary의 rank order는 질문이 적은·낮은 쪽부터(가장 적은 곳, 낮은 순 등)를 묻지 않는 한 desc다. 순위 방향을 말하지 않은 '순위'·'~별 개수' 질문도 desc다."""
     user = f"[해석된 질문]\n{_json(interpreted)}\n\n[사용할 Dataset]\n{_json([_dataset_detail(d) for d in datasets])}"
     if feedback is not None:
         previous_plan, issues = feedback
@@ -140,5 +141,6 @@ def explain_prompt(facts: dict[str, Any]) -> tuple[str, str]:
 [규칙]
 1. 결과 JSON에 없는 수치나 사실을 만들지 않는다.
 2. 지표의 의미와 질문 방향에 맞는 상위·하위 지역 몇 곳을 구체적인 수치와 함께 말한다.
-3. 중요한 한계(기준 시점 차이, 제외된 데이터 등)가 있으면 한 문장으로 언급한다."""
+3. 중요한 한계(기준 시점 차이, 제외된 데이터 등)가 있으면 한 문장으로 언급한다.
+4. 순위 방향은 ranking_order를 따른다. 1위가 가장 큰 값이라고 가정하지 말고, 가장 많은·적은 지역은 value와 summary_stats(min·max)로 판단한다."""
     return system, f"[분석 결과]\n{_json(facts)}"

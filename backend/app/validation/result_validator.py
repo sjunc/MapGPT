@@ -85,6 +85,16 @@ def validate_result(
         )
         warning("NULL_VALUES", f"'{metric}' 값을 계산할 수 없는 행정동 {len(missing)}개는 순위에서 제외: {examples}")
 
+    # 모든 단위의 값이 같으면(예: 경계 행을 세어 전부 1) 비교·순위가 의미 없고, 질문에 맞는 데이터가 없다는 신호다.
+    present = [row.values[metric] for row in rows if row.values.get(metric) is not None]
+    if len(present) >= 2 and len(set(present)) == 1:
+        label = next((op.label for op in plan.operations if op.output == metric), metric)
+        error(
+            "CONSTANT_METRIC",
+            f"분석 단위 {len(present)}개의 '{label}' 값이 모두 {present[0]:g}입니다. 값이 모두 같아 지역을 비교할 수 "
+            "없고, 질문에 맞는 데이터가 없거나 계획이 질문과 맞지 않을 수 있습니다",
+        )
+
     unit_metadata = datasets[result.unit_dataset]
     expected_bbox, actual_bbox = unit_metadata.spatial.bbox, result.boundary.bbox
     if expected_bbox is None or actual_bbox is None:

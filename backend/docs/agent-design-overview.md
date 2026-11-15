@@ -276,7 +276,7 @@ DB에 없는 데이터라도 출처 등록 파일(`backend/sources/*.yaml`)로 �
 #### ③ build_analysis_plan: 분석 계획 생성
 
 - 입력은 해석 결과 JSON과 **선택된 Dataset의 상세 메타데이터**입니다. 상세 메타데이터에는 컬럼 타입·의미 유형, join key, 공간·시간 정보가 들어가고, bbox와 feature 수는 빠집니다.
-- 프롬프트에는 분석 정책, Operation 의미, 작성 규칙 7개가 들어갑니다.
+- 프롬프트에는 분석 정책, Operation 의미, 작성 규칙 8개가 들어갑니다.
   1. intent·region·analysis_unit은 해석 결과를 그대로 씁니다.
   2. 사용하는 Dataset을 `datasets`에 모두 선언하고, 주어진 Dataset만 씁니다.
   3. 질문이나 정책이 요구하는 행 조건만 필터로 둡니다(기준일·유형 나열 같은 요구되지 않은 조건 금지). 경계 Dataset에는 필터를 두지 않습니다.
@@ -284,6 +284,7 @@ DB에 없는 데이터라도 출처 등록 파일(`backend/sources/*.yaml`)로 �
   5. output 이름은 snake_case로 쓰고, 서로는 물론 Dataset ID·컬럼명과도 겹치지 않게 합니다.
   6. `output.metric`은 지도에 칠할 지표입니다. 순위(rank) 결과는 쓸 수 없습니다.
   7. ranking을 켜면 해당 지표의 rank Operation이 있어야 합니다.
+  8. `regional_summary` 순위는 질문이 적은·낮은 쪽부터 묻지 않는 한 내림차순(desc)입니다. 방향을 말하지 않은 '순위'·'~별 개수' 질문도 같습니다.
 - 재생성할 때는 이전 계획과 검증 오류 목록(`[코드] 경로: 메시지`)을 함께 보냅니다.
 - 응답이 스키마를 통과하지 못하면(`LLMOutputError`) 실행하지 않고 `PLAN_SCHEMA_INVALID` 시도로 기록한 뒤 재생성합니다.
 
@@ -295,6 +296,7 @@ DB에 없는 데이터라도 출처 등록 파일(`backend/sources/*.yaml`)로 �
   - 오류가 없으면 `load_data`로 갑니다.
   - 첫 시도에 오류가 있으면 피드백과 함께 계획을 다시 만듭니다(`MAX_PLAN_ATTEMPTS = 2`).
   - `regional_summary`의 두 번째 시도도 실패하면 Point 개수 또는 호환 행정코드별 수치 합계로 최소 대체 Plan을 구성합니다. 이 Plan도 같은 Validator를 통과할 때만 실행하며, 만들 수 없으면 `PLAN_INVALID`로 끝납니다.
+  - 대체 Plan은 필터를 쓰지 않으므로, 실패한 계획에 경계가 아닌 Dataset의 필터(질문의 조건, 예: 나이 0~5세)가 있었으면 만들지 않습니다. 조건을 버리면 다른 질문의 답이 되기 때문입니다. 경계 Dataset 필터는 지역 조건이라 따지지 않습니다.
 - 모든 시도는 `plan_history`에 계획과 검증 결과가 함께 남습니다.
 
 #### ⑤ load_data: 데이터 바인딩
@@ -359,7 +361,7 @@ SELECT u.unit_key, count(a.point_id) FROM units u LEFT JOIN assigned a USING (un
    - `datasets`: 제목, 제공자, 출처, 라이선스, 기준 시점
    - `assumptions`: 정책 정의 + 해석 가정
    - `limitations`: 정책 한계 + 기준 시점 차이 + Dataset 품질 기록 + 결과 검증 경고
-2. `explanation_facts`가 설명용 사실 JSON을 만듭니다. 질문, 지표, 상위 순위와 구성 값, 요약 통계(단위 수, 값 있는 단위 수, 최소·중앙·최대), 데이터 기준 시점, 한계가 들어갑니다.
+2. `explanation_facts`가 설명용 사실 JSON을 만듭니다. 질문, 지표, 순위 방향(`ranking_order`, 예: "오름차순(값이 작을수록 1위)"), 상위 순위와 구성 값, 요약 통계(단위 수, 값 있는 단위 수, 최소·중앙·최대), 데이터 기준 시점, 한계가 들어갑니다. 순위 방향을 주는 것은 LLM이 1위를 가장 큰 값으로 가정해 오름차순 결과를 거꾸로 설명했기 때문입니다.
 3. LLM은 이 JSON에 있는 수치만 써서 3~5문장 요약을 씁니다. 이것은 프롬프트 지시이고, 요약 문장 속 수치를 코드가 다시 검증하지는 않습니다.
 
 #### ⑩ Provenance 저장
@@ -485,7 +487,7 @@ LLM 출력은 세 겹으로 검사합니다.
 | Dataset 참조 | `UNKNOWN_DATASET`(후보에 없음), `DATASET_NOT_DECLARED`(참조했지만 `datasets`에 없음), `DATASET_NOT_SELECTED`(선택 단계에서 고르지 않음), `UNUSED_DATASET`(경고) |
 | 지역·분석 단위 | `REGION_NOT_COVERED`, `UNIT_BOUNDARY_MISSING`, `UNIT_BOUNDARY_AMBIGUOUS`, `CRS_UNSUPPORTED` |
 | 필터 | `FILTER_FIELD_UNKNOWN`, `FILTER_TYPE_MISMATCH`, `DUPLICATE_FILTER`, `BOUNDARY_FILTER_UNSUPPORTED` |
-| Operation | `GEOMETRY_REQUIRED`, `GEOMETRY_TYPE_INVALID`, `BOUNDARY_NOT_ANALYSIS_UNIT`, `JOIN_KEY_INCOMPATIBLE`(의미 유형·코드 체계·단위 일치), `FIELD_UNKNOWN`, `FIELD_NOT_NUMERIC`, `RATIO_OPERAND_INVALID`, `OPERATION_INPUT_UNKNOWN`, `OUTPUT_NAME_CONFLICT` |
+| Operation | `GEOMETRY_REQUIRED`, `GEOMETRY_TYPE_INVALID`, `BOUNDARY_NOT_ANALYSIS_UNIT`, `JOIN_KEY_INCOMPATIBLE`(의미 유형·코드 체계·단위 일치), `FIELD_UNKNOWN`, `FIELD_NOT_NUMERIC`, `POPULATION_NOT_SUMMED`(인구 컬럼은 합계만. 행 개수·평균은 지역 인구가 아님), `RATIO_OPERAND_INVALID`, `OPERATION_INPUT_UNKNOWN`, `OUTPUT_NAME_CONFLICT` |
 | 출력 | `OUTPUT_METRIC_NOT_COMPUTED`, `OUTPUT_METRIC_IS_RANK`, `RANKING_NOT_DEFINED` |
 | 분석 정책 | `POLICY_VIOLATION`(출력 지표가 scale 1,000인 비율이고 오름차순 순위가 켜져 있어야 함) |
 | 워크플로가 추가 | `PLAN_SCHEMA_INVALID`(스키마 불일치), `PLAN_INTERPRETATION_MISMATCH`(해석과 다른 intent·지역·단위) |
@@ -494,7 +496,7 @@ LLM 출력은 세 겹으로 검사합니다.
 
 | 구분 | 코드 |
 |---|---|
-| 오류 → `RESULT_INVALID` | `RESULT_EMPTY`, `DUPLICATE_UNITS`, `INVALID_GEOMETRY`, `NEGATIVE_VALUE`(개수·인구), `ZERO_DENOMINATOR_UNHANDLED`, `NON_FINITE_VALUE`, `HIGH_NULL_RATE`(출력 지표 null > 20%), `OUT_OF_REGION`(bbox ±0.01° 초과), `UNIT_COUNT_MISMATCH`(예상 단위 수와 10% 넘게 차이) |
+| 오류 → `RESULT_INVALID` | `RESULT_EMPTY`, `DUPLICATE_UNITS`, `INVALID_GEOMETRY`, `NEGATIVE_VALUE`(개수·인구), `ZERO_DENOMINATOR_UNHANDLED`, `NON_FINITE_VALUE`, `HIGH_NULL_RATE`(출력 지표 null > 20%), `CONSTANT_METRIC`(값 있는 단위가 2개 이상인데 출력 지표가 모두 같음. 비교할 수 없고 질문에 맞는 데이터가 없다는 신호), `OUT_OF_REGION`(bbox ±0.01° 초과), `UNIT_COUNT_MISMATCH`(예상 단위 수와 10% 넘게 차이) |
 | 경고 → 응답의 "한계" | `NULL_VALUES`, `UNMATCHED_KEYS`, `UNASSIGNED_POINTS`, `UNIT_COUNT_MISMATCH`(작은 차이), `REGION_CHECK_SKIPPED`, `UNIT_COUNT_CHECK_SKIPPED` |
 
 ### 3.7 실패 코드 모음 (`WorkflowError.code`)
