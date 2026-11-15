@@ -346,9 +346,8 @@ NATIONAL_UNITS = [
 NATIONAL_POPULATION = {"1114052000": 100, "2611053000": 300, "2611054000": 200, "2614051000": 400}
 
 
-@pytest.fixture
-def national_catalog(conn, tmp_path):
-    """전국 경계(admdongkor 형식)와 인구를 적재하고 검색 임베딩을 맞춘다."""
+def _ingest_units(conn, tmp_path, units) -> None:
+    """(adm_cd, 행정동, 시도, 시도명, 시군구, 시군구명, 범위) 단위를 admdongkor 형식 전국 경계로 적재한다."""
     features = [
         {
             "type": "Feature",
@@ -362,11 +361,17 @@ def national_catalog(conn, tmp_path):
             },
             "geometry": {"type": "MultiPolygon", "coordinates": [[[[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]]]},
         }
-        for adm_cd, adm_nm, sido_cd, sido_nm, sgg_cd, sgg_nm, (x0, y0, x1, y1) in NATIONAL_UNITS
+        for adm_cd, adm_nm, sido_cd, sido_nm, sgg_cd, sgg_nm, (x0, y0, x1, y1) in units
     ]
     path = tmp_path / "HangJeongDong_ver20260701.geojson"
     path.write_text(json.dumps({"type": "FeatureCollection", "features": features}), encoding="utf-8")
     ingest_boundary(conn, path)
+
+
+@pytest.fixture
+def national_catalog(conn, tmp_path):
+    """전국 경계(admdongkor 형식)와 인구를 적재하고 검색 임베딩을 맞춘다."""
+    _ingest_units(conn, tmp_path, NATIONAL_UNITS)
     with conn.cursor() as cur:
         cur.executemany(
             "INSERT INTO datasets.population_by_age VALUES (%s, 30, %s, '2026-09-30')",
