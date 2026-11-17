@@ -3,11 +3,21 @@
   "redirects": [
     {
       "source": "/",
-      "destination": "/?demo=1",
+      "destination": "/?demo=1&map=kakao",
       "permanent": false,
       "missing": [
-        { "type": "query", "key": "demo" },
-        { "type": "query", "key": "run" }
+        {
+          "type": "query",
+          "key": "demo"
+        },
+        {
+          "type": "query",
+          "key": "run"
+        },
+        {
+          "type": "query",
+          "key": "map"
+        }
       ]
     }
   ]
