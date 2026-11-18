@@ -2,6 +2,7 @@ import json
 
 import httpx2
 import pytest
+import tiktoken
 from openai import OpenAI
 
 from app.config import Settings
@@ -186,7 +187,7 @@ def test_openai_embedder_requests_fixed_dimensions_and_keeps_input_order():
     assert recorder.requests[-1].url.path == "/v1/embeddings"
     assert recorder.sent == {
         "model": "text-embedding-3-small",
-        "input": ["어린이집 위치", "0~5세 인구"],
+        "input": [tiktoken.get_encoding("cl100k_base").encode(text) for text in ["어린이집 위치", "0~5세 인구"]],
         "dimensions": EMBEDDING_DIMENSIONS,
         "encoding_format": "float",
     }

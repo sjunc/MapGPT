@@ -266,6 +266,10 @@ pgvector는 후보를 찾고, LLM은 최종 선택을 하고, Validator는 실�
 
 실제 실행 기록 예시(`dataset_search`): `daycare_facility` 0.571, `population_by_age` 0.560, `emd_boundary` 0.362
 
+임베딩 어댑터는 긴 설명을 `cl100k_base` 기준 8,191토큰 이하로 나눠 최대 32개 조각씩 요청합니다.
+여러 조각의 벡터는 토큰 수로 가중 평균한 뒤 정규화해 Dataset당 1,536차원 벡터 하나로 합칩니다.
+카탈로그 원문과 컬럼 목록은 유지하며, 입력 제한 오류 후에는 재적재 없이 `embed-catalog`로 복구합니다.
+
 #### ②-1 acquire_data: 등록 출처 수집
 
 DB에 없는 데이터라도 출처 등록 파일(`backend/sources/*.yaml`)로 미리 승인해 둔 서울 OpenAPI 출처라면 질문을 처리하면서 받아 씁니다(전달 문서 36번의 첫 단계).
