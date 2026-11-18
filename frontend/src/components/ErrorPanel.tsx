@@ -1,4 +1,5 @@
 import type { WorkflowError } from "../types";
+import { apiUrl } from "../api";
 
 const STEP_NAMES: Record<string, string> = {
   interpret_query: "질문 해석",
@@ -38,7 +39,7 @@ export function ErrorPanel({ errors, runId }: { errors: WorkflowError[]; runId?:
           )}
         </div>
       ))}
-      {runId && <p className="muted provenance">실행 기록: <a href={`/api/analyses/${runId}`} target="_blank" rel="noreferrer">{runId}</a></p>}
+      {runId && <p className="muted provenance">실행 기록: <a href={apiUrl(`/api/analyses/${encodeURIComponent(runId)}`)} target="_blank" rel="noreferrer">{runId}</a></p>}
     </section>
   );
 }

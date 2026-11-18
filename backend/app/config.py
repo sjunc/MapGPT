@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=PROJECT_ROOT / ".env", extra="ignore")
 
     database_url: str = "postgresql://mapgpt:mapgpt@localhost:5432/mapgpt"
+    cors_allow_origins: list[str] = []
 
     llm_provider: Literal["openai", "ollama"] = "openai"
     openai_api_key: SecretStr | None = None

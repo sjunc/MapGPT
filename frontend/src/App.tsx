@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { getStoredAnalysis, requestAnalysis } from "./api";
+import { apiUrl, getStoredAnalysis, requestAnalysis } from "./api";
 import type { StoredAnalysis } from "./api";
 import { RecentRuns } from "./components/RecentRuns";
 import { ExecutionTrace } from "./components/ExecutionTrace";
@@ -528,7 +528,7 @@ export function App() {
                   결과가 완료되면 다시 확인해야 합니다.
                 </p>
                 <p className="muted">
-                  실행 기록: <a href={`/api/analyses/${encodeURIComponent(runningRunId)}`} target="_blank" rel="noreferrer">{runningRunId}</a>
+                  실행 기록: <a href={apiUrl(`/api/analyses/${encodeURIComponent(runningRunId)}`)} target="_blank" rel="noreferrer">{runningRunId}</a>
                 </p>
               </section>
             )}

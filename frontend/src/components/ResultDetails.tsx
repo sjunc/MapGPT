@@ -1,4 +1,5 @@
 import type { FinalResponse } from "../types";
+import { apiUrl } from "../api";
 
 function List({ items }: { items: string[] }) {
   return (
@@ -53,7 +54,7 @@ export function ResultDetails({ result }: { result: FinalResponse }) {
           <>
             실행 기록(Provenance):{" "}
             <a
-              href={`/api/analyses/${result.run_id}`}
+              href={apiUrl(`/api/analyses/${encodeURIComponent(result.run_id)}`)}
               target="_blank"
               rel="noreferrer"
             >

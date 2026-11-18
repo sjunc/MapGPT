@@ -233,6 +233,56 @@ python -m app.cli analyze "부산 중구 행정동별 인구 순위" --scope nat
 
 API: `POST /api/analyses`, `GET /api/analyses/{run_id}` (Provenance), `GET /api/datasets`, `GET /api/health`
 
+## 배포: 개인 서버 API + Vercel 화면
+
+브라우저가 Vercel 화면에서 개인 서버의 공개 HTTPS API를 직접 호출합니다.
+예를 들어 화면이 `https://your-project.vercel.app`, API가 `https://api.example.com`이면 다음과 같이 설정합니다.
+
+1. **개인 서버의 백엔드 환경 변수**에 허용할 화면 Origin을 JSON 배열로 지정합니다.
+
+   ```dotenv
+   CORS_ALLOW_ORIGINS=["https://your-project.vercel.app"]
+   ```
+
+   Origin은 프로토콜·호스트·포트까지이며 경로나 마지막 `/`는 넣지 않습니다. 커스텀 도메인이나
+   Preview 주소도 사용할 경우 실제 사용할 주소를 배열에 추가합니다. `*.vercel.app` 전체를 허용하지 않습니다.
+   기본 `[]`는 별도 Origin을 허용하지 않으며 로컬 Vite 프록시에는 설정이 필요 없습니다.
+   설정을 바꾼 뒤 백엔드를 재시작합니다. 현재 쿠키 인증은 없으므로 credentials 허용은 켜지 않습니다.
+
+2. **API 서버에 HTTPS를 구성**합니다. 예를 들어 nginx/Caddy에서 TLS를 처리하고 같은 서버의
+   `127.0.0.1:8000`으로 프록시합니다. 분석은 오래 걸릴 수 있으므로 프록시 응답 대기 시간도 맞춥니다.
+   운영 서버는 `--reload` 없이 실행합니다.
+
+   ```bash
+   python -m uvicorn app.api.main:app --host 127.0.0.1 --port 8000
+   ```
+
+   이 명령은 같은 서버의 리버스 프록시를 전제로 합니다. HTTPS 화면에서 HTTP API를 호출하면
+   mixed content로 차단되므로 CORS 설정만으로는 해결되지 않습니다.
+
+3. **Vercel 프로젝트**는 Root Directory를 `frontend`, Framework Preset을 Vite,
+   Build Command를 `npm run build`, Output Directory를 `dist`로 설정합니다.
+   환경 변수에 다음 값을 넣고 해당 환경(Production, 필요 시 Preview)에 다시 배포합니다.
+
+   ```dotenv
+   VITE_API_BASE_URL=https://api.example.com
+   ```
+
+   `/api`는 코드가 붙이므로 주소에는 넣지 않습니다. 이 변수는 빌드할 때 반영되므로 변경 후 재배포해야 합니다.
+   `VITE_` 변수는 브라우저에 공개되므로 DB 접속 정보나 OpenAI API 키를 넣지 않습니다.
+   API 호출과 실행 기록 링크가 모두 이 주소를 사용하며, 비우면 기존 `/api` 상대 주소를 사용합니다.
+
+4. **브라우저 개발자 도구의 Network 탭**에서 요청 주소가 개인 서버를 가리키는지 확인합니다.
+   JSON POST 전에 보내는 `OPTIONS` 요청이 성공하고, 응답의 `Access-Control-Allow-Origin`이 화면 Origin과 같아야 합니다.
+   현재 `frontend/vercel.json`은 루트 접속을 데모 화면으로 이동시키므로 실제 분석 확인에는 `/?demo=0`을 사용합니다.
+
+CORS는 브라우저의 응답 읽기 허용 규칙이며 API 인증·요청 제한을 대신하지 않습니다.
+실제 `.env`는 수정·커밋하지 않고 서버와 Vercel에 각각 설정합니다.
+
+참고: [FastAPI CORS](https://fastapi.tiangolo.com/tutorial/cors/),
+[Vite 환경 변수](https://vite.dev/guide/env-and-mode),
+[Vercel 환경 변수 변경과 재배포](https://vercel.com/docs/environment-variables/managing-environment-variables).
+
 ## 테스트
 
 ```bash

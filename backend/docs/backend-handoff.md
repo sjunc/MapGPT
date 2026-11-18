@@ -274,7 +274,7 @@ API 요청은 `datasets`와 `catalog`를 읽기만 한다. 현재 개발 DB 크�
 | 인증·권한 | 없음 |
 | 요청 제한·비용 한도 | 없음. 분석 1건이 LLM 4~5회와 임베딩 1회를 호출한다 |
 | 비밀 | `.env`(git 제외)의 `OPENAI_API_KEY`, `SEOUL_OPEN_API_KEY`. 서버에서만 쓰고 화면에는 내려가지 않는다. 서울 OpenAPI는 `http` 주소의 경로에 인증키를 넣어 호출하므로, 키가 암호화되지 않은 채 전송된다 |
-| CORS | 설정 없음. 개발 중에는 Vite 프록시로 같은 출처에서 호출한다 |
+| CORS | `CORS_ALLOW_ORIGINS` JSON 배열로 허용 Origin을 지정한다(기본 `[]`). GET·POST와 Content-Type을 허용하고 쿠키 credentials는 허용하지 않는다. 개발 중에는 Vite 프록시로 같은 출처에서 호출한다 |
 | 압축 | 없음. 성공 응답은 약 590KB다 |
 | 로그 | 앱 로그 설정이 없다. 예상하지 못한 예외(`INTERNAL_ERROR`)만 `logger.exception`으로 남는데, 설정이 없어 파이썬 기본 처리로 stderr에 출력된다. 접근 로그는 uvicorn 기본값이다 |
 | 지표·알림 | 없음. 실행 기록의 시작·종료 시각, 모델, 오류 코드가 사실상 유일한 운영 데이터다 |
@@ -336,6 +336,7 @@ GET  /api/analyses/{run_id}/events → 단계 이벤트 (SSE, 선택)
   - Python 3.12 이미지에 `pip install .`을 하고 `uvicorn app.api.main:app`으로 실행한다.
   - 여러 프로세스(`--workers`)로 띄우면 프로세스마다 연결 풀(최대 5)이 생기므로, DB 최대 연결 수와 맞춘다.
 - **화면:**
+  - 개인 서버 API + Vercel 분리 배포는 `VITE_API_BASE_URL`에 공개 HTTPS API 주소를 지정하고 백엔드 `CORS_ALLOW_ORIGINS`에 화면 Origin을 등록한다. [README 배포 절](../README.md#배포-개인-서버-api--vercel-화면)을 따른다.
   - `npm run build` 결과를 리버스 프록시(nginx, Caddy 등)가 서빙하고, `/api`를 API로 넘긴다.
   - 같은 출처가 되어 CORS가 필요 없고, 압축과 타임아웃도 여기서 설정한다.
 - **DB:** compose를 그대로 쓰거나 관리형 DB를 쓴다. 관리형이면 PostGIS·pgvector 지원을 확인한다.

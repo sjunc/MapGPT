@@ -99,6 +99,10 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
 
 ### 2.1 API 사용
 
+분리 배포에서는 빌드 환경 변수 `VITE_API_BASE_URL`에 공개 HTTPS API 주소를 지정한다(`/api` 제외).
+`api.ts`의 `apiUrl`을 통해 분석 요청·기록 조회·원본 JSON 링크에 동일하게 적용한다. 비우면 개발용 `/api` 프록시를 쓴다.
+백엔드는 `CORS_ALLOW_ORIGINS`에 화면 Origin을 등록해야 하며, Vercel 환경 변수를 변경하면 재배포한다.
+
 | API | 화면에서 쓰는 곳 |
 |---|---|
 | `POST /api/analyses` | 분석 요청 ([api.ts](../src/api.ts)). 본문은 `{question, scope}`이고, `scope`는 헤더의 "분석 범위" 토글(서울·전국, 기본 서울, 이 브라우저에 기억)에서 온다 ([scope.ts](../src/scope.ts)) |

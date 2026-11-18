@@ -7,6 +7,7 @@ from typing import Annotated, Any
 
 import psycopg
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from psycopg_pool import ConnectionPool
 
 from app.api.schemas import AnalysisRequest, AnalysisResponse
@@ -54,6 +55,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             yield
 
     app = FastAPI(title="MapGPT 공간 분석 Agent", lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_allow_origins,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type"],
+    )
     app.state.settings = settings
 
     @app.post("/api/analyses", response_model=AnalysisResponse)

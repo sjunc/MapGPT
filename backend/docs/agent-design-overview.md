@@ -869,6 +869,10 @@ app/
 
 별도 상태 관리·UI 라이브러리 없이 React state와 CSS만 씁니다.
 
+개인 서버 API와 Vercel 화면을 분리 배포할 때는 `VITE_API_BASE_URL`을 API의 HTTPS 주소로 설정한다.
+백엔드는 `CORS_ALLOW_ORIGINS` JSON 배열로 등록한 화면 Origin의 GET·POST 요청을 허용한다.
+환경 변수를 비운 로컬 개발에서는 기존 Vite 프록시를 사용한다.
+
 ### 7.2 디렉터리 구조
 
 ```text
