@@ -1,7 +1,13 @@
 import type { AnalysisResponse, AnalysisScope, FinalResponse, ValidationIssue, WorkflowError } from "./types";
 
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/+$/, "");
+
+export function apiUrl(path: string): string {
+  return `${API_BASE_URL}${path}`;
+}
+
 export async function requestAnalysis(question: string, scope: AnalysisScope): Promise<AnalysisResponse> {
-  const response = await fetch("/api/analyses", {
+  const response = await fetch(apiUrl("/api/analyses"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question, scope }),
@@ -63,7 +69,7 @@ export const RUN_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-
 export async function getStoredAnalysis(runId: string, signal?: AbortSignal): Promise<StoredAnalysis> {
   if (!RUN_ID_PATTERN.test(runId)) throw new Error("잘못된 실행 ID입니다. UUID 형식을 확인해주세요.");
 
-  const response = await fetch(`/api/analyses/${encodeURIComponent(runId)}`, { signal });
+  const response = await fetch(apiUrl(`/api/analyses/${encodeURIComponent(runId)}`), { signal });
   if (!response.ok) {
     if (response.status === 404) throw new Error("해당 실행 기록이 서버에 없습니다(404).");
     const body = await response.json().catch(() => null);
