@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     ollama_model: str | None = None
     # thinking 모델의 추론 강도 (예: none이면 끔). 비우면 모델 기본값을 쓴다.
     ollama_reasoning_effort: str | None = None
+    # LLM·임베딩 호출 하나의 타임아웃(초)과 SDK 재시도 횟수. 로컬 thinking 모델은 타임아웃을 늘려야 할 수 있다.
+    llm_timeout_seconds: float = 60
+    llm_max_retries: int = 1
 
     seoul_open_api_key: SecretStr | None = None
     raw_data_dir: Path = PROJECT_ROOT / "data" / "raw"

@@ -25,9 +25,11 @@ class Embedder(Protocol):
 
 
 class OpenAIEmbedder:
-    def __init__(self, *, api_key: str, model: str, client: OpenAI | None = None):
+    def __init__(
+        self, *, api_key: str, model: str, timeout: float = 60, max_retries: int = 1, client: OpenAI | None = None
+    ):
         self.model = model
-        self._client = client or OpenAI(api_key=api_key)
+        self._client = client or OpenAI(api_key=api_key, timeout=timeout, max_retries=max_retries)
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         # text-embedding-3-small/large의 인코딩. 토큰 배열을 보내 한글 경계도 손실 없이 나눈다.

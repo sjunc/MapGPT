@@ -10,9 +10,11 @@ from app.llm.schema import to_llm_json_schema
 class OpenAIResponsesLLM:
     provider = "openai"
 
-    def __init__(self, *, api_key: str, model: str, client: OpenAI | None = None):
+    def __init__(
+        self, *, api_key: str, model: str, timeout: float = 60, max_retries: int = 1, client: OpenAI | None = None
+    ):
         self.model = model
-        self._client = client or OpenAI(api_key=api_key)
+        self._client = client or OpenAI(api_key=api_key, timeout=timeout, max_retries=max_retries)
 
     def generate(self, *, system: str, user: str, output_type: type[T]) -> T:
         try:

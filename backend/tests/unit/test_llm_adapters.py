@@ -153,6 +153,17 @@ def test_factory_switches_provider_by_settings():
     assert (ollama_llm.provider, ollama_llm.model) == ("ollama", "granite4.1:8b")
 
 
+def test_factory_sets_explicit_timeout_and_retries_instead_of_sdk_defaults():
+    limits = {"openai_api_key": "sk-test", "llm_timeout_seconds": 45, "llm_max_retries": 0}
+    clients = [
+        create_llm(Settings(llm_provider="openai", **limits)),
+        create_llm(Settings(llm_provider="ollama", ollama_model="granite4.1:8b", **limits)),
+        create_embedder(Settings(**limits)),
+    ]
+
+    assert [(c._client.timeout, c._client.max_retries) for c in clients] == [(45, 0)] * 3
+
+
 @pytest.mark.parametrize(
     ("settings", "message"),
     [
