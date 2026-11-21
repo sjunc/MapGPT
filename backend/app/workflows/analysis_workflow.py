@@ -35,6 +35,7 @@ from app.domain.enums import (
     RunStatus,
     SemanticType,
     Severity,
+    SortOrder,
     SpatialLevel,
     WorkflowStep,
 )
@@ -57,7 +58,7 @@ from app.gis.tools import GisToolError, bivariate_spec, create_map_layer, hex_bi
 from app.llm.base import LLMError, LLMOutputError, StructuredLLM
 from app.llm.embeddings import Embedder, EmbeddingError
 from app.repositories.run_repository import save_run
-from app.validation.plan_repair import repair_plan
+from app.validation.plan_repair import question_rank_order, repair_plan
 from app.validation.plan_validator import question_issues, validate_plan
 from app.validation.result_validator import validate_result
 from app.workflows.response import compose_response, explanation_facts
@@ -349,7 +350,7 @@ def _build_analysis_plan(state: AgentState, ctx: _RunContext, update: Update) ->
 
 def _validate_plan(state: AgentState, ctx: _RunContext, update: Update) -> None:
     # 반복되는 기계적인 실수는 다시 만들게 하지 않고 고친다. 고친 계획도 같은 검증을 통과해야 실행된다.
-    plan, repairs = repair_plan(state.analysis_plan, _candidates(state), state.resolved_region)
+    plan, repairs = repair_plan(state.analysis_plan, _candidates(state), state.resolved_region, state.question)
     original = state.analysis_plan if repairs else None  # 실행 기록에 LLM이 낸 원래 계획도 남긴다
     report = validate_plan(plan, _candidates(state), state.selected_datasets, state.resolved_region)
     report.issues.extend(_consistency_issues(state.interpreted_query, plan))
@@ -493,7 +494,8 @@ def _fallback_regional_summary_plan(state: AgentState, datasets: dict[str, Datas
                 {
                     "type": "rank",
                     "input": metric,
-                    "order": "desc",
+                    # 많은·적은 쪽을 함께 물으면 정책 기본값(desc)을 쓴다.
+                    "order": question_rank_order(state.question) or SortOrder.DESC,
                     "output": f"{metric}_rank",
                     "label": f"{label} 순위",
                 },

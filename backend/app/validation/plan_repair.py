@@ -5,10 +5,19 @@ LLM은 같은 실수(위치 없는 표를 공간 집계, 같은 Dataset에 필�
 통과해야 실행된다. 고친 내용은 PLAN_REPAIRED 경고로 계획 시도 기록에 남긴다.
 """
 
+import re
 from collections.abc import Mapping
 
 from app.domain.catalog import DatasetMetadata, JoinKey, RegionRef
-from app.domain.enums import AggregationFunction, FilterOperator, LogicalOperator, SemanticType, Severity
+from app.domain.enums import (
+    AggregationFunction,
+    AnalysisIntent,
+    FilterOperator,
+    LogicalOperator,
+    SemanticType,
+    Severity,
+    SortOrder,
+)
 from app.domain.filters import FilterCondition, FilterExpression, FilterGroup, iter_conditions
 from app.domain.operations import (
     AggregateByAreaOperation,
@@ -22,9 +31,35 @@ from app.domain.results import ValidationIssue
 
 _REGION_FIELDS = {SemanticType.SIDO_NAME, SemanticType.SIDO_CODE, SemanticType.SIGUNGU_NAME, SemanticType.SIGUNGU_CODE}
 
+# 순위 방향을 정하는 말. 공백을 지운 질문에서 찾는다. 부정·강조 표현은 먼저 뜻을 정하고 지운다
+# ('적지 않은'은 많은 쪽, '많이 부족한'·'높지 않은'은 적은 쪽).
+_FLIPPED_TO_HIGH = re.compile(r"(적|낮|작)지(는|도)?않|부족하지(는|도)?않")
+_FLIPPED_TO_LOW = re.compile(r"(많|높|크|넓)지(는|도)?않|많이(부족|모자)")
+_HIGH_WORDS = re.compile(r"많|높|큰|크[게고다]|최대|최고|상위|1위|내림차순|밀집|몰려")
+# '면적', '누적', '목적' 같은 낱말 속 '적'은 방향이 아니다.
+_LOW_WORDS = re.compile(
+    r"(?<![면누목지실체합효성정역동량])적[은게을고다]|낮|작[은게을고다]|최소|최저|하위|꼴찌|부족|모자|덜|오름차순"
+)
+
+
+def question_rank_order(question: str) -> SortOrder | None:
+    """regional_summary 질문이 묻는 순위 방향. 많은·적은 쪽을 함께 물으면 None.
+
+    방향을 말하지 않으면 desc다. 프롬프트 규칙 8과 regional_summary 정책(rank_order)이 그렇게 정한다.
+    """
+    text = "".join(question.split())
+    high = bool(_FLIPPED_TO_HIGH.search(text))
+    low = bool(_FLIPPED_TO_LOW.search(text))
+    text = _FLIPPED_TO_LOW.sub(" ", _FLIPPED_TO_HIGH.sub(" ", text))
+    high = high or bool(_HIGH_WORDS.search(text))
+    low = low or bool(_LOW_WORDS.search(text))
+    if high and low:
+        return None
+    return SortOrder.ASC if low else SortOrder.DESC
+
 
 def repair_plan(
-    plan: AnalysisPlan, datasets: Mapping[str, DatasetMetadata], region: RegionRef | None
+    plan: AnalysisPlan, datasets: Mapping[str, DatasetMetadata], region: RegionRef | None, question: str = ""
 ) -> tuple[AnalysisPlan, list[ValidationIssue]]:
     """고친 계획과, 고친 내용마다 하나씩 만든 PLAN_REPAIRED 경고를 돌려준다. 고칠 것이 없으면 계획을 그대로 돌려준다."""
     notes: list[str] = []
@@ -35,6 +70,8 @@ def repair_plan(
         filters = _drop_region_filters(filters, boundary, region, notes)
     operations = [_aggregate_without_geometry(op, plan, datasets, boundary, notes) for op in plan.operations]
     output = _metric_not_rank(plan.output, operations, notes)
+    if plan.intent == AnalysisIntent.REGIONAL_SUMMARY and question:
+        operations = _rank_order_of_question(operations, output.metric, question, notes)
     if not notes:
         return plan, []
     repaired = AnalysisPlan.model_validate(
@@ -184,3 +221,24 @@ def _metric_not_rank(output: OutputSpec, operations: list[Operation], notes: lis
         return output
     notes.append(f"지도 지표로 지정한 순위 '{output.metric}' 대신 순위를 매긴 지표 '{rank.input}'를 씀")
     return output.model_copy(update={"metric": rank.input})
+
+
+def _rank_order_of_question(
+    operations: list[Operation], metric: str, question: str, notes: list[str]
+) -> list[Operation]:
+    """지도 지표의 순위 방향이 질문과 반대이면 바꾼다. 많은·적은 쪽을 함께 묻는 질문은 고치지 않는다.
+
+    gpt-4o-mini가 '가장 많은 곳'이나 방향을 말하지 않은 '자치구별 어린이집 수'를 asc로 계획해, 가장 적은 곳을
+    1위로 보여 주고 설명이 그곳을 '가장 많다'고 말했다.
+    """
+    wanted = question_rank_order(question)
+    if wanted is None:
+        return operations
+    repaired = []
+    for op in operations:
+        if isinstance(op, RankOperation) and op.input == metric and op.order != wanted:
+            side = "많은·높은" if wanted == SortOrder.DESC else "적은·낮은"
+            notes.append(f"질문이 {side} 쪽을 물어 '{op.output}' 순위를 {op.order}에서 {wanted}로 바꿈")
+            op = op.model_copy(update={"order": wanted})
+        repaired.append(op)
+    return repaired

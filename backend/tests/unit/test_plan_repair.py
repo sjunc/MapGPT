@@ -1,8 +1,10 @@
+import pytest
+
 from app.catalog.definitions import SEOUL, TRUSTED_DATASETS
 from app.domain.catalog import RegionRef
 from app.domain.enums import SpatialLevel
 from app.domain.plan import AnalysisPlan
-from app.validation.plan_repair import repair_plan
+from app.validation.plan_repair import question_rank_order, repair_plan
 from app.validation.plan_validator import validate_plan
 from tests.support import load_plan_dict
 
@@ -170,3 +172,113 @@ def test_lower_and_upper_bound_on_one_column_are_merged_into_a_range():
     assert [(c.operator, c.value) for c in merged.where.conditions] == [("gte", 0), ("lte", 5)]
     assert report.ok, report.errors
     assert notes == ["'population_by_age'에 나뉘어 있던 필터 2개를 하나(AND)로 합침"]
+
+
+def _daycare_count_plan(order: str) -> dict:
+    return {
+        "intent": "regional_summary",
+        "region": {"name": "서울특별시", "level": "sido"},
+        "analysis_unit": "emd",
+        "datasets": ["daycare_facility", "emd_boundary"],
+        "operations": [
+            {
+                "type": "aggregate_by_area",
+                "input": "daycare_facility",
+                "boundary": "emd_boundary",
+                "aggregation": "count",
+                "output": "daycare_count",
+                "label": "어린이집 수",
+            },
+            {"type": "rank", "input": "daycare_count", "order": order, "output": "daycare_rank", "label": "순위"},
+        ],
+        "output": {"map_type": "choropleth", "metric": "daycare_count", "ranking": {"enabled": True, "limit": 10}},
+    }
+
+
+HIGH_QUESTIONS = [
+    "서울에서 어린이집이 가장 많은 행정동은?",
+    "65세 이상 인구 비율이 높은 동 10곳",
+    "어린이집 수 상위 5개 자치구",
+    "어린이집이 1위인 곳",
+    "어린이집이 적지 않은 동을 보여줘",  # 부정: 많은 쪽
+    "어린이집이 밀집한 곳은?",
+    # gpt-4o-mini가 asc로 계획한 실제 질문들. 방향을 말하지 않으면 desc다 (프롬프트 규칙 8).
+    "서울 자치구별 어린이집 수",
+    "서울 어린이집 위치를 보여줘",
+    "면적이 넓은 행정동 순위",  # '면적'의 '적'은 방향이 아니다
+]
+LOW_QUESTIONS = [
+    "어린이집이 가장 적은 행정동은?",
+    "인구가 낮은 순으로 보여줘",
+    "어린이집 수 하위 10곳",
+    "어린이집이 많이 부족한 동",  # 강조: '많이'가 있어도 적은 쪽
+    "어린이집이 많지 않은 자치구",  # 부정: 적은 쪽
+    "공공와이파이가 최소인 구",
+]
+MIXED_QUESTIONS = [
+    "어린이집이 가장 많은 곳과 가장 적은 곳",
+    "인구는 많은데 어린이집이 적은 동",
+]
+
+
+@pytest.mark.parametrize("question", HIGH_QUESTIONS)
+def test_questions_asking_for_the_high_side_rank_descending(question):
+    assert question_rank_order(question) == "desc"
+
+
+@pytest.mark.parametrize("question", LOW_QUESTIONS)
+def test_questions_asking_for_the_low_side_rank_ascending(question):
+    assert question_rank_order(question) == "asc"
+
+
+@pytest.mark.parametrize("question", MIXED_QUESTIONS)
+def test_questions_asking_for_both_sides_have_no_single_direction(question):
+    assert question_rank_order(question) is None
+
+
+@pytest.mark.parametrize(
+    ("question", "planned", "expected", "note"),
+    [
+        (
+            "서울에서 어린이집이 가장 많은 행정동은?",
+            "asc",
+            "desc",
+            "질문이 많은·높은 쪽을 물어 'daycare_rank' 순위를 asc에서 desc로 바꿈",
+        ),
+        (
+            "어린이집이 가장 적은 행정동은?",
+            "desc",
+            "asc",
+            "질문이 적은·낮은 쪽을 물어 'daycare_rank' 순위를 desc에서 asc로 바꿈",
+        ),
+    ],
+)
+def test_regional_summary_rank_against_the_question_is_flipped(question, planned, expected, note):
+    original = AnalysisPlan.model_validate(_daycare_count_plan(planned))
+
+    plan, issues = repair_plan(original, TRUSTED_DATASETS, SEOUL, question)
+
+    assert plan.operations[1].order == expected
+    assert [issue.message for issue in issues] == [note]
+    assert original.operations[1].order == planned  # 원래 계획은 그대로 남는다 (original_plan으로 기록)
+    assert validate_plan(plan, TRUSTED_DATASETS, SELECTED, SEOUL).ok
+
+
+@pytest.mark.parametrize(
+    ("question", "order"),
+    [
+        ("어린이집이 가장 많은 곳과 가장 적은 곳", "asc"),  # 방향이 섞이면 고치지 않는다
+        ("서울에서 어린이집이 가장 많은 행정동은?", "desc"),  # 이미 맞다
+    ],
+)
+def test_regional_summary_rank_is_left_alone_when_unclear_or_already_right(question, order):
+    plan = AnalysisPlan.model_validate(_daycare_count_plan(order))
+
+    assert repair_plan(plan, TRUSTED_DATASETS, SEOUL, question) == (plan, [])
+
+
+def test_rank_direction_of_other_intents_is_left_to_their_policy():
+    # 수요 대비 공급 부족은 '가장 많은 곳'을 물어도 부족한 쪽(asc) 정책이 정하고, Plan Validator가 검사한다.
+    plan = AnalysisPlan.model_validate(load_plan_dict())
+
+    assert repair_plan(plan, TRUSTED_DATASETS, SEOUL, "어린이집이 가장 많이 필요한 곳") == (plan, [])
