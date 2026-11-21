@@ -1,0 +1,31 @@
+/* 결과 내려받기·공유 (MapLibre 화면과 카카오 화면이 함께 쓴다). 카카오 화면은 .kshow-root가 라이트 값을 넣는다. */
+.result-share {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 11px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-1);
+}
+.result-share-title { color: var(--text-secondary); font-size: 12px; font-weight: 600; }
+.result-share-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.result-share-actions a,
+.result-share-actions button {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--page);
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+.result-share-actions a:hover,
+.result-share-actions button:hover { background: var(--hover-row); }
+.result-share-actions a:focus-visible,
+.result-share-actions button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

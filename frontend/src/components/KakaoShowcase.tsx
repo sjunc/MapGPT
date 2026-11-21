@@ -14,6 +14,7 @@ import {
   type ShowcaseView,
 } from "./KakaoShowcaseMap";
 import { RecentRuns } from "./RecentRuns";
+import { ResultShare } from "./ResultShare";
 import "../p7.css"; // RecentRuns·ExecutionTrace가 쓰는 기존 화면 스타일
 import "./kakao-showcase.css";
 
@@ -201,6 +202,8 @@ export function KakaoShowcase() {
   const [zoomRequest, setZoomRequest] = useState<{ delta: 1 | -1; sequence: number } | null>(null);
   // "전체 순위 보기"를 펼친 결과. 다른 결과로 바뀌면 다시 상위 순위만 보인다.
   const [allRanksRunId, setAllRanksRunId] = useState<string | null>(null);
+  // 링크를 복사한 결과. 다른 결과로 바뀌면 다시 "링크 복사"로 보인다.
+  const [copiedRunId, setCopiedRunId] = useState<string | null>(null);
   // 늦게 도착한 이전 요청의 응답이 지금 주소의 화면을 덮어쓰지 않도록 구분한다.
   const requestSequence = useRef(0);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -408,6 +411,18 @@ export function KakaoShowcase() {
     if (!demoResult || loading) return;
     if (!demo) pushRoute({ demo: "1", map: "kakao" });
     restoreFromUrl();
+  }
+
+  async function copyRunLink(runId: string) {
+    const url = new URL(window.location.href);
+    url.search = new URLSearchParams({ map: "kakao", run: runId }).toString();
+    try {
+      await navigator.clipboard.writeText(url.toString());
+      setCopiedRunId(runId);
+    } catch {
+      setCopiedRunId(null);
+      setServerMessage("링크를 복사하지 못했어. 주소창의 ?map=kakao&run=... 링크를 직접 복사해 줘.");
+    }
   }
 
   function zoomMap(delta: 1 | -1) {
@@ -633,6 +648,14 @@ export function KakaoShowcase() {
                     : "아래 입력창에 질문을 입력하면 서버가 분석한 결과를 지도와 순위로 보여 줘."}
             </p>
           </section>
+
+          {!demo && result && (
+            <ResultShare
+              runId={result.run_id}
+              onCopyLink={() => void copyRunLink(result.run_id)}
+              linkCopied={copiedRunId === result.run_id}
+            />
+          )}
 
           {result && (
             <section className="kshow-panel">

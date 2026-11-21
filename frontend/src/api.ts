@@ -6,6 +6,13 @@ export function apiUrl(path: string): string {
   return `${API_BASE_URL}${path}`;
 }
 
+export type ExportFormat = "csv" | "geojson";
+
+/** 저장된 분석 결과 파일 주소 (GET /api/analyses/{run_id}/export). 서버가 attachment로 보내 링크만으로 내려받는다. */
+export function exportUrl(runId: string, format: ExportFormat): string {
+  return apiUrl(`/api/analyses/${encodeURIComponent(runId)}/export?format=${format}`);
+}
+
 export async function requestAnalysis(question: string, scope: AnalysisScope): Promise<AnalysisResponse> {
   const response = await fetch(apiUrl("/api/analyses"), {
     method: "POST",
