@@ -109,3 +109,6 @@ CREATE TABLE IF NOT EXISTS analysis.result (
     response   jsonb NOT NULL,
     created_at timestamptz NOT NULL
 );
+-- 실행 기록 조회(GET /api/analyses/{run_id})는 결과를 run_id로 찾고, 하루 한도·통계는 started_at 범위로 센다.
+CREATE INDEX IF NOT EXISTS result_run_id_idx ON analysis.result (run_id);
+CREATE INDEX IF NOT EXISTS run_started_at_idx ON analysis.run (started_at);
