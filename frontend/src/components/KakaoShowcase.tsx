@@ -533,22 +533,25 @@ export function KakaoShowcase() {
 
         {result && (
           <>
-            <nav className="kshow-view-switch" aria-label="지도 시각화 유형">
-              {choices.map((item) => (
-                <button
-                  type="button" key={item.id}
-                  className={actualView === item.id ? "kshow-view active" : "kshow-view"}
-                  onClick={() => { setView(item.id); setHoveredKey(null); }}
-                  aria-pressed={actualView === item.id}
-                  title={item.explanation}
-                >
-                  <span aria-hidden="true">{item.icon}</span>{item.label}
-                </button>
-              ))}
-            </nav>
-            <div className="kshow-map-actions">
-              <button type="button" onClick={() => setResetSequence((n) => n + 1)}>↺ 전체 보기</button>
-              <button type="button" onClick={() => { setSelectedKey(null); setHoveredKey(null); }}>선택 해제</button>
+            {/* 보기 전환이 여러 줄로 늘어나도 지도 버튼이 그 아래에 오도록 한 열로 쌓는다. */}
+            <div className="kshow-map-controls">
+              <nav className="kshow-view-switch" aria-label="지도 시각화 유형">
+                {choices.map((item) => (
+                  <button
+                    type="button" key={item.id}
+                    className={actualView === item.id ? "kshow-view active" : "kshow-view"}
+                    onClick={() => { setView(item.id); setHoveredKey(null); }}
+                    aria-pressed={actualView === item.id}
+                    title={item.explanation}
+                  >
+                    <span aria-hidden="true">{item.icon}</span>{item.label}
+                  </button>
+                ))}
+              </nav>
+              <div className="kshow-map-actions">
+                <button type="button" onClick={() => setResetSequence((n) => n + 1)}>↺ 전체 보기</button>
+                <button type="button" onClick={() => { setSelectedKey(null); setHoveredKey(null); }}>선택 해제</button>
+              </div>
             </div>
             <MapLegend view={actualView} result={result} demo={demo} />
             <div className="kshow-corner-note">

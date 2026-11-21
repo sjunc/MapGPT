@@ -60,11 +60,16 @@
   border-radius: 999px; color: #1565ad; background: #f3fbff; font-size: 10px; font-weight: 800;
   letter-spacing: .07em; white-space: nowrap;
 }
+/* 보기 전환과 지도 버튼을 한 열로 쌓아, 보기 전환이 여러 줄이 되어도 지도 버튼을 가리지 않게 한다. */
+.kshow-map-controls {
+  position: absolute; top: 91px; left: 24px; right: 24px; z-index: 5;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+  pointer-events: none;
+}
 .kshow-view-switch {
-  position: absolute; top: 91px; left: 24px; z-index: 5;
-  display: flex; flex-wrap: wrap; gap: 6px; width: max-content; max-width: calc(100% - 48px);
+  display: flex; flex-wrap: wrap; gap: 6px; width: max-content; max-width: 100%;
   padding: 6px; background: rgba(255,255,255,.97); border: 1px solid #dce5ef;
-  border-radius: 14px; box-shadow: 0 9px 28px rgba(15,23,42,.09);
+  border-radius: 14px; box-shadow: 0 9px 28px rgba(15,23,42,.09); pointer-events: auto;
 }
 .kshow-view-switch .kshow-view {
   padding: 9px 12px; border: 1px solid transparent; border-radius: 9px;
@@ -78,7 +83,7 @@
   outline: 3px solid #f59e0b; outline-offset: 2px;
 }
 .kshow-map-actions {
-  position: absolute; right: 24px; top: 151px; z-index: 4; display: flex; gap: 6px;
+  align-self: flex-end; display: flex; gap: 6px; pointer-events: auto;
 }
 .kshow-map-actions button {
   background: rgba(255,255,255,.95); border: 1px solid #dbe4ec; padding: 9px 13px;
@@ -196,8 +201,8 @@
   .kshow-stage { height: 60dvh; min-height: 450px; flex-shrink: 0; }
   .kshow-aside { overflow: visible; }
   .kshow-topbar { top: 12px; left: 12px; right: 12px; }
-  .kshow-view-switch { top: 75px; left: 12px; max-width: calc(100% - 24px); }
-  .kshow-map-actions { top: 148px; left: 12px; right: auto; }
+  .kshow-map-controls { top: 75px; left: 12px; right: 12px; }
+  .kshow-map-actions { align-self: flex-start; }
   .kshow-legend { left: 12px; bottom: 48px; }
   .kshow-corner-note { bottom: 15px; left: 12px; }
   .kshow-aside-header { padding: 26px 20px; }
@@ -207,9 +212,10 @@
   .kshow-brand strong { font-size: 13px; }
   .kshow-brand small { font-size: 8px; }
   .kshow-demo-tag { font-size: 8px; padding: 6px; }
-  .kshow-view-switch { width: calc(100% - 24px); display: grid; grid-template-columns: repeat(2, 1fr); }
+  .kshow-view-switch { width: 100%; display: grid; grid-template-columns: repeat(2, 1fr); }
+  /* 보기가 5개 이상이면 세 칸으로 놓아 두 줄로 줄인다 (지도를 덜 가린다). */
+  .kshow-view-switch:has(> :nth-child(5)) { grid-template-columns: repeat(3, 1fr); }
   .kshow-view-switch .kshow-view { justify-content: center; }
-  .kshow-map-actions { top: 177px; }
   .kshow-legend { padding: 11px; }
   .kshow-legend-head { margin-bottom: 7px; }
   .kshow-legend small { font-size: 9px; }
