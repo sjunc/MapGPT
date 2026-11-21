@@ -1,7 +1,7 @@
 import type { WorkflowError } from "../types";
 import { apiUrl } from "../api";
 
-const STEP_NAMES: Record<string, string> = {
+export const STEP_NAMES: Record<string, string> = {
   interpret_query: "질문 해석",
   select_datasets: "데이터 선택",
   acquire_data: "데이터 수집",

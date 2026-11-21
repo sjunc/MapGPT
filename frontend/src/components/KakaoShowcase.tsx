@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
-import { apiUrl, getStoredAnalysis, requestAnalysis, type StoredAnalysis } from "../api";
+import { apiUrl, followAnalysisJob, getStoredAnalysis, runAnalysisJob, type JobProgress, type StoredAnalysis } from "../api";
+import { JobProgressPanel } from "./JobProgressPanel";
 import { loadDemoAnalysis } from "../demo";
 import { addRecentRun, readRecentRuns, saveRecentRuns, type RecentRun } from "../runHistory";
 import { readScope, saveScope, SCOPES, SCOPE_HINTS, SCOPE_LABELS } from "../scope";
@@ -203,6 +204,8 @@ export function KakaoShowcase() {
   const [allRanksRunId, setAllRanksRunId] = useState<string | null>(null);
   // 늦게 도착한 이전 요청의 응답이 지금 주소의 화면을 덮어쓰지 않도록 구분한다.
   const requestSequence = useRef(0);
+  const [progress, setProgress] = useState<JobProgress | null>(null);
+  const jobAbort = useRef<AbortController | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const chatRef = useRef<HTMLFormElement>(null);
   const demo = route.runId === null && route.demo;
@@ -426,20 +429,31 @@ export function KakaoShowcase() {
     const sequence = ++requestSequence.current;
     setLoading(true);
     clearRunFeedback();
+    setProgress(null);
+    const controller = new AbortController();
+    jobAbort.current = controller;
     try {
-      const payload = await requestAnalysis(text, scope);
+      const payload = await runAnalysisJob(text, scope, {
+        signal: controller.signal,
+        // 시작하자마자 주소와 최근 실행에 남겨, 새로고침해도 진행 중인 실행을 다시 열 수 있게 한다.
+        onStarted: (runId) => {
+          if (requestSequence.current !== sequence) return;
+          showRunInUrl(runId);
+          rememberRun(runId, text);
+        },
+        onProgress: (value) => {
+          if (requestSequence.current === sequence) setProgress(value);
+        },
+      });
       if (requestSequence.current !== sequence) return;
       if (payload.status === "succeeded") {
         if (!payload.result) throw new Error("분석 완료 응답에 결과 데이터가 없습니다.");
-        showRunInUrl(payload.run_id);
         rememberRun(payload.run_id, payload.result.question);
         setNewResult(payload.result);
         setServerMessage(`분석 완료 · 실행 ID: ${payload.run_id}`);
         void fetchTrace(payload.run_id, sequence);
       } else if (payload.status === "failed") {
         // 실패해도 직전 성공 결과는 지도에 남긴다 (화면에는 "직전 결과"로 표시).
-        showRunInUrl(payload.run_id);
-        rememberRun(payload.run_id, text);
         showFailure(payload.run_id, payload.errors);
         void fetchTrace(payload.run_id, sequence);
       } else {
@@ -450,7 +464,11 @@ export function KakaoShowcase() {
       if (requestSequence.current !== sequence) return;
       setApiError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      if (requestSequence.current === sequence) setLoading(false);
+      if (requestSequence.current === sequence) {
+        setLoading(false);
+        setProgress(null);
+        jobAbort.current = null;
+      }
     }
   }
 
@@ -460,6 +478,15 @@ export function KakaoShowcase() {
     setLoading(true);
     setApiError(null);
     try {
+      const controller = new AbortController();
+      jobAbort.current = controller;
+      // 진행 중이면 끝날 때까지 단계 진행을 따라간다.
+      await followAnalysisJob(runningId, {
+        signal: controller.signal,
+        onProgress: (value) => {
+          if (requestSequence.current === sequence) setProgress(value);
+        },
+      });
       const payload = await getStoredAnalysis(runningId);
       if (requestSequence.current !== sequence) return;
       setStoredRun(payload);
@@ -481,7 +508,11 @@ export function KakaoShowcase() {
       if (requestSequence.current !== sequence) return;
       setApiError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      if (requestSequence.current === sequence) setLoading(false);
+      if (requestSequence.current === sequence) {
+        setLoading(false);
+        setProgress(null);
+        jobAbort.current = null;
+      }
     }
   }
 
@@ -765,10 +796,13 @@ export function KakaoShowcase() {
             {loading ? "분석 중" : "분석 요청 ↗"}
           </button>
         </div>
+        {loading && progress && (
+          <JobProgressPanel progress={progress} onCancel={() => jobAbort.current?.abort()} className="kshow-chat-feedback kshow-job-progress" />
+        )}
         {(apiError || serverMessage || runningId) && (
           <div className={apiError || failedRun ? "kshow-chat-feedback error" : "kshow-chat-feedback"} role={apiError ? "alert" : "status"}>
             <span>{apiError ?? serverMessage}</span>
-            {runningId && <button type="button" onClick={() => void refreshRunning()} disabled={loading}>실행 상태 확인</button>}
+            {runningId && <button type="button" onClick={() => void refreshRunning()} disabled={loading}>진행 따라가기</button>}
           </div>
         )}
       </form>

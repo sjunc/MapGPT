@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { apiUrl, getStoredAnalysis, requestAnalysis } from "./api";
-import type { StoredAnalysis } from "./api";
+import { apiUrl, followAnalysisJob, getStoredAnalysis, runAnalysisJob } from "./api";
+import type { JobProgress, StoredAnalysis } from "./api";
+import { JobProgressPanel } from "./components/JobProgressPanel";
 import { RecentRuns } from "./components/RecentRuns";
 import { ExecutionTrace } from "./components/ExecutionTrace";
 import { addRecentRun, readRecentRuns, saveRecentRuns } from "./runHistory";
@@ -62,6 +63,8 @@ export function App() {
   const [viewChoice, setViewChoice] = useState<{ runId: string; view: MapView } | null>(null);
   // 늦게 도착한 이전 요청 응답이 새 지도를 덮어쓰지 않도록 구분한다.
   const requestSequence = useRef(0);
+  const [progress, setProgress] = useState<JobProgress | null>(null);
+  const jobAbort = useRef<AbortController | null>(null);
   const elapsed = useElapsedSeconds(loading);
   const result = response?.result ?? null;
   // 결과마다 백엔드가 지표 성격으로 정한 기본 보기로 시작하고, 사용자가 바꾼 보기는 그 결과에만 쓴다.
@@ -154,13 +157,30 @@ export function App() {
       } else if (record.status === "failed") {
         setFailedRun({ runId: record.run_id, errors: record.provenance?.errors ?? [] });
       } else {
-        setRunningRunId(record.run_id);
+        // 진행 중인 실행은 끝날 때까지 단계 진행을 따라간 뒤 결과를 보인다.
+        const controller = new AbortController();
+        jobAbort.current = controller;
+        const next = await followAnalysisJob(record.run_id, {
+          signal: controller.signal,
+          onProgress: (value) => {
+            if (requestSequence.current === sequence) setProgress(value);
+          },
+        });
+        if (requestSequence.current !== sequence) return;
+        if (next.status === "succeeded" && next.result) setResponse(next);
+        else if (next.status === "failed") setFailedRun({ runId: next.run_id, errors: next.errors });
+        else setRunningRunId(record.run_id);
+        void fetchTrace(record.run_id, sequence);
       }
     } catch (error) {
       if (requestSequence.current !== sequence) return;
       setRequestError(error instanceof Error ? error.message : String(error));
     } finally {
-      if (requestSequence.current === sequence) setLoading(false);
+      if (requestSequence.current === sequence) {
+        setLoading(false);
+        setProgress(null);
+        jobAbort.current = null;
+      }
     }
   }
 
@@ -238,10 +258,26 @@ export function App() {
     setTraceError(null);
     setTraceLoading(false);
     setLinkCopied(false);
+    setProgress(null);
     const sequence = ++requestSequence.current;
+    const controller = new AbortController();
+    jobAbort.current = controller;
 
     try {
-      const next = DEMO_MODE ? await loadDemoAnalysis() : await requestAnalysis(text, scope);
+      const next = DEMO_MODE
+        ? await loadDemoAnalysis()
+        : await runAnalysisJob(text, scope, {
+            signal: controller.signal,
+            // 시작하자마자 주소와 최근 실행에 남겨, 새로고침해도 진행 중인 실행을 다시 따라갈 수 있게 한다.
+            onStarted: (runId) => {
+              if (requestSequence.current !== sequence) return;
+              updateRunUrl(runId);
+              rememberRun(runId, text);
+            },
+            onProgress: (value) => {
+              if (requestSequence.current === sequence) setProgress(value);
+            },
+          });
       if (requestSequence.current !== sequence) return;
 
       if (next.status === "succeeded") {
@@ -251,20 +287,14 @@ export function App() {
         setSelectedKey(null);
         setFocusRequest(null);
         if (!DEMO_MODE) {
-          updateRunUrl(next.run_id);
           rememberRun(next.run_id, next.result.question);
           void fetchTrace(next.run_id, sequence);
         }
       } else if (next.status === "failed") {
         // 실패해도 직전 성공 결과는 지도에 남긴다.
         setFailedRun({ runId: next.run_id, errors: next.errors });
-        if (!DEMO_MODE) {
-          updateRunUrl(next.run_id);
-          rememberRun(next.run_id, text);
-          void fetchTrace(next.run_id, sequence);
-        }
+        if (!DEMO_MODE) void fetchTrace(next.run_id, sequence);
       } else {
-        // 현재 POST/GET 방식에서는 실제 단계별 진행 정보와 자동 폴링이 없다.
         setRunningRunId(next.run_id);
       }
     } catch (error) {
@@ -272,8 +302,16 @@ export function App() {
         setRequestError(error instanceof Error ? error.message : String(error));
       }
     } finally {
-      if (requestSequence.current === sequence) setLoading(false);
+      if (requestSequence.current === sequence) {
+        setLoading(false);
+        setProgress(null);
+        jobAbort.current = null;
+      }
     }
+  }
+
+  function cancelAnalysis() {
+    jobAbort.current?.abort();
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -466,7 +504,7 @@ export function App() {
                 onClear={() => setRecentRuns([])}
               />
             )}
-            {loading && (
+            {loading && (DEMO_MODE || !progress) && (
               <section className="card progress p3-feedback" role="status" aria-live="polite">
                 <div className="spinner" aria-hidden="true" />
                 <div>
@@ -474,6 +512,9 @@ export function App() {
                   <p className="muted">서버의 분석 결과를 기다리고 있습니다. 처리 시간은 질문과 모델에 따라 달라집니다.</p>
                 </div>
               </section>
+            )}
+            {loading && !DEMO_MODE && progress && (
+              <JobProgressPanel progress={progress} elapsed={elapsed} onCancel={cancelAnalysis} />
             )}
 
             {requestError && (

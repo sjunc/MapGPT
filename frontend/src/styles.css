@@ -481,3 +481,15 @@ table.ranking { width: 100%; border-collapse: collapse; font-size: 12.5px; }
   height: 100%;
   object-fit: contain;
 }
+/* 백그라운드 분석 작업의 단계 진행 (JobProgressPanel) */
+.job-progress { display: block; }
+.job-progress-head { display: flex; gap: 10px; align-items: center; }
+.job-progress-head strong { flex: 1; }
+.job-cancel { border: 1px solid var(--border, #c9ced6); background: transparent; color: inherit; border-radius: 8px; padding: 4px 12px; cursor: pointer; font: inherit; }
+.job-cancel:disabled { opacity: 0.6; cursor: default; }
+.job-steps { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 4px; font-size: 0.9rem; }
+.job-steps li { display: flex; gap: 8px; align-items: baseline; }
+.job-steps li.done > span:first-child { color: #2f7d4f; }
+.job-steps li.failed > span:first-child { color: #c0392b; }
+.job-steps li.active { font-weight: 600; }
+.job-step-time { margin-left: auto; opacity: 0.65; font-variant-numeric: tabular-nums; }
