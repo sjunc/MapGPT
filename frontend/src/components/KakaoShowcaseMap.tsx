@@ -9,7 +9,8 @@ export type ShowcaseView = "choropleth" | "bubble" | "point" | "bivariate";
 export type ShowcaseFeature = Feature<MultiPolygon, UnitProperties>;
 
 interface Props {
-  result: FinalResponse;
+  /** 없으면 결과 없이 배경 지도만 보인다 */
+  result: FinalResponse | null;
   demo: boolean;
   view: ShowcaseView;
   hoveredKey: string | null;
@@ -161,7 +162,7 @@ export function KakaoShowcaseMap({
 
   // 보기 변경 시 지도 인스턴스는 유지하고 기존 오버레이만 교체한다.
   useEffect(() => {
-    if (!instance) return;
+    if (!instance || !result) return;
     const { maps, map } = instance;
     const features = result.map_layer.geojson.features as ShowcaseFeature[];
     const shapes: kakao.maps.Polygon[] = [];
@@ -315,7 +316,7 @@ export function KakaoShowcaseMap({
 
   // 순위표에서 선택한 항목으로 지도를 이동한다.
   useEffect(() => {
-    if (!instance || !focusRequest) return;
+    if (!instance || !focusRequest || !result) return;
     const feature = result.map_layer.geojson.features.find(
       (item) => item.properties.unit_key === focusRequest.key,
     ) as ShowcaseFeature | undefined;
@@ -325,12 +326,12 @@ export function KakaoShowcaseMap({
     instance.map.setLevel(6);
   }, [instance, result, focusRequest]);
 
-  // 새 분석 결과가 들어오거나 전체 보기 버튼을 누르면 결과 영역 전체가 보이도록 이동한다.
+  // 새 분석 결과가 들어오거나 전체 보기 버튼을 누르면 결과 영역 전체가 보이도록 이동한다. 결과가 없으면 기본 중심으로.
   useEffect(() => {
     if (!instance) return;
     const bounds = new instance.maps.LatLngBounds();
     let count = 0;
-    for (const feature of result.map_layer.geojson.features) {
+    for (const feature of result?.map_layer.geojson.features ?? []) {
       for (const polygon of feature.geometry.coordinates) {
         for (const ring of polygon) {
           for (const position of ring) {

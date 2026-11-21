@@ -12,6 +12,20 @@
   color: var(--kshow-ink);
   background: #f3f6fa;
 }
+/* 함께 쓰는 기존 화면 컴포넌트(최근 실행 등)가 다크 모드에서도 이 화면처럼 밝은 색을 쓰게 한다 (styles.css :root 라이트 값). */
+.kshow-root {
+  color-scheme: light;
+  --surface-1: #fcfcfb;
+  --page: #f9f9f7;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+  --gridline: #e1e0d9;
+  --border: rgba(11, 11, 11, 0.1);
+  --accent: #2a78d6;
+  --critical: #d03b3b;
+  --hover-row: rgba(42, 120, 214, 0.1);
+}
 .kshow-root * { box-sizing: border-box; }
 .kshow-root button { font: inherit; cursor: pointer; }
 .kshow-stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: #e8eff5; }
