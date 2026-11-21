@@ -91,6 +91,8 @@
   box-shadow: 0 4px 16px rgba(15,23,42,.08);
 }
 .kshow-map-actions button:hover { background: #eaf4ff; }
+/* 확대·축소. 카카오 기본 막대 컨트롤 대신 이 묶음에 두어 지도 위 UI와 겹치지 않는다. */
+.kshow-map-actions .kshow-zoom { width: 36px; height: 36px; padding: 0; font-size: 18px; line-height: 1; }
 .kshow-legend {
   position: absolute; z-index: 5; left: 24px; bottom: 57px;
   width: min(320px, calc(100% - 48px)); padding: 16px 17px 13px;

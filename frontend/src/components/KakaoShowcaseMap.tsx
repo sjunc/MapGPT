@@ -20,6 +20,8 @@ interface Props {
   onSelect: (key: string | null) => void;
   focusRequest: { key: string; sequence: number } | null;
   resetSequence: number;
+  /** 화면의 +/− 버튼. delta 1은 확대, -1은 축소 */
+  zoomRequest: { delta: 1 | -1; sequence: number } | null;
 }
 
 const CENTER = { lat: 37.5665, lng: 126.978 };
@@ -178,7 +180,7 @@ function fitPadding(container: HTMLElement): [number, number, number, number] {
 }
 
 export function KakaoShowcaseMap({
-  result, demo, view, hoveredKey, selectedKey, onHover, onSelect, focusRequest, resetSequence,
+  result, demo, view, hoveredKey, selectedKey, onHover, onSelect, focusRequest, resetSequence, zoomRequest,
 }: Props) {
   const elementRef = useRef<HTMLDivElement>(null);
   const heatRef = useRef<HTMLCanvasElement>(null);
@@ -205,7 +207,6 @@ export function KakaoShowcaseMap({
         center: new maps.LatLng(CENTER.lat, CENTER.lng),
         level: 9,
       });
-      map.addControl(new maps.ZoomControl(), maps.ControlPosition.RIGHT);
       resize = new ResizeObserver(() => map.relayout());
       resize.observe(node);
       setInstance({ maps, map });
@@ -489,6 +490,14 @@ export function KakaoShowcaseMap({
       instance.map.panTo(new instance.maps.LatLng(CENTER.lat, CENTER.lng));
     }
   }, [instance, result, resetSequence]);
+
+  // 화면의 +/− 버튼으로 확대·축소한다. 카카오 기본 막대(ZoomControl)는 오른쪽 위의 지도 위 UI와 겹쳐 쓰지 않는다.
+  // 레벨은 작을수록 확대이고, 일반 지도의 범위는 1~14다.
+  useEffect(() => {
+    if (!instance || !zoomRequest) return;
+    const { map } = instance;
+    map.setLevel(Math.min(14, Math.max(1, map.getLevel() - zoomRequest.delta)), { animate: true });
+  }, [instance, zoomRequest]);
 
   // 밀도 보기: 카카오 지도 API에는 히트맵이 없어, 지도 위에 겹친 canvas에 simpleheat로 그리고 지도가 움직이면 다시 그린다.
   useEffect(() => {

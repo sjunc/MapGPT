@@ -198,6 +198,7 @@ export function KakaoShowcase() {
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const [focusRequest, setFocusRequest] = useState<{ key: string; sequence: number } | null>(null);
   const [resetSequence, setResetSequence] = useState(0);
+  const [zoomRequest, setZoomRequest] = useState<{ delta: 1 | -1; sequence: number } | null>(null);
   // "전체 순위 보기"를 펼친 결과. 다른 결과로 바뀌면 다시 상위 순위만 보인다.
   const [allRanksRunId, setAllRanksRunId] = useState<string | null>(null);
   // 늦게 도착한 이전 요청의 응답이 지금 주소의 화면을 덮어쓰지 않도록 구분한다.
@@ -409,6 +410,10 @@ export function KakaoShowcase() {
     restoreFromUrl();
   }
 
+  function zoomMap(delta: 1 | -1) {
+    setZoomRequest((previous) => ({ delta, sequence: (previous?.sequence ?? 0) + 1 }));
+  }
+
   function focusRegion(key: string) {
     setSelectedKey(key);
     setFocusRequest((previous) => ({ key, sequence: (previous?.sequence ?? 0) + 1 }));
@@ -514,6 +519,7 @@ export function KakaoShowcase() {
           onSelect={setSelectedKey}
           focusRequest={focusRequest}
           resetSequence={resetSequence}
+          zoomRequest={zoomRequest}
         />
         {demo && !demoResult && (
           <div className="kshow-map-status" role={demoError ? "alert" : "status"}>
@@ -531,28 +537,37 @@ export function KakaoShowcase() {
           </span>
         </div>
 
-        {result && (
-          <>
-            {/* 보기 전환이 여러 줄로 늘어나도 지도 버튼이 그 아래에 오도록 한 열로 쌓는다. */}
-            <div className="kshow-map-controls">
-              <nav className="kshow-view-switch" aria-label="지도 시각화 유형">
-                {choices.map((item) => (
-                  <button
-                    type="button" key={item.id}
-                    className={actualView === item.id ? "kshow-view active" : "kshow-view"}
-                    onClick={() => { setView(item.id); setHoveredKey(null); }}
-                    aria-pressed={actualView === item.id}
-                    title={item.explanation}
-                  >
-                    <span aria-hidden="true">{item.icon}</span>{item.label}
-                  </button>
-                ))}
-              </nav>
-              <div className="kshow-map-actions">
+        {/* 보기 전환이 여러 줄로 늘어나도 지도 버튼이 그 아래에 오도록 한 열로 쌓는다. 확대·축소는 결과가 없어도 보인다. */}
+        <div className="kshow-map-controls">
+          {result && (
+            <nav className="kshow-view-switch" aria-label="지도 시각화 유형">
+              {choices.map((item) => (
+                <button
+                  type="button" key={item.id}
+                  className={actualView === item.id ? "kshow-view active" : "kshow-view"}
+                  onClick={() => { setView(item.id); setHoveredKey(null); }}
+                  aria-pressed={actualView === item.id}
+                  title={item.explanation}
+                >
+                  <span aria-hidden="true">{item.icon}</span>{item.label}
+                </button>
+              ))}
+            </nav>
+          )}
+          <div className="kshow-map-actions">
+            {result && (
+              <>
                 <button type="button" onClick={() => setResetSequence((n) => n + 1)}>↺ 전체 보기</button>
                 <button type="button" onClick={() => { setSelectedKey(null); setHoveredKey(null); }}>선택 해제</button>
-              </div>
-            </div>
+              </>
+            )}
+            <button type="button" className="kshow-zoom" onClick={() => zoomMap(1)} aria-label="확대" title="확대">+</button>
+            <button type="button" className="kshow-zoom" onClick={() => zoomMap(-1)} aria-label="축소" title="축소">−</button>
+          </div>
+        </div>
+
+        {result && (
+          <>
             <MapLegend view={actualView} result={result} demo={demo} />
             <div className="kshow-corner-note">
               {demo ? "2015년 법정동 경계 · 가상 통계 · 실제 분석 결과 아님" : "백엔드 분석 결과 · 출처 및 한계는 오른쪽 패널 참고"}
