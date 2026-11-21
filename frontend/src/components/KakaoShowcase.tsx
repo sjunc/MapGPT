@@ -3,7 +3,7 @@ import { apiUrl, getStoredAnalysis, requestAnalysis, type StoredAnalysis } from 
 import { loadDemoAnalysis } from "../demo";
 import { addRecentRun, readRecentRuns, saveRecentRuns, type RecentRun } from "../runHistory";
 import { readScope, saveScope, SCOPES, SCOPE_HINTS, SCOPE_LABELS } from "../scope";
-import { formatValue, classColors, layerStyle } from "../theme";
+import { formatValue, classColors, HEAT_COLORS, layerStyle } from "../theme";
 import type { AnalysisScope, Classification, FinalResponse, MapView, WorkflowError } from "../types";
 import { ErrorPanel } from "./ErrorPanel";
 import { ExecutionTrace } from "./ExecutionTrace";
@@ -21,10 +21,11 @@ const VIEWS: Array<{ id: ShowcaseView; api: MapView; label: string; icon: string
   { id: "choropleth", api: "choropleth", label: "단계 구분도", icon: "▦", explanation: "서버에서 계산한 구간으로 지역별 지표를 표현" },
   { id: "bubble", api: "proportional_symbol", label: "비례 원", icon: "◉", explanation: "분석 단위의 지표값을 원의 면적으로 표시" },
   { id: "point", api: "point", label: "시설 위치", icon: "●", explanation: "서버가 제공한 시설 좌표로 마커 표시" },
+  { id: "heatmap", api: "heatmap", label: "밀도", icon: "◍", explanation: "시설이 몰린 정도를 색 번짐으로 표시 (화면 배율 기준 상대 밀도)" },
   { id: "hexbin", api: "hexbin", label: "육각 격자", icon: "⬢", explanation: "같은 크기 육각형 칸마다 센 개수를 서버 구간 색으로 표시" },
   { id: "bivariate", api: "bivariate", label: "이변량", icon: "▥", explanation: "서버가 제공한 두 지표의 구간을 함께 표시" },
 ];
-// 정적 데모 데이터에는 시설 점과 육각 격자가 없어 원래 네 가지 보기만 쓴다.
+// 정적 데모 데이터에는 시설 점(밀도)과 육각 격자가 없어 원래 네 가지 보기만 쓴다.
 const DEMO_VIEWS = new Set<ShowcaseView>(["choropleth", "bubble", "point", "bivariate"]);
 
 function mapViewToShowcase(view: MapView): ShowcaseView {
@@ -118,6 +119,19 @@ function MapLegend({ view, result, demo }: { view: ShowcaseView; result: FinalRe
         <>
           <div className="kshow-point-scale"><span>📍</span>{demo ? "시연용 가상 위치" : "백엔드 시설 좌표"}</div>
           <small>{demo ? "실제 시설 좌표가 아님" : `시설 ${layer.points?.count.toLocaleString("ko-KR") ?? 0}개 · 가까운 곳은 묶어 개수로 표시`}</small>
+        </>
+      )}
+      {view === "heatmap" && (
+        <>
+          <div
+            className="kshow-heat-scale"
+            style={{ background: `linear-gradient(to right, transparent, ${HEAT_COLORS.light.join(", ")})` }}
+          />
+          <div className="kshow-legend-ends"><span>드문 곳</span><span>밀집한 곳</span></div>
+          <small>
+            {layer.points?.title} {layer.points?.count.toLocaleString("ko-KR") ?? 0}곳 · 색은 지금 화면 배율의 상대 밀도라
+            확대·축소하면 달라짐
+          </small>
         </>
       )}
       {view === "hexbin" && layer.hexbins && (
@@ -217,6 +231,7 @@ export function KakaoShowcase() {
       (item.id === "choropleth" && supported.has("choropleth")) ||
       (item.id === "bubble" && supported.has("proportional_symbol")) ||
       (item.id === "point" && supported.has("point") && Boolean(result.map_layer.points)) ||
+      (item.id === "heatmap" && supported.has("heatmap") && Boolean(result.map_layer.points)) ||
       (item.id === "hexbin" && supported.has("hexbin") && Boolean(result.map_layer.hexbins)) ||
       (item.id === "bivariate" && supported.has("bivariate") && Boolean(result.map_layer.bivariate))
     );

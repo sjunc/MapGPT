@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import type { Feature, MultiPolygon, Position } from "geojson";
+import SimpleHeat, { type HeatPoint } from "simpleheat";
 import { loadKakaoMaps } from "../maps/kakaoLoader";
 import { toKakaoPolygonPaths } from "../maps/kakaoGeometry";
 import type { FinalResponse, UnitProperties } from "../types";
-import { classColors, formatValue, layerStyle, MAP_CHROME, symbolMaxRadius } from "../theme";
+import { classColors, formatValue, HEAT_COLORS, layerStyle, MAP_CHROME, symbolMaxRadius } from "../theme";
 
-export type ShowcaseView = "choropleth" | "bubble" | "point" | "hexbin" | "bivariate";
+export type ShowcaseView = "choropleth" | "bubble" | "point" | "heatmap" | "hexbin" | "bivariate";
 export type ShowcaseFeature = Feature<MultiPolygon, UnitProperties>;
 
 interface Props {
@@ -22,14 +23,32 @@ interface Props {
 }
 
 const CENTER = { lat: 37.5665, lng: 126.978 };
-// 육각 격자 칸 아래에 까는 옅은 단위 경계선 (MapLibre 화면의 지역 경계선 색)
+// 육각 격자·밀도 보기에서 까는 옅은 단위 경계선 (MapLibre 화면의 지역 경계선 색)
 const UNIT_LINE = { strokeWeight: 1, strokeColor: MAP_CHROME.light.outline, strokeOpacity: 0.7 };
 
 type UnitShape = kakao.maps.Polygon | kakao.maps.Polyline;
 
+function linesOnly(view: ShowcaseView): boolean {
+  return view === "hexbin" || view === "heatmap";
+}
+
 /** 강조를 풀 때 돌아갈 보기별 기본 선 */
 function baseStroke(view: ShowcaseView) {
-  return view === "hexbin" ? UNIT_LINE : { strokeWeight: 1, strokeColor: "#ffffff", strokeOpacity: view === "bubble" ? 0.5 : 0.9 };
+  return linesOnly(view) ? UNIT_LINE : { strokeWeight: 1, strokeColor: "#ffffff", strokeOpacity: view === "bubble" ? 0.5 : 0.9 };
+}
+
+// 밀도 색: MapLibre 화면의 heatmap-color처럼 밀도 0.08부터 램프를 쓴다. simpleheat는 밀도를 불투명도로도 쓴다.
+const HEAT_GRADIENT = Object.fromEntries(
+  HEAT_COLORS.light.map((color, i) => [0.08 + (0.92 * i) / (HEAT_COLORS.light.length - 1), color]),
+);
+
+/**
+ * 밀도 크기는 MapLibre 화면(ChoroplethMap)과 같게 줌 9→13에서 반지름 6→22px, 세기 0.12→0.9로 키운다.
+ * 카카오 레벨 L은 약 69×2^(L-9) m/px(레벨 9 축척 막대 4km=58px)라서 서울 위도에서 MapLibre 줌으로 약 18.8 - L이다.
+ */
+function heatSize(level: number): { radius: number; intensity: number } {
+  const t = Math.min(1, Math.max(0, (18.8 - level - 9) / 4));
+  return { radius: 6 + 16 * t, intensity: 0.12 + 0.78 * t };
 }
 // 시연 전용 3×3 팔레트. 실제 서비스에서는 서버가 제공하는 분류 기준을 따른다.
 export const BIVARIATE_COLORS = [
@@ -128,6 +147,7 @@ export function KakaoShowcaseMap({
   result, demo, view, hoveredKey, selectedKey, onHover, onSelect, focusRequest, resetSequence,
 }: Props) {
   const elementRef = useRef<HTMLDivElement>(null);
+  const heatRef = useRef<HTMLCanvasElement>(null);
   const [instance, setInstance] = useState<{ maps: typeof kakao.maps; map: kakao.maps.Map } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -269,15 +289,17 @@ export function KakaoShowcaseMap({
       }
     }
 
-    if (view === "hexbin") {
-      // 단위 경계는 칸 아래에 옅은 선으로만 깐다. 면이 없어서 선택한 단위가 위로 올라와도 칸 클릭을 막지 않는다.
+    if (linesOnly(view)) {
+      // 단위 경계는 옅은 선으로만 깐다. 면이 없어서 선택한 단위가 위로 올라와도 육각형 칸 클릭을 막지 않는다.
       for (const feature of features) {
         const lines = toKakaoPolygonPaths(feature.geometry, maps)
           .map((rings) => new maps.Polyline({ map, path: rings, ...UNIT_LINE, zIndex: 1 }));
         shapes.push(...lines);
         shapesByKey.set(feature.properties.unit_key, lines);
       }
+    }
 
+    if (view === "hexbin") {
       const hexbins = result.map_layer.hexbins;
       if (hexbins) {
         const colors = classColors("light", hexbins.classification.class_count, "high");
@@ -423,9 +445,57 @@ export function KakaoShowcaseMap({
     }
   }, [instance, result, resetSequence]);
 
+  // 밀도 보기: 카카오 지도 API에는 히트맵이 없어, 지도 위에 겹친 canvas에 simpleheat로 그리고 지도가 움직이면 다시 그린다.
+  useEffect(() => {
+    const canvas = heatRef.current;
+    const points = result?.map_layer.points;
+    if (!instance || !canvas || view !== "heatmap" || !points) return;
+    const { maps, map } = instance;
+    const coords = points.geojson.features.map(({ geometry }) => new maps.LatLng(geometry.coordinates[1], geometry.coordinates[0]));
+    const heat = new SimpleHeat(canvas).gradient(HEAT_GRADIENT);
+    let radius = 0;
+    let frame = 0;
+
+    const draw = () => {
+      frame = 0;
+      if (canvas.width !== canvas.clientWidth) canvas.width = canvas.clientWidth;
+      if (canvas.height !== canvas.clientHeight) canvas.height = canvas.clientHeight;
+      const size = heatSize(map.getLevel());
+      if (size.radius !== radius) {
+        radius = size.radius;
+        heat.radius(radius / 2, radius / 2); // 원과 번짐을 합친 범위가 MapLibre의 반지름과 같다
+      }
+      const projection = map.getProjection();
+      const data: HeatPoint[] = [];
+      for (const coord of coords) {
+        const { x, y } = projection.containerPointFromCoords(coord);
+        if (x > -radius && y > -radius && x < canvas.width + radius && y < canvas.height + radius) {
+          data.push([x, y, size.intensity]);
+        }
+      }
+      heat.data(data).draw();
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(draw);
+    };
+
+    const events = ["center_changed", "zoom_changed", "bounds_changed", "idle"];
+    for (const type of events) maps.event.addListener(map, type, schedule);
+    const resize = new ResizeObserver(schedule);
+    resize.observe(canvas);
+    draw(); // 첫 그림은 바로 그린다 (탭이 숨겨져 있으면 requestAnimationFrame이 멈춘다)
+    return () => {
+      cancelAnimationFrame(frame);
+      for (const type of events) maps.event.removeListener(map, type, schedule);
+      resize.disconnect();
+      canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+    };
+  }, [instance, result, view]);
+
   return (
     <>
       <div className="kshow-map" ref={elementRef} aria-label="카카오지도 분석 시각화" />
+      <canvas ref={heatRef} className="kshow-heat" hidden={view !== "heatmap"} aria-hidden="true" />
       {(loading || error) && (
         <div className="kshow-map-status" role={error ? "alert" : "status"}>
           {error ? (

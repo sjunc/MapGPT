@@ -29,7 +29,10 @@
 .kshow-root * { box-sizing: border-box; }
 .kshow-root button { font: inherit; cursor: pointer; }
 .kshow-stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: #e8eff5; }
-.kshow-map { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* z-index 0: 카카오 지도 안의 레이어를 이 안에 가둬 밀도 canvas가 지도 위에 오게 한다. */
+.kshow-map { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; }
+.kshow-heat { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; pointer-events: none; opacity: .85; }
+.kshow-heat[hidden] { display: none; }
 .kshow-map-status {
   position: absolute; inset: 0; display: flex; z-index: 2;
   flex-direction: column; align-items: center; justify-content: center; gap: 10px;
@@ -95,6 +98,7 @@
 .kshow-swatches { display: grid; grid-template-columns: repeat(5, 1fr); height: 14px; gap: 3px; }
 .kshow-swatches div { border-radius: 2px; }
 .kshow-legend-ends { display: flex; justify-content: space-between; margin: 7px 0 10px; font-size: 10px; color: #516276; }
+.kshow-heat-scale { height: 12px; border: 1px solid #e1e8f0; border-radius: 3px; }
 .kshow-class-scale { display: grid; gap: 3px; }
 .kshow-class-scale i { display: block; height: 14px; border-radius: 2px; }
 .kshow-class-scale span {
