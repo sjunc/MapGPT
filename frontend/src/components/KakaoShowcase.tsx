@@ -202,6 +202,8 @@ export function KakaoShowcase() {
   const [allRanksRunId, setAllRanksRunId] = useState<string | null>(null);
   // 늦게 도착한 이전 요청의 응답이 지금 주소의 화면을 덮어쓰지 않도록 구분한다.
   const requestSequence = useRef(0);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const chatRef = useRef<HTMLFormElement>(null);
   const demo = route.runId === null && route.demo;
   // 데모 데이터는 늘 불러 두지만 주소가 데모일 때만 보인다.
   const result = route.runId !== null ? liveResult : demo ? demoResult : null;
@@ -230,6 +232,16 @@ export function KakaoShowcase() {
       window.removeEventListener("popstate", restoreFromUrl);
       ++requestSequence.current;
     };
+  }, []);
+
+  // 입력창은 안내 문구가 붙거나 질문 칸을 늘리면 높아진다. 범례와 지도 안내 문구가 그 위에 오도록 높이를 CSS 변수로 넘긴다.
+  useEffect(() => {
+    const root = rootRef.current;
+    const chat = chatRef.current;
+    if (!root || !chat) return;
+    const observer = new ResizeObserver(() => root.style.setProperty("--kshow-chat-height", `${chat.offsetHeight}px`));
+    observer.observe(chat, { box: "border-box" });
+    return () => observer.disconnect();
   }, []);
 
   const choices = useMemo(() => {
@@ -490,7 +502,7 @@ export function KakaoShowcase() {
   }
 
   return (
-    <div className="kshow-root">
+    <div className="kshow-root" ref={rootRef}>
       <main className="kshow-stage" aria-label="카카오지도 기반 분석 지도">
         <KakaoShowcaseMap
           result={result}
@@ -708,7 +720,7 @@ export function KakaoShowcase() {
         </div>
       </aside>
 
-      <form className="kshow-chat" onSubmit={(event: FormEvent<HTMLFormElement>) => void submitAnalysis(event)}>
+      <form className="kshow-chat" ref={chatRef} onSubmit={(event: FormEvent<HTMLFormElement>) => void submitAnalysis(event)}>
         <div className="kshow-chat-top">
           <div className="kshow-chat-scopes" role="group" aria-label="분석 범위">
             {SCOPES.map((item) => (

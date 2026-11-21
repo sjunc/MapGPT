@@ -259,9 +259,10 @@
   margin: 0; padding: 10px 12px; border: 1px solid #f3dcae; border-radius: 9px;
   background: #fff8ea; color: #84570b; font-size: 11px; line-height: 1.6;
 }
-/* 채팅창과 지도 범례가 겹치지 않도록 지도 범례를 위쪽에 배치한다. */
-.kshow-legend { bottom: 174px; }
-.kshow-corner-note { bottom: 157px; }
+/* 채팅창과 지도 범례가 겹치지 않도록 지도 범례를 채팅창(bottom 20px) 위에 배치한다.
+   --kshow-chat-height는 KakaoShowcase가 채팅창 높이를 재어 넣는다. 안내 문구가 붙으면 채팅창이 높아진다. */
+.kshow-legend { bottom: calc(var(--kshow-chat-height, 133px) + 41px); }
+.kshow-corner-note { bottom: calc(var(--kshow-chat-height, 133px) + 24px); }
 @media (max-width: 1060px) {
   .kshow-chat { right: 354px; }
 }
