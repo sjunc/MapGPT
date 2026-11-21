@@ -10,6 +10,7 @@ import { ChoroplethMap } from "./components/ChoroplethMap";
 import { AnalysisResultPanel } from "./components/AnalysisResultPanel";
 import { ErrorPanel } from "./components/ErrorPanel";
 import { Legend } from "./components/Legend";
+import { SuggestionChips } from "./components/SuggestionChips";
 import { loadDemoAnalysis } from "./demo";
 import { SCOPE_HINTS, SCOPE_LABELS, SCOPES, readScope, saveScope } from "./scope";
 import { layerStyle, useColorScheme } from "./theme";
@@ -276,6 +277,12 @@ export function App() {
     }
   }
 
+  // 예시 질문을 누르면 입력창을 채우고 바로 분석한다.
+  function askSuggestion(text: string) {
+    setQuestion(text);
+    void runAnalysis(text);
+  }
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void runAnalysis(question.trim());
@@ -517,6 +524,7 @@ export function App() {
                 >
                   같은 질문 다시 시도
                 </button>
+                {!DEMO_MODE && <SuggestionChips scope={scope} disabled={loading} onPick={askSuggestion} />}
               </div>
             )}
 
@@ -545,6 +553,7 @@ export function App() {
                 <p className="muted">
                   질문을 입력하면 등록된 데이터를 바탕으로 공간 분석을 수행하고 지도·순위·근거를 보여줍니다.
                 </p>
+                {!DEMO_MODE && <SuggestionChips scope={scope} disabled={loading} onPick={askSuggestion} />}
               </section>
             )}
 

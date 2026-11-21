@@ -13,6 +13,14 @@ export function exportUrl(runId: string, format: ExportFormat): string {
   return apiUrl(`/api/analyses/${encodeURIComponent(runId)}/export?format=${format}`);
 }
 
+/** 등록된 데이터로 답할 수 있는 예시 질문 (GET /api/suggestions). */
+export async function getSuggestions(scope: AnalysisScope, signal?: AbortSignal): Promise<string[]> {
+  const response = await fetch(apiUrl(`/api/suggestions?scope=${scope}`), { signal });
+  if (!response.ok) throw new Error(`예시 질문 조회 실패 (${response.status})`);
+  const body: unknown = await response.json();
+  return Array.isArray(body) ? body.filter((item): item is string => typeof item === "string") : [];
+}
+
 export async function requestAnalysis(question: string, scope: AnalysisScope): Promise<AnalysisResponse> {
   const response = await fetch(apiUrl("/api/analyses"), {
     method: "POST",

@@ -15,6 +15,7 @@ import {
 } from "./KakaoShowcaseMap";
 import { RecentRuns } from "./RecentRuns";
 import { ResultShare } from "./ResultShare";
+import { SuggestionChips } from "./SuggestionChips";
 import "../p7.css"; // RecentRuns·ExecutionTrace가 쓰는 기존 화면 스타일
 import "./kakao-showcase.css";
 
@@ -434,9 +435,10 @@ export function KakaoShowcase() {
     setFocusRequest((previous) => ({ key, sequence: (previous?.sequence ?? 0) + 1 }));
   }
 
-  async function submitAnalysis(event?: FormEvent<HTMLFormElement>) {
+  // override를 주면 입력창 대신 그 질문으로 분석한다 (예시 질문).
+  async function submitAnalysis(event?: FormEvent<HTMLFormElement>, override?: string) {
     event?.preventDefault();
-    const text = question.trim();
+    const text = (override ?? question).trim();
     if (!text || loading || text.length > 500) return;
     const sequence = ++requestSequence.current;
     setLoading(true);
@@ -647,6 +649,13 @@ export function KakaoShowcase() {
                     ? "서버 응답을 기다리는 중이야."
                     : "아래 입력창에 질문을 입력하면 서버가 분석한 결과를 지도와 순위로 보여 줘."}
             </p>
+            {!demo && !result && (
+              <SuggestionChips
+                scope={scope}
+                disabled={loading}
+                onPick={(text) => { setQuestion(text); void submitAnalysis(undefined, text); }}
+              />
+            )}
           </section>
 
           {!demo && result && (
