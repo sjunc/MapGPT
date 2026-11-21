@@ -164,7 +164,10 @@ API 테스트([tests/integration/test_api.py](../tests/integration/test_api.py))
 | Method | Path | 요청 | 응답 |
 |---|---|---|---|
 | `POST` | `/api/analyses` | `{"question": "...", "scope": "seoul"}` (질문 1~500자, 범위 `seoul`·`national`, 기본 `seoul`) | 200 `{run_id, status, result, errors}`. 분석이 실패해도 200 + `status: "failed"`. 형식 오류 422, LLM·임베딩 설정 누락 503, 단계 밖 예외 500 |
-| `GET` | `/api/analyses/{run_id}` | `run_id`는 UUID | 200 `{run_id, status, question, provenance, result}`. 없으면 404 |
+| `POST` | `/api/analysis-jobs` | `/api/analyses`와 같음 | 202 `{run_id, status: "running", events_url, result_url}`. 분석은 백그라운드에서 돈다(2026-11-22) |
+| `GET` | `/api/analysis-jobs/{run_id}/events` | `run_id`는 UUID | 200 `text/event-stream`. `queued` → `started` → `step`(단계마다 `{step, duration_ms, elapsed_ms, failed}`) → `done`(`{run_id, status, error_code}`). 다시 연결하면 처음부터 다시 보낸다(`id`로 중복 제거). 메모리에 없는 작업은 실행 기록으로 `done`만 보내고, 기록도 없으면 404 |
+| `POST` | `/api/analysis-jobs/{run_id}/cancel` | 없음 | 202. 진행 중인 단계가 끝나면 멈추고 `CANCELLED` 실패로 기록한다. 없는 작업 404, 끝난 작업 409 |
+| `GET` | `/api/analyses/{run_id}` | `run_id`는 UUID | 200 `{run_id, status, question, provenance, result}`. 실행 중이면 `status: "running"`. 없으면 404 |
 | `GET` | `/api/datasets` | 없음 | 200 `DatasetMetadata[]` (카탈로그) |
 | `GET` | `/api/health` | 없음 | 200 `{status, database, llm_provider, llm_model, embedding_model}`. `status`는 `ok` 또는 `degraded` |
 
@@ -178,10 +181,11 @@ API 테스트([tests/integration/test_api.py](../tests/integration/test_api.py))
 - **화면과의 짝:**
   - 화면의 타입([frontend/src/types.ts](../../frontend/src/types.ts))은 `app/api/schemas.py`, `app/domain/results.py`, `app/domain/state.py`를 손으로 옮긴 것이다.
   - 코드 생성을 쓰지 않으므로, 응답 형식을 바꾸면 화면 타입도 함께 바꿔야 한다.
-- **화면 요청 방식:**
-  - 화면은 `POST`를 한 번 보내고 응답을 기다린다.
-  - 진행 표시는 경과 시간과 고정된 단계 목록일 뿐, 실제 진행 상황이 아니다.
-  - 개발 서버 프록시의 타임아웃은 300초다.
+- **화면 요청 방식 (2026-11-22):**
+  - 두 화면 모두 `POST /api/analysis-jobs`로 시작하고 SSE로 끝난 단계·걸린 시간을 받아 보이며, 취소 버튼이 cancel을 부른다.
+  - 시작하자마자 `?run=`을 주소에 남기므로, 새로고침해도 진행 중인 실행을 다시 따라간다.
+  - SSE 연결이 끊기면 `GET /api/analyses/{run_id}`를 2초마다 조회한다.
+  - 동기 `POST /api/analyses`는 다른 클라이언트와 테스트를 위해 그대로 둔다.
 
 ## 5. 요청 처리와 실행 모델
 
@@ -224,16 +228,17 @@ LLM을 기다리는 동안에는 연결을 붙잡지 않는다. 그래서 동시
 
 ### 5.4 타임아웃과 재시도
 
-- API 수준의 분석 시간 제한은 없다.
+- 백그라운드 작업(`/api/analysis-jobs`)은 `ANALYSIS_TIME_BUDGET_SECONDS`(기본 180초, 0이면 없음)를 단계 사이에서 확인해 넘으면 `TIME_BUDGET_EXCEEDED`로 끝낸다. 진행 중인 LLM 호출은 끊지 못하므로 그 단계가 끝난 뒤 멈춘다. 동시에 도는 작업 수는 `ANALYSIS_MAX_CONCURRENCY`(기본 4)이고 나머지는 `queued`로 기다린다.
+- 동기 `POST /api/analyses`에는 분석 시간 제한이 없다.
 - LLM·임베딩 호출은 OpenAI SDK 기본값을 쓴다. 연결 5초, 읽기 600초, 재시도 2회다. 호출 하나가 최악의 경우 10분씩 3번까지 걸릴 수 있다.
 - 화면 개발 서버의 프록시는 300초에 연결을 끊는다. 끊겨도 서버는 분석을 끝까지 실행하고 기록을 남기지만, 화면은 결과를 받지 못한다.
-- 취소 기능은 없다.
+- 취소는 백그라운드 작업에서만 된다(단계 사이에서 확인, `CANCELLED`).
 
 ### 5.5 진행 상황을 내보낼 수 있는 지점
 
 그래프의 각 단계가 LangGraph 노드다. 그래서 `ANALYSIS_GRAPH.stream(..., stream_mode="updates")`를 쓰면 단계가 끝날 때마다 이벤트를 받을 수 있다.
 
-지금 `run()`은 `invoke`로 끝까지 실행한다. 진행 상황을 화면에 보내려면 에이전트 쪽에 스트리밍용 실행 함수를 추가해야 하므로, 에이전트 담당과 협의가 필요하다. 그래프 구조는 `ANALYSIS_GRAPH.get_graph().draw_mermaid()`로 그려 볼 수 있다.
+2026-11-22부터 `run()`은 `stream(stream_mode="values")`로 실행하며 단계가 끝날 때마다 `on_progress`를 부르고, 단계별 소요 시간을 `AgentState.step_timings`에 남긴다. 그래프 구조는 `ANALYSIS_GRAPH.get_graph().draw_mermaid()`로 그려 볼 수 있다.
 
 ## 6. DB와 실행 기록
 
@@ -246,10 +251,9 @@ LLM을 기다리는 동안에는 연결을 붙잡지 않는다. 그래서 동시
 
 특징은 다음과 같다.
 
-- **끝난 뒤 한 번 저장한다:**
-  - 실행 중에는 행이 없다. `running` 상태를 저장하지 않고, 저장은 INSERT뿐이다.
-  - 실행 도중 프로세스가 죽으면 기록이 남지 않는다.
-  - 비동기 실행으로 바꾸려면 시작할 때 행을 만들고 끝날 때 갱신하도록 바꿔야 한다.
+- **시작할 때 running으로 저장하고 끝나면 갱신한다 (2026-11-22):**
+  - `save_run`은 `INSERT … ON CONFLICT (run_id) DO UPDATE`다.
+  - 실행 도중 프로세스가 죽으면 행이 `running`으로 남는다. 오래된 `running` 행을 정리하는 작업은 아직 없다.
 - **보존 정책이 없다:** 결과 1건이 약 217KB라서 1만 건이면 약 2GB다.
 - **사용자 구분이 없다:** 인증을 붙이면 실행 기록에 사용자 식별자가 필요하다.
 - **조회용 인덱스가 없다:** 실행 기록 조회(`GET /api/analyses/{run_id}`)는 `analysis.result`를 `run_id`로 찾는데 인덱스가 없다. 실행 목록이나 통계를 보려면 `started_at`, `status` 등에도 인덱스가 필요하다.
@@ -288,6 +292,8 @@ API 요청은 `datasets`와 `catalog`를 읽기만 한다. 현재 개발 DB 크�
 ## 8. 과제와 개발 쪽 의견
 
 ### 8.1 비동기 실행과 진행 상황 (먼저)
+
+> 2026-11-22 1단계 구현: 같은 프로세스의 스레드 풀 + 메모리 이벤트 + SSE + 단계 사이 취소·시간 제한(`app/api/jobs.py`). 남은 것은 아래 큐 구조로 옮겨 재시작·여러 프로세스에도 작업이 살아남게 하는 것이다. 이벤트를 메모리에 두므로 지금은 `--workers 1`로 띄워야 SSE가 같은 프로세스에 붙는다.
 
 지금의 문제는 다음과 같다.
 - 15초에서 3분 걸리는 동기 요청이다.
