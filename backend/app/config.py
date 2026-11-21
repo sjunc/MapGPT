@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 60
     llm_max_retries: int = 1
 
+    # 공개 데모 비용·남용 방지 (POST /api/analyses만 센다).
+    # 클라이언트 IP별 요청 제한 (slowapi 형식, 예: 5/minute, "10/minute;100/day"). 비우거나 0이면 끈다.
+    analysis_rate_limit: str = "5/minute"
+    # 한국 시간 자정부터 센 분석 실행(analysis.run) 수의 하루 한도. 모든 클라이언트를 합해 센다. 0이면 제한 없음.
+    analysis_daily_limit: int = 300
+
     seoul_open_api_key: SecretStr | None = None
     raw_data_dir: Path = PROJECT_ROOT / "data" / "raw"
     sources_dir: Path = PROJECT_ROOT / "sources"  # 외부 출처 등록 파일 (*.yaml)

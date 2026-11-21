@@ -1,5 +1,6 @@
 """Provenance 저장소: 모든 분석 실행을 성공·실패와 관계없이 기록한다."""
 
+from datetime import datetime
 from typing import Any
 
 import psycopg
@@ -65,3 +66,8 @@ def get_run(conn: psycopg.Connection, run_id: str) -> dict[str, Any] | None:
         return None
     run_id, status, question, state, response = row
     return {"run_id": run_id, "status": status, "question": question, "provenance": state, "result": response}
+
+
+def count_runs_since(conn: psycopg.Connection, since: datetime) -> int:
+    """since 이후에 시작한 분석 실행 수 (성공·실패 모두. 실패한 실행도 LLM을 호출한다)."""
+    return conn.execute("SELECT count(*) FROM analysis.run WHERE started_at >= %s", (since,)).fetchone()[0]
