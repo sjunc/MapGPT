@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 import psycopg
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from psycopg_pool import ConnectionPool
 from slowapi import Limiter
@@ -38,17 +39,16 @@ KST = ZoneInfo("Asia/Seoul")
 
 
 def get_llm(request: Request) -> StructuredLLM:
-    try:
-        return create_llm(request.app.state.settings)
-    except LLMError as error:
-        raise HTTPException(status_code=503, detail=str(error)) from error
+    # 클라이언트는 앱 시작 때 한 번 만든다. 설정이 없으면 그때의 오류를 요청마다 503으로 알린다.
+    if request.app.state.llm is None:
+        raise HTTPException(status_code=503, detail=request.app.state.llm_error)
+    return request.app.state.llm
 
 
 def get_embedder(request: Request) -> Embedder:
-    try:
-        return create_embedder(request.app.state.settings)
-    except EmbeddingError as error:
-        raise HTTPException(status_code=503, detail=str(error)) from error
+    if request.app.state.embedder is None:
+        raise HTTPException(status_code=503, detail=request.app.state.embedder_error)
+    return request.app.state.embedder
 
 
 Pool = Annotated[ConnectionPool, Depends(get_pool)]
@@ -84,6 +84,13 @@ def _check_daily_limit(pool: ConnectionPool, limit: int) -> None:
         )
 
 
+def _build_client(factory, settings: Settings, error_type: type[Exception]) -> tuple[Any, str | None]:
+    try:
+        return factory(settings), None
+    except error_type as error:
+        return None, str(error)
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
 
@@ -100,7 +107,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["GET", "POST"],
         allow_headers=["Content-Type"],
     )
+    # 성공 응답은 행정동 GeoJSON을 포함해 수백 KB다. 작은 응답(오류, 헬스 체크)은 압축하지 않는다.
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
     app.state.settings = settings
+    app.state.llm, app.state.llm_error = _build_client(create_llm, settings, LLMError)
+    app.state.embedder, app.state.embedder_error = _build_client(create_embedder, settings, EmbeddingError)
     # 클라이언트 IP별 제한. 저장소가 프로세스 메모리라 --workers N이면 프로세스마다 따로 센다.
     # 리버스 프록시 뒤에서는 uvicorn --forwarded-allow-ips(FORWARDED_ALLOW_IPS)에 프록시 주소를 넣어야
     # request.client가 실제 클라이언트가 된다. X-Forwarded-For를 앱이 직접 믿지 않는다(위조 가능).

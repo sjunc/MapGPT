@@ -1,10 +1,12 @@
 import json
+from types import SimpleNamespace
 
 import httpx2
 import pytest
 import tiktoken
 from openai import OpenAI
 
+from app.api.main import create_app, get_embedder, get_llm
 from app.config import Settings
 from app.domain.state import Explanation
 from app.llm.base import LLMError, LLMOutputError
@@ -233,3 +235,11 @@ def test_embedder_is_openai_even_when_llm_provider_is_ollama():
 def test_embedder_fails_explicitly_without_openai_api_key(api_key):
     with pytest.raises(EmbeddingError, match="OPENAI_API_KEY"):
         create_embedder(Settings(llm_provider="ollama", openai_api_key=api_key))
+
+
+def test_api_creates_llm_and_embedding_clients_once_at_startup():
+    app = create_app(Settings(_env_file=None, llm_provider="openai", openai_api_key="sk-test"))
+    request = SimpleNamespace(app=app)
+
+    assert get_llm(request) is get_llm(request) is app.state.llm
+    assert get_embedder(request) is app.state.embedder

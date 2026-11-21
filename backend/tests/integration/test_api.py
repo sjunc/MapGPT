@@ -104,6 +104,13 @@ def test_catalog_and_health_endpoints(client):
     }
 
 
+def test_success_response_is_gzipped_when_the_client_accepts_it(client):
+    response = client.post("/api/analyses", json={"question": QUESTION}, headers={"Accept-Encoding": "gzip"})
+
+    assert response.headers["content-encoding"] == "gzip"
+    assert response.json()["status"] == "succeeded"  # httpx가 풀어서 읽는다
+
+
 def test_analysis_requests_are_rate_limited_per_client(database_url, catalog):
     with _test_client(database_url, analysis_rate_limit="2/minute") as limited:
         statuses = [limited.post("/api/analyses", json={"question": QUESTION}).status_code for _ in range(3)]
