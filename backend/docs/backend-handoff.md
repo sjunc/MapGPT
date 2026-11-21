@@ -14,9 +14,9 @@
 
 ## 요약
 
-- **현재:** FastAPI API는 4개이고, 그중 분석 요청(`POST /api/analyses`)이 요청 스레드 안에서 LangGraph 워크플로를 끝까지 실행한다. 분석 1건에 LLM을 4~5번, 임베딩을 1번 호출하고, gpt-4o-mini 기준 15~21초가 걸린다. 실행 기록은 분석이 끝난 뒤 PostgreSQL에 저장한다. Docker로는 DB만 띄우고, API와 화면은 개발 서버로 실행한다.
+- **현재:** FastAPI API는 5개이고, 그중 분석 요청(`POST /api/analyses`)이 요청 스레드 안에서 LangGraph 워크플로를 끝까지 실행한다. 분석 1건에 LLM을 4~5번, 임베딩을 1번 호출하고, gpt-4o-mini 기준 15~21초가 걸린다. 실행 기록은 분석이 끝난 뒤 PostgreSQL에 저장한다. Docker로는 DB만 띄우고, API와 화면은 개발 서버로 실행한다.
 - **경계:** 백엔드는 `AnalysisWorkflow.run(question)` 호출의 바깥을 맡는 것을 제안한다. API, 실행 방식, 인증, 설정, DB 운영, 배포, 관측, CI가 여기에 든다. 이 함수와 응답 스키마가 에이전트·화면과의 계약이다.
-- **비어 있는 것:** 비동기 실행·진행 상황·취소, 타임아웃 정책, 인증·요청 제한·비용 한도, 마이그레이션, 배포(API 컨테이너, 화면 서빙, 리버스 프록시), 로그·지표, CI, Python 의존성 고정.
+- **비어 있는 것:** 비동기 실행·진행 상황·취소, 분석 전체의 시간 예산, 인증, 마이그레이션, 배포(API 컨테이너, 화면 서빙, 리버스 프록시), 구조화 로그·알림, Python 의존성 고정. (2026-11-22에 IP별 요청 제한·하루 분석 한도, LLM 호출 타임아웃, 응답 압축, 실행 통계 API, CI를 더했다.)
 - **결정 요청:** 10장. 먼저 정할 것은 실행 모델(비동기 여부와 작업 큐), 공개 범위와 인증, 마이그레이션 도구다.
 
 ## 목차
@@ -146,6 +146,9 @@ pydantic-settings가 저장소 루트의 `.env`를 읽고, 같은 이름의 환�
 | `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_REASONING_EFFORT` | `http://localhost:11434/v1`, 없음, 없음 | 로컬 LLM |
 | `SEOUL_OPEN_API_KEY` | 없음 | 어린이집 수집. 적재 CLI에서만 쓴다 |
 | `RAW_DATA_DIR` | `data/raw` | 원본 파일 위치. 적재 CLI에서만 쓴다 |
+| `LLM_TIMEOUT_SECONDS`, `LLM_MAX_RETRIES` | `60`, `1` | LLM·임베딩 호출 하나의 타임아웃(초)과 SDK 재시도 횟수 |
+| `ANALYSIS_RATE_LIMIT` | `5/minute` | `POST /api/analyses`의 클라이언트 IP별 제한(slowapi 형식). 비우거나 `0`이면 끈다 |
+| `ANALYSIS_DAILY_LIMIT` | `300` | 한국 시간 자정부터 센 `analysis.run` 수의 하루 한도(전체 합계). `0`이면 제한 없음 |
 
 테스트 DB는 `.env`가 아니라 셸 환경 변수 `TEST_DATABASE_URL`로 정한다. 기본값은 로컬 `mapgpt_test`다.
 
@@ -157,20 +160,23 @@ pydantic-settings가 저장소 루트의 `.env`를 읽고, 같은 이름의 환�
 | Integration | 40 | GIS 정답 비교, 적재, 워크플로 전체(FakeLLM·FakeEmbedder), API(`TestClient`) | Docker DB의 `mapgpt_test`. 세션마다 스키마를 새로 만들고, 테스트마다 테이블을 비운다 |
 | E2E | 3 | 실제 데이터와 실제 LLM·임베딩으로 성공 기준 확인 (`pytest -m e2e`) | 개발 DB 적재, LLM 설정, `OPENAI_API_KEY` |
 
-API 테스트([tests/integration/test_api.py](../tests/integration/test_api.py))는 `dependency_overrides`로 `get_llm`과 `get_embedder`를 가짜로 바꿔서, 실제 LLM 없이 돈다. CI는 아직 없다.
+API 테스트([tests/integration/test_api.py](../tests/integration/test_api.py))는 `dependency_overrides`로 `get_llm`과 `get_embedder`를 가짜로 바꿔서, 실제 LLM 없이 돈다. CI는 GitHub Actions [check.yml](../../.github/workflows/check.yml)가 push·PR마다 compose로 DB를 띄우고 `scripts/check.py`를 돌린다(8.7절).
 
 ## 4. API 계약
 
 | Method | Path | 요청 | 응답 |
 |---|---|---|---|
-| `POST` | `/api/analyses` | `{"question": "...", "scope": "seoul"}` (질문 1~500자, 범위 `seoul`·`national`, 기본 `seoul`) | 200 `{run_id, status, result, errors}`. 분석이 실패해도 200 + `status: "failed"`. 형식 오류 422, LLM·임베딩 설정 누락 503, 단계 밖 예외 500 |
+| `POST` | `/api/analyses` | `{"question": "...", "scope": "seoul"}` (질문 1~500자, 범위 `seoul`·`national`, 기본 `seoul`) | 200 `{run_id, status, result, errors}`. 분석이 실패해도 200 + `status: "failed"`. 형식 오류 422, IP별 요청 제한·하루 분석 한도 초과 429(`detail` 한국어 문구, `Retry-After` 초), LLM·임베딩 설정 누락 503, 단계 밖 예외 500 |
 | `GET` | `/api/analyses/{run_id}` | `run_id`는 UUID | 200 `{run_id, status, question, provenance, result}`. 없으면 404 |
+| `GET` | `/api/stats?days=7` | `days` 1~90 (기본 7) | 200 `RunStats` `{days, since, total, succeeded, failed, success_rate, duration_p50_seconds, duration_p90_seconds, top_error_codes[{code, runs}], by_llm_model[{llm_model, runs}]}`. 실행이 없으면 비율·분위수는 null |
 | `GET` | `/api/datasets` | 없음 | 200 `DatasetMetadata[]` (카탈로그) |
 | `GET` | `/api/health` | 없음 | 200 `{status, database, llm_provider, llm_model, embedding_model}`. `status`는 `ok` 또는 `degraded` |
 
 - **실행 기록 조회:** `provenance`는 `AgentState`에서 지도와 최종 응답을 뺀 것이다. `result`는 `FinalResponse`이고, 실패한 실행이면 null이다. 이 엔드포인트에는 `response_model`이 없어 OpenAPI 문서의 스키마가 느슨하다.
 - **헬스 체크:** DB 연결만 실제로 확인하고, LLM·임베딩은 설정값만 보여준다.
-- **응답 크기:** 성공 응답은 행정동 427개의 GeoJSON을 포함해 JSON으로 약 590KB다. 지금은 압축하지 않는다.
+- **응답 크기:** 성공 응답은 행정동 427개의 GeoJSON을 포함해 JSON으로 약 590KB다. 클라이언트가 `Accept-Encoding: gzip`을 보내면 1,000바이트 이상인 응답을 gzip으로 보낸다(`GZipMiddleware`). 개발 DB에 저장된 최근 결과 20건을 같은 형식으로 압축하면 중앙값 591KB → 117KB(약 80% 감소)다.
+- **요청 제한:** `POST /api/analyses`만 센다. IP별 제한(slowapi, 프로세스 메모리)은 본문 형식 검사와 LLM 설정 확인 뒤, 하루 한도는 그다음 `analysis.run` 수를 세어 확인한다. 하루 한도는 끝난 실행만 세므로 동시에 실행 중인 요청 수만큼 넘을 수 있다. IP는 uvicorn이 넘긴 주소이고, 리버스 프록시 뒤에서는 uvicorn `--forwarded-allow-ips`(기본 `127.0.0.1`)로 믿을 프록시를 정한다. 앱은 `X-Forwarded-For`를 직접 읽지 않는다.
+- **실행 통계:** `GET /api/stats`는 인증 없이 열려 있다. 질문 내용은 내보내지 않지만, 공개 배포에서 숨기려면 프록시에서 막는다.
 - **오류 형식:**
   - `errors[]`의 각 항목은 `{step, code, message, issues[]}`이다. 화면은 `step`을 단계 이름으로 바꿔 보여준다([ErrorPanel.tsx](../../frontend/src/components/ErrorPanel.tsx)).
   - 오류 코드 목록은 에이전트 설계 개요 3.7절, 증상별 조치는 10.2절에 있다.
@@ -190,8 +196,8 @@ API 테스트([tests/integration/test_api.py](../tests/integration/test_api.py))
 1. FastAPI가 요청 본문을 검증한다. 실패하면 422.
 2. 의존성을 만든다.
    - 연결 풀: 앱 수명 동안 하나(최소 1, 최대 5)를 함께 쓴다.
-   - LLM과 임베딩 클라이언트: **요청마다 새로 만든다.**
-   - 설정이 없으면 503.
+   - LLM과 임베딩 클라이언트: 앱을 만들 때 한 번 만들어 모든 요청이 함께 쓴다(OpenAI SDK 클라이언트는 스레드 안전).
+   - 설정이 없으면 그때의 오류를 요청마다 503으로 알린다.
 3. 엔드포인트가 동기 함수라 Starlette 스레드풀에서 실행된다. 스레드풀은 anyio 기본값인 40개이고 다른 동기 처리와 함께 쓴다. 그래서 프로세스 하나가 동시에 처리하는 분석은 최대 약 40건이고, 나머지는 스레드를 기다린다.
 4. `AnalysisWorkflow.run`이 그래프를 실행한다.
    - LLM: 해석, 선택, 계획(재생성하면 2번), 설명으로 4~5번 호출한다.
@@ -225,7 +231,7 @@ LLM을 기다리는 동안에는 연결을 붙잡지 않는다. 그래서 동시
 ### 5.4 타임아웃과 재시도
 
 - API 수준의 분석 시간 제한은 없다.
-- LLM·임베딩 호출은 OpenAI SDK 기본값을 쓴다. 연결 5초, 읽기 600초, 재시도 2회다. 호출 하나가 최악의 경우 10분씩 3번까지 걸릴 수 있다.
+- LLM·임베딩 호출은 `LLM_TIMEOUT_SECONDS`(기본 60초)와 `LLM_MAX_RETRIES`(기본 1회)를 쓴다. 이전에는 SDK 기본값(읽기 600초, 재시도 2회)이라 호출 하나가 최악의 경우 30분까지 걸릴 수 있었다. 지금도 호출 하나가 최악 120초이고 분석 1건이 LLM을 4~5번 부르므로, 분석 전체의 시간 예산은 아직 없다(8.2절). gpt-4o-mini 호출은 보통 수 초라 60초에 여유가 있지만, 로컬 thinking 모델은 늘려야 할 수 있다.
 - 화면 개발 서버의 프록시는 300초에 연결을 끊는다. 끊겨도 서버는 분석을 끝까지 실행하고 기록을 남기지만, 화면은 결과를 받지 못한다.
 - 취소 기능은 없다.
 
@@ -241,8 +247,8 @@ LLM을 기다리는 동안에는 연결을 붙잡지 않는다. 그래서 동시
 
 | 테이블 | 컬럼 | 비고 |
 |---|---|---|
-| `analysis.run` | `run_id` PK, `question`, `status`, `analysis_plan`, `datasets`(ID·기준 시점), `operations`, `crs`, `result_id`, `llm_provider`, `llm_model`, `errors`, `state`(지도·최종 응답을 뺀 `AgentState`), `started_at`, `finished_at` | 모든 실행. 인덱스는 PK뿐 |
-| `analysis.result` | `result_id` PK, `run_id` FK, `response`(GeoJSON을 포함한 `FinalResponse`), `created_at` | 성공한 실행만. 인덱스는 PK뿐(`run_id`에도 없음). 1건의 저장 크기는 평균 약 217KB (JSON 텍스트 594KB, TOAST 압축) |
+| `analysis.run` | `run_id` PK, `question`, `status`, `analysis_plan`, `datasets`(ID·기준 시점), `operations`, `crs`, `result_id`, `llm_provider`, `llm_model`, `errors`, `state`(지도·최종 응답을 뺀 `AgentState`), `started_at`, `finished_at` | 모든 실행. 인덱스는 PK와 `started_at`(하루 한도·통계) |
+| `analysis.result` | `result_id` PK, `run_id` FK, `response`(GeoJSON을 포함한 `FinalResponse`), `created_at` | 성공한 실행만. 인덱스는 PK와 `run_id`(실행 기록 조회). 1건의 저장 크기는 평균 약 217KB (JSON 텍스트 594KB, TOAST 압축) |
 
 특징은 다음과 같다.
 
@@ -252,7 +258,7 @@ LLM을 기다리는 동안에는 연결을 붙잡지 않는다. 그래서 동시
   - 비동기 실행으로 바꾸려면 시작할 때 행을 만들고 끝날 때 갱신하도록 바꿔야 한다.
 - **보존 정책이 없다:** 결과 1건이 약 217KB라서 1만 건이면 약 2GB다.
 - **사용자 구분이 없다:** 인증을 붙이면 실행 기록에 사용자 식별자가 필요하다.
-- **조회용 인덱스가 없다:** 실행 기록 조회(`GET /api/analyses/{run_id}`)는 `analysis.result`를 `run_id`로 찾는데 인덱스가 없다. 실행 목록이나 통계를 보려면 `started_at`, `status` 등에도 인덱스가 필요하다.
+- **조회용 인덱스:** `analysis.result(run_id)`와 `analysis.run(started_at)`에 인덱스가 있다(`CREATE INDEX IF NOT EXISTS`라 기존 DB에도 `init-db`로 더해진다). 실행 목록을 상태별로 보려면 `status` 등에도 필요하다.
 - **마이그레이션 도구가 없다:**
   - `schema.sql`은 `CREATE ... IF NOT EXISTS`라 새 테이블만 만들고, 기존 테이블의 컬럼 변경은 반영하지 못한다.
   - 검색 임베딩 테이블의 구조를 바꿀 때 테이블을 직접 지우고 다시 만든 적이 있다.
@@ -272,17 +278,17 @@ API 요청은 `datasets`와 `catalog`를 읽기만 한다. 현재 개발 DB 크�
 | 항목 | 현재 |
 |---|---|
 | 인증·권한 | 없음 |
-| 요청 제한·비용 한도 | 없음. 분석 1건이 LLM 4~5회와 임베딩 1회를 호출한다 |
+| 요청 제한·비용 한도 | `POST /api/analyses`에 IP별 요청 제한(기본 5/분, slowapi·프로세스 메모리)과 한국 시간 기준 하루 분석 한도(기본 300건, `analysis.run` 수)를 둔다. 넘으면 429 + `Retry-After`. 분석 1건이 LLM 4~5회와 임베딩 1회를 호출한다. 인증과 사용자별 한도는 없다 |
 | 비밀 | `.env`(git 제외)의 `OPENAI_API_KEY`, `SEOUL_OPEN_API_KEY`. 서버에서만 쓰고 화면에는 내려가지 않는다. 서울 OpenAPI는 `http` 주소의 경로에 인증키를 넣어 호출하므로, 키가 암호화되지 않은 채 전송된다 |
 | CORS | `CORS_ALLOW_ORIGINS` JSON 배열로 허용 Origin을 지정한다(기본 `[]`). GET·POST와 Content-Type을 허용하고 쿠키 credentials는 허용하지 않는다. 개발 중에는 Vite 프록시로 같은 출처에서 호출한다 |
-| 압축 | 없음. 성공 응답은 약 590KB다 |
+| 압축 | `GZipMiddleware`(1,000바이트 이상). 성공 응답 중앙값 591KB → 117KB(저장된 결과 20건 측정) |
 | 로그 | 앱 로그 설정이 없다. 예상하지 못한 예외(`INTERNAL_ERROR`)만 `logger.exception`으로 남는데, 설정이 없어 파이썬 기본 처리로 stderr에 출력된다. 접근 로그는 uvicorn 기본값이다 |
-| 지표·알림 | 없음. 실행 기록의 시작·종료 시각, 모델, 오류 코드가 사실상 유일한 운영 데이터다 |
+| 지표·알림 | `GET /api/stats`가 실행 기록에서 성공률, 소요 시간 p50·p90, 많은 오류 코드, 모델별 건수를 계산한다. 알림은 없다 |
 | 헬스 체크 | `/api/health`. DB 연결만 확인한다 |
 | SQL 안전성 | LLM은 SQL을 만들지 않는다. 테이블·컬럼 이름은 메타데이터로 확인한 뒤 `Identifier`로, 값은 파라미터로 넣는다. 분석 SQL은 읽기 전용 트랜잭션에서 실행한다 |
 | LLM 데이터 보존 | OpenAI Responses 호출은 `store=False`로 보낸다 |
 | 배포 | 없음. compose에는 DB만 있고, API와 화면은 개발 서버로 실행한다. 화면 빌드 결과(`npm run build` → `frontend/dist`)를 서빙하는 곳도 없다 |
-| CI | 없음. 로컬 작업 후 검증은 `python scripts/check.py`(ruff, pytest, 화면 타입 검사·빌드)로 하고, 린트·포맷 설정은 `pyproject.toml`에 있다 |
+| CI | GitHub Actions `check.yml`: push·PR마다 compose로 PostGIS+pgvector DB를 빌드해 띄우고 `python scripts/check.py`(ruff, pytest unit+integration, 화면 타입 검사·빌드)를 돌린다. e2e는 돌리지 않는다. 린트·포맷 설정은 `pyproject.toml`에 있다 |
 | 의존성 고정 | Python은 `pyproject.toml`에 하한만 있고 lock 파일이 없다. 화면은 `package-lock.json`이 있다. LangGraph를 설치할 때 의존성 제약 때문에 `websockets`가 17.2에서 16.1.1로 내려간 적이 있다 |
 
 ## 8. 과제와 개발 쪽 의견
@@ -314,7 +320,7 @@ GET  /api/analyses/{run_id}/events → 단계 이벤트 (SSE, 선택)
 
 ### 8.2 타임아웃·재시도 정책 (먼저)
 
-- LLM·임베딩 호출마다 타임아웃과 재시도 횟수를 명시한다. 지금은 SDK 기본값(읽기 600초, 재시도 2회)이다.
+- ~~LLM·임베딩 호출마다 타임아웃과 재시도 횟수를 명시한다.~~ 2026-11-22: `LLM_TIMEOUT_SECONDS`(60)·`LLM_MAX_RETRIES`(1)로 했다.
 - 분석 전체의 시간 예산을 정하고, 넘으면 실패로 기록한다.
 - 리버스 프록시와 화면의 타임아웃을 이 예산에 맞춘다. 비동기로 바꾸면 요청 자체는 짧아진다.
 
@@ -322,6 +328,7 @@ GET  /api/analyses/{run_id}/events → 단계 이벤트 (SSE, 선택)
 
 - 공개 범위에 따라 인증 방식을 정한다. 내부 전용이면 리버스 프록시 수준의 접근 제한으로도 충분할 수 있다.
 - 사용자별 요청 제한과 일일 비용 한도를 둔다. 분석 1건의 호출 수가 거의 정해져 있어(LLM 4~5회, 임베딩 1회) 건수로 비용을 묶기 쉽다.
+  - 2026-11-22: 인증이 없어 사용자 대신 IP별 제한(`ANALYSIS_RATE_LIMIT`)과 전체 하루 건수 한도(`ANALYSIS_DAILY_LIMIT`)를 두었다. 인증을 붙이면 키를 사용자로 바꾸고, 여러 프로세스로 띄우면 제한 저장소를 Redis 등 공유 저장소로 바꾼다(slowapi `storage_uri`).
 - 실행 기록에 사용자 식별자를 넣는다.
 
 ### 8.4 DB 마이그레이션 (데이터 담당 D9와 함께)
@@ -351,7 +358,7 @@ GET  /api/analyses/{run_id}/events → 단계 이벤트 (SSE, 선택)
 
 ### 8.7 CI와 의존성 고정
 
-- 로컬 검증과 같은 `python scripts/check.py`를 CI에서 돌린다. integration 테스트는 PostGIS·pgvector DB가 필요하므로 `docker/postgres` 이미지를 서비스로 띄운다.
+- ~~로컬 검증과 같은 `python scripts/check.py`를 CI에서 돌린다.~~ 2026-11-22: `.github/workflows/check.yml`. Actions의 `services:`는 미리 만든 이미지만 받으므로 서비스 컨테이너 대신 `docker compose up -d --build --wait`로 로컬과 같은 `docker/postgres` 이미지를 빌드해 띄운다. 아직 GitHub에서 실행해 보지 않았다.
 - E2E는 실제 LLM 키가 필요하므로 수동으로 돌리거나 별도 일정으로 돌린다.
 - Python lock 파일(uv, pip-tools 등)을 추가한다.
 
@@ -364,10 +371,12 @@ GET  /api/analyses/{run_id}/events → 단계 이벤트 (SSE, 선택)
 
 작고 위험이 낮아 먼저 해도 되는 것이다.
 
-- **클라이언트 재사용:** LLM·임베딩 클라이언트를 요청마다 만들지 않고, 앱 시작 때 한 번 만든다.
-- **응답 압축:** `GZipMiddleware`나 리버스 프록시로 압축한다. DB 저장 압축만으로도 594KB가 217KB로 줄어든다.
-- **타임아웃 명시:** OpenAI 호출의 타임아웃과 재시도 횟수를 명시한다.
-- **조회 인덱스:** `analysis.result(run_id)`와 `analysis.run(started_at)`에 인덱스를 둔다.
+2026-11-22에 네 가지 모두 했다.
+
+- ~~**클라이언트 재사용:**~~ LLM·임베딩 클라이언트를 앱 시작 때 한 번 만든다.
+- ~~**응답 압축:**~~ `GZipMiddleware(minimum_size=1000)`. 성공 응답 중앙값 591KB → 117KB.
+- ~~**타임아웃 명시:**~~ `LLM_TIMEOUT_SECONDS`·`LLM_MAX_RETRIES`.
+- ~~**조회 인덱스:**~~ `analysis.result(run_id)`, `analysis.run(started_at)`.
 
 ## 9. 지켜야 할 계약
 
@@ -415,6 +424,7 @@ GET  /api/analyses/{run_id}/events → 단계 이벤트 (SSE, 선택)
 | DB 스키마 | [app/db/schema.sql](../app/db/schema.sql) |
 | DB 이미지 | [docker/postgres/Dockerfile](../docker/postgres/Dockerfile), [docker-compose.yml](../docker-compose.yml) |
 | CLI | [app/cli.py](../app/cli.py) |
+| CI | [.github/workflows/check.yml](../../.github/workflows/check.yml), [scripts/check.py](../scripts/check.py) |
 | API 테스트 | [tests/integration/test_api.py](../tests/integration/test_api.py) |
 | 화면의 API 호출·타입 | [frontend/src/api.ts](../../frontend/src/api.ts), [frontend/src/types.ts](../../frontend/src/types.ts) |
 
