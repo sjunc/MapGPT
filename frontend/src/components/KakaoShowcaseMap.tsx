@@ -3,9 +3,9 @@ import type { Feature, MultiPolygon, Position } from "geojson";
 import { loadKakaoMaps } from "../maps/kakaoLoader";
 import { toKakaoPolygonPaths } from "../maps/kakaoGeometry";
 import type { FinalResponse, UnitProperties } from "../types";
-import { classColors, formatValue, layerStyle, symbolMaxRadius } from "../theme";
+import { classColors, formatValue, layerStyle, MAP_CHROME, symbolMaxRadius } from "../theme";
 
-export type ShowcaseView = "choropleth" | "bubble" | "point" | "bivariate";
+export type ShowcaseView = "choropleth" | "bubble" | "point" | "hexbin" | "bivariate";
 export type ShowcaseFeature = Feature<MultiPolygon, UnitProperties>;
 
 interface Props {
@@ -22,6 +22,15 @@ interface Props {
 }
 
 const CENTER = { lat: 37.5665, lng: 126.978 };
+// 육각 격자 칸 아래에 까는 옅은 단위 경계선 (MapLibre 화면의 지역 경계선 색)
+const UNIT_LINE = { strokeWeight: 1, strokeColor: MAP_CHROME.light.outline, strokeOpacity: 0.7 };
+
+type UnitShape = kakao.maps.Polygon | kakao.maps.Polyline;
+
+/** 강조를 풀 때 돌아갈 보기별 기본 선 */
+function baseStroke(view: ShowcaseView) {
+  return view === "hexbin" ? UNIT_LINE : { strokeWeight: 1, strokeColor: "#ffffff", strokeOpacity: view === "bubble" ? 0.5 : 0.9 };
+}
 // 시연 전용 3×3 팔레트. 실제 서비스에서는 서버가 제공하는 분류 기준을 따른다.
 export const BIVARIATE_COLORS = [
   ["#e8e8e8", "#adc8d7", "#6c9ebd"],
@@ -122,7 +131,7 @@ export function KakaoShowcaseMap({
   const [instance, setInstance] = useState<{ maps: typeof kakao.maps; map: kakao.maps.Map } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const polygonsByKey = useRef(new Map<string, kakao.maps.Polygon[]>());
+  const polygonsByKey = useRef(new Map<string, UnitShape[]>());
   const previousHighlight = useRef<string[]>([]);
   const onHoverRef = useRef(onHover);
   const onSelectRef = useRef(onSelect);
@@ -165,12 +174,12 @@ export function KakaoShowcaseMap({
     if (!instance || !result) return;
     const { maps, map } = instance;
     const features = result.map_layer.geojson.features as ShowcaseFeature[];
-    const shapes: kakao.maps.Polygon[] = [];
+    const shapes: UnitShape[] = [];
     const markers: kakao.maps.Marker[] = [];
     const overlays: kakao.maps.CustomOverlay[] = [];
     let clusterer: kakao.maps.MarkerClusterer | null = null;
     const removeEvents: Array<() => void> = [];
-    const shapesByKey = new Map<string, kakao.maps.Polygon[]>();
+    const shapesByKey = new Map<string, UnitShape[]>();
     const thresholds = getBivariateBreaks(features);
     const displayPolygons = view === "choropleth" || view === "bivariate" || view === "bubble";
 
@@ -189,9 +198,7 @@ export function KakaoShowcaseMap({
           const polygon = new maps.Polygon({
             map,
             path,
-            strokeWeight: 1,
-            strokeColor: "#ffffff",
-            strokeOpacity: view === "bubble" ? 0.5 : 0.9,
+            ...baseStroke(view),
             fillColor: fill,
             fillOpacity: view === "bubble" ? 0.13 : 0.7,
             zIndex: 1,
@@ -262,6 +269,60 @@ export function KakaoShowcaseMap({
       }
     }
 
+    if (view === "hexbin") {
+      // 단위 경계는 칸 아래에 옅은 선으로만 깐다. 면이 없어서 선택한 단위가 위로 올라와도 칸 클릭을 막지 않는다.
+      for (const feature of features) {
+        const lines = toKakaoPolygonPaths(feature.geometry, maps)
+          .map((rings) => new maps.Polyline({ map, path: rings, ...UNIT_LINE, zIndex: 1 }));
+        shapes.push(...lines);
+        shapesByKey.set(feature.properties.unit_key, lines);
+      }
+
+      const hexbins = result.map_layer.hexbins;
+      if (hexbins) {
+        const colors = classColors("light", hexbins.classification.class_count, "high");
+        // 칸을 누르면 그 칸의 개수를 보인다. 내용은 DOM과 textContent로만 만든다.
+        const tip = document.createElement("div");
+        tip.className = "kshow-hex-tip";
+        const tipCount = document.createElement("strong");
+        const tipText = document.createElement("span");
+        tipText.textContent = `이 육각형 칸(한 변 ${hexbins.cell_size_m.toLocaleString("ko-KR")}m) 안의 수`;
+        tip.append(tipCount, tipText);
+        // 칸을 누르기 전에는 지도에 올리지 않으므로 위치는 아무 곳이나 둔다.
+        const tipOverlay = new maps.CustomOverlay({
+          content: tip, position: new maps.LatLng(CENTER.lat, CENTER.lng), xAnchor: 0.5, yAnchor: 1, zIndex: 6,
+        });
+        overlays.push(tipOverlay);
+        // 카카오는 도형을 누르면 지도 click도 함께 보낸다. 같은 클릭으로 연 표시를 바로 닫지 않도록 연 시각을 둔다.
+        let tipOpenedAt = 0;
+
+        for (const hex of hexbins.geojson.features) {
+          const index = classIndex(hex.properties.count, hexbins.classification.breaks);
+          const fillColor = colors[Math.min(index, colors.length - 1)];
+          for (const path of toKakaoPolygonPaths(hex.geometry, maps)) {
+            const polygon = new maps.Polygon({
+              map, path, fillColor, fillOpacity: 0.85,
+              strokeWeight: 1, strokeColor: MAP_CHROME.light.separator, strokeOpacity: 0.8, zIndex: 2,
+            });
+            shapes.push(polygon);
+            const click = (event: kakao.maps.event.MouseEvent) => {
+              tipOpenedAt = performance.now();
+              tipCount.textContent = `${hex.properties.count.toLocaleString("ko-KR")}곳`;
+              tipOverlay.setPosition(event.latLng);
+              tipOverlay.setMap(map);
+            };
+            maps.event.addListener(polygon, "click", click);
+            removeEvents.push(() => maps.event.removeListener(polygon, "click", click));
+          }
+        }
+        const closeTip = () => {
+          if (performance.now() - tipOpenedAt > 100) tipOverlay.setMap(null);
+        };
+        maps.event.addListener(map, "click", closeTip);
+        removeEvents.push(() => maps.event.removeListener(map, "click", closeTip));
+      }
+    }
+
     if (view === "point") {
       if (demo) {
         for (const feature of notable) {
@@ -311,14 +372,15 @@ export function KakaoShowcaseMap({
   useEffect(() => {
     const next = [hoveredKey, selectedKey].filter((key): key is string => key !== null);
     const keys = new Set([...previousHighlight.current, ...next]);
+    const base = baseStroke(view);
     for (const key of keys) {
       for (const polygon of polygonsByKey.current.get(key) ?? []) {
         const selected = key === selectedKey;
         const hovered = key === hoveredKey;
         polygon.setOptions({
-          strokeWeight: selected ? 4 : hovered ? 3 : 1,
-          strokeColor: selected ? "#ea580c" : hovered ? "#0f172a" : "#ffffff",
-          strokeOpacity: selected || hovered ? 1 : 0.9,
+          strokeWeight: selected ? 4 : hovered ? 3 : base.strokeWeight,
+          strokeColor: selected ? "#ea580c" : hovered ? "#0f172a" : base.strokeColor,
+          strokeOpacity: selected || hovered ? 1 : base.strokeOpacity,
         });
         polygon.setZIndex(selected ? 5 : hovered ? 3 : 1);
       }

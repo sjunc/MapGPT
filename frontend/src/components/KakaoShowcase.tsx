@@ -4,7 +4,7 @@ import { loadDemoAnalysis } from "../demo";
 import { addRecentRun, readRecentRuns, saveRecentRuns, type RecentRun } from "../runHistory";
 import { readScope, saveScope, SCOPES, SCOPE_HINTS, SCOPE_LABELS } from "../scope";
 import { formatValue, classColors, layerStyle } from "../theme";
-import type { AnalysisScope, FinalResponse, MapView, WorkflowError } from "../types";
+import type { AnalysisScope, Classification, FinalResponse, MapView, WorkflowError } from "../types";
 import { ErrorPanel } from "./ErrorPanel";
 import { ExecutionTrace } from "./ExecutionTrace";
 import {
@@ -21,8 +21,11 @@ const VIEWS: Array<{ id: ShowcaseView; api: MapView; label: string; icon: string
   { id: "choropleth", api: "choropleth", label: "단계 구분도", icon: "▦", explanation: "서버에서 계산한 구간으로 지역별 지표를 표현" },
   { id: "bubble", api: "proportional_symbol", label: "비례 원", icon: "◉", explanation: "분석 단위의 지표값을 원의 면적으로 표시" },
   { id: "point", api: "point", label: "시설 위치", icon: "●", explanation: "서버가 제공한 시설 좌표로 마커 표시" },
+  { id: "hexbin", api: "hexbin", label: "육각 격자", icon: "⬢", explanation: "같은 크기 육각형 칸마다 센 개수를 서버 구간 색으로 표시" },
   { id: "bivariate", api: "bivariate", label: "이변량", icon: "▥", explanation: "서버가 제공한 두 지표의 구간을 함께 표시" },
 ];
+// 정적 데모 데이터에는 시설 점과 육각 격자가 없어 원래 네 가지 보기만 쓴다.
+const DEMO_VIEWS = new Set<ShowcaseView>(["choropleth", "bubble", "point", "bivariate"]);
 
 function mapViewToShowcase(view: MapView): ShowcaseView {
   return VIEWS.find((item) => item.api === view)?.id ?? "choropleth";
@@ -51,6 +54,27 @@ function numberOf(feature: ShowcaseFeature | null, key: string): number | null {
   if (!feature) return null;
   const value = feature.properties[key];
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** 분위 구간 범례. 구간은 [경계값 이상, 다음 경계값 미만)이다 (MapLibre 화면의 Legend와 같다). */
+function ClassScale({ colors, classification }: { colors: string[]; classification: Classification }) {
+  const { breaks } = classification;
+  const label = (i: number) => {
+    if (breaks.length === 0) return `${formatValue(classification.min)}~${formatValue(classification.max)}`;
+    if (i === 0) return `${formatValue(breaks[0])} 미만`;
+    if (i === breaks.length) return `${formatValue(breaks[i - 1])} 이상`;
+    return `${formatValue(breaks[i - 1])}~${formatValue(breaks[i])}`;
+  };
+  return (
+    <div className="kshow-class-scale" style={{ gridTemplateColumns: `repeat(${colors.length}, 1fr)` }}>
+      {colors.map((color, i) => (
+        <div key={`${color}-${i}`}>
+          <i style={{ background: color }} />
+          <span>{label(i)}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 /** 비례 원을 그리는 단위 수 (지도 지표 값이 0보다 큰 단위) */
@@ -94,6 +118,19 @@ function MapLegend({ view, result, demo }: { view: ShowcaseView; result: FinalRe
         <>
           <div className="kshow-point-scale"><span>📍</span>{demo ? "시연용 가상 위치" : "백엔드 시설 좌표"}</div>
           <small>{demo ? "실제 시설 좌표가 아님" : `시설 ${layer.points?.count.toLocaleString("ko-KR") ?? 0}개 · 가까운 곳은 묶어 개수로 표시`}</small>
+        </>
+      )}
+      {view === "hexbin" && layer.hexbins && (
+        <>
+          <ClassScale
+            colors={classColors("light", layer.hexbins.classification.class_count, "high")}
+            classification={layer.hexbins.classification}
+          />
+          <div className="kshow-legend-ends"><span>적음</span><span>많음</span></div>
+          <small>
+            {layer.metric_label} · 육각형 한 칸: 한 변 {layer.hexbins.cell_size_m.toLocaleString("ko-KR")}m, 약{" "}
+            {formatValue(layer.hexbins.cell_area_km2)}km² · 분석 지역 안 {layer.hexbins.count.toLocaleString("ko-KR")}곳
+          </small>
         </>
       )}
       {view === "bivariate" && (
@@ -173,13 +210,14 @@ export function KakaoShowcase() {
   }, []);
 
   const choices = useMemo(() => {
-    if (demo || !result) return VIEWS;
+    if (demo || !result) return VIEWS.filter((item) => DEMO_VIEWS.has(item.id));
     const supported = new Set(layerStyle(result.map_layer).views);
     // 카카오맵으로 구현한 보기만 노출한다. 서버가 허용하지 않은 보기/가짜 데이터를 보여주지 않는다.
     return VIEWS.filter((item) =>
       (item.id === "choropleth" && supported.has("choropleth")) ||
       (item.id === "bubble" && supported.has("proportional_symbol")) ||
       (item.id === "point" && supported.has("point") && Boolean(result.map_layer.points)) ||
+      (item.id === "hexbin" && supported.has("hexbin") && Boolean(result.map_layer.hexbins)) ||
       (item.id === "bivariate" && supported.has("bivariate") && Boolean(result.map_layer.bivariate))
     );
   }, [demo, result]);

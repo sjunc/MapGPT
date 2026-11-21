@@ -95,6 +95,17 @@
 .kshow-swatches { display: grid; grid-template-columns: repeat(5, 1fr); height: 14px; gap: 3px; }
 .kshow-swatches div { border-radius: 2px; }
 .kshow-legend-ends { display: flex; justify-content: space-between; margin: 7px 0 10px; font-size: 10px; color: #516276; }
+.kshow-class-scale { display: grid; gap: 3px; }
+.kshow-class-scale i { display: block; height: 14px; border-radius: 2px; }
+.kshow-class-scale span {
+  display: block; margin-top: 4px; color: #516276; font-size: 9.5px; line-height: 1.3;
+  font-variant-numeric: tabular-nums; word-break: keep-all;
+}
+.kshow-hex-tip {
+  display: grid; gap: 2px; margin-bottom: 8px; padding: 8px 11px; border: 1px solid #dbe4ec; border-radius: 9px;
+  background: rgba(255,255,255,.97); box-shadow: 0 6px 20px rgba(15,23,42,.16); color: #243b54; font-size: 11px; white-space: nowrap;
+}
+.kshow-hex-tip strong { font-size: 14px; color: #155da0; }
 .kshow-legend small { display: block; color: #78899a; font-size: 10px; line-height: 1.5; }
 .kshow-legend-footer { display: flex; justify-content: space-between; margin-top: 11px; padding-top: 10px; border-top: 1px solid #ebeff4; color: #64748b; font-size: 10px; }
 .kshow-bubble-scale { display: flex; align-items: center; gap: 12px; min-height: 45px; margin: 4px 0 10px; }
