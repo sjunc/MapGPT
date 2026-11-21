@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.api.main import create_app, get_embedder, get_llm
 from app.config import Settings
+from app.llm.base import LLMError
 from tests.fakes import FakeEmbedder, daycare_llm
 from tests.support import QUESTION
 
@@ -96,3 +97,37 @@ def test_catalog_and_health_endpoints(client):
         "llm_model": "",
         "embedding_model": "test-embedding",
     }
+
+
+def test_export_csv_and_geojson_from_stored_result(client):
+    body = client.post("/api/analyses", json={"question": QUESTION}).json()
+    run_id = body["run_id"]
+
+    csv_response = client.get(f"/api/analyses/{run_id}/export", params={"format": "csv"})
+    geojson_response = client.get(f"/api/analyses/{run_id}/export", params={"format": "geojson"})
+
+    assert csv_response.status_code == 200
+    assert csv_response.headers["content-type"] == "text/csv; charset=utf-8"
+    assert csv_response.headers["content-disposition"] == f'attachment; filename="mapgpt-{run_id[:8]}.csv"'
+    text = csv_response.content.decode("utf-8")
+    lines = text.removeprefix("﻿").splitlines()
+    assert text.startswith("﻿")
+    assert lines[0].startswith("순위,지역 코드,지역 이름,상위 지역,")
+    assert len(lines) == 1 + len(body["result"]["map_layer"]["geojson"]["features"])
+    assert lines[1].split(",")[:3] == ["1", body["result"]["ranking"][0]["unit_key"], "카동"]
+
+    assert geojson_response.status_code == 200
+    assert geojson_response.headers["content-type"] == "application/geo+json"
+    assert geojson_response.headers["content-disposition"].endswith(f'mapgpt-{run_id[:8]}.geojson"')
+    assert geojson_response.json() == body["result"]["map_layer"]["geojson"]
+
+
+def test_export_of_failed_or_unknown_run(client):
+    client.app.dependency_overrides[get_llm] = lambda: daycare_llm(interpreted=[LLMError("OpenAI 호출 실패: 401")])
+    failed = client.post("/api/analyses", json={"question": QUESTION}).json()
+
+    assert failed["status"] == "failed"
+    assert client.get(f"/api/analyses/{failed['run_id']}/export").status_code == 409
+    assert client.get(f"/api/analyses/{uuid.uuid4()}/export").status_code == 404
+    assert client.get(f"/api/analyses/{failed['run_id']}/export", params={"format": "xlsx"}).status_code == 422
+
