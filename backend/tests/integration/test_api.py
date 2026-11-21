@@ -131,3 +131,16 @@ def test_export_of_failed_or_unknown_run(client):
     assert client.get(f"/api/analyses/{uuid.uuid4()}/export").status_code == 404
     assert client.get(f"/api/analyses/{failed['run_id']}/export", params={"format": "xlsx"}).status_code == 422
 
+
+def test_suggestions_only_use_registered_datasets(client):
+    seoul = client.get("/api/suggestions").json()
+    national = client.get("/api/suggestions", params={"scope": "national"}).json()
+
+    # 테스트 카탈로그에는 행정동 경계·인구·어린이집만 있어 시군구 경계·전국 경계가 필요한 질문은 빠진다.
+    assert seoul == [
+        "서울 행정동 중 영유아 인구 대비 어린이집이 부족한 곳은?",
+        "강남구 어린이집이 어디에 몰려 있나요?",
+        "서울 행정동별 0~5세 인구",
+    ]
+    assert national == seoul
+    assert client.get("/api/suggestions", params={"scope": "busan"}).status_code == 422

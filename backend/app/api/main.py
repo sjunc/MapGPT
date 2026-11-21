@@ -12,9 +12,11 @@ from fastapi.responses import JSONResponse, Response
 from psycopg_pool import ConnectionPool
 
 from app.api.schemas import AnalysisRequest, AnalysisResponse
+from app.catalog.suggestions import suggested_questions
 from app.config import Settings, get_settings
 from app.data_sources.acquisition import DataAcquirer
 from app.domain.catalog import DatasetMetadata
+from app.domain.enums import AnalysisScope
 from app.llm.base import LLMError, StructuredLLM
 from app.llm.embeddings import Embedder, EmbeddingError
 from app.llm.factory import create_embedder, create_llm
@@ -106,6 +108,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def read_datasets(pool: Pool) -> list[DatasetMetadata]:
         with pool.connection() as conn:
             return list_datasets(conn)
+
+    @app.get("/api/suggestions", response_model=list[str])
+    def read_suggestions(pool: Pool, scope: AnalysisScope = AnalysisScope.SEOUL) -> list[str]:
+        """화면 빈 상태의 예시 질문. 필요한 Dataset이 모두 등록된 질문만 돌려준다."""
+        with pool.connection() as conn:
+            registered = {d.dataset_id for d in list_datasets(conn)}
+        return suggested_questions(scope, registered)
 
     @app.get("/api/health")
     def health(pool: Pool) -> dict[str, str]:
