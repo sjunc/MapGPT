@@ -54,6 +54,8 @@ export interface RunProvenance {
   result_validation?: { issues?: ValidationIssue[] } | null;
   execution_results?: { operations?: { label?: string; tool?: string; duration_ms?: number }[] } | null;
   errors?: WorkflowError[];
+  // 2026-11-22부터 기록. 그 전 실행에는 없다.
+  step_timings?: { step: string; duration_ms: number }[];
 }
 
 export interface StoredAnalysis {

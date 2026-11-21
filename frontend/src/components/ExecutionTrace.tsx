@@ -1,3 +1,4 @@
+import { STEP_NAMES } from "./ErrorPanel";
 import type { RunProvenance } from "../api";
 import type { ValidationIssue } from "../types";
 
@@ -133,6 +134,19 @@ export function ExecutionTrace({ provenance, runId, loading, error, demo, onRefr
             <details>
               <summary>6. 결과 검증</summary>
               <IssueList issues={provenance.result_validation.issues} />
+            </details>
+          )}
+
+          {!!provenance.step_timings?.length && (
+            <details>
+              <summary>단계별 소요 시간 (합계 {(provenance.step_timings.reduce((sum, item) => sum + item.duration_ms, 0) / 1000).toFixed(1)}초)</summary>
+              <ol>
+                {provenance.step_timings.map((item, i) => (
+                  <li key={`${item.step}-${i}`}>
+                    {STEP_NAMES[item.step] ?? item.step} · {(item.duration_ms / 1000).toFixed(2)}초
+                  </li>
+                ))}
+              </ol>
             </details>
           )}
 
