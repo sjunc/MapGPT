@@ -168,6 +168,7 @@ export function KakaoShowcaseMap({
     const shapes: kakao.maps.Polygon[] = [];
     const markers: kakao.maps.Marker[] = [];
     const overlays: kakao.maps.CustomOverlay[] = [];
+    let clusterer: kakao.maps.MarkerClusterer | null = null;
     const removeEvents: Array<() => void> = [];
     const shapesByKey = new Map<string, kakao.maps.Polygon[]>();
     const thresholds = getBivariateBreaks(features);
@@ -267,11 +268,11 @@ export function KakaoShowcaseMap({
           removeEvents.push(() => maps.event.removeListener(marker, "click", click));
         }
       } else {
-        // 700개를 넘는 경우 초기 렌더링 과부하를 방지한다. 전체 건수는 범례에 별도로 표시.
-        for (const feature of result.map_layer.points?.geojson.features.slice(0, 700) ?? []) {
+        // 모든 시설을 그리되 가까운 마커는 묶어 개수로 보인다. 레벨 5 미만으로 확대하면 묶음이 풀린다.
+        for (const feature of result.map_layer.points?.geojson.features ?? []) {
           const [lng, lat] = feature.geometry.coordinates;
           const marker = new maps.Marker({
-            map, position: new maps.LatLng(lat, lng),
+            position: new maps.LatLng(lat, lng),
             title: feature.properties.name ?? "시설 위치",
           });
           markers.push(marker);
@@ -279,6 +280,7 @@ export function KakaoShowcaseMap({
           maps.event.addListener(marker, "click", click);
           removeEvents.push(() => maps.event.removeListener(marker, "click", click));
         }
+        clusterer = new maps.MarkerClusterer({ map, markers, averageCenter: true, minLevel: 5 });
       }
     }
 
@@ -288,6 +290,8 @@ export function KakaoShowcaseMap({
     return () => {
       for (const remove of removeEvents) remove();
       for (const polygon of shapes) polygon.setMap(null);
+      clusterer?.clear();
+      clusterer?.setMap(null);
       for (const marker of markers) marker.setMap(null);
       for (const overlay of overlays) overlay.setMap(null);
       polygonsByKey.current.clear();

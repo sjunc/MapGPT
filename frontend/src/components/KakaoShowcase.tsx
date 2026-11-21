@@ -85,7 +85,7 @@ function MapLegend({ view, result, demo }: { view: ShowcaseView; result: FinalRe
       {view === "point" && (
         <>
           <div className="kshow-point-scale"><span>📍</span>{demo ? "시연용 가상 위치" : "백엔드 시설 좌표"}</div>
-          <small>{demo ? "실제 시설 좌표가 아님" : `시설 ${layer.points?.count.toLocaleString("ko-KR") ?? 0}개 · 최대 700개 지도 표시`}</small>
+          <small>{demo ? "실제 시설 좌표가 아님" : `시설 ${layer.points?.count.toLocaleString("ko-KR") ?? 0}개 · 가까운 곳은 묶어 개수로 표시`}</small>
         </>
       )}
       {view === "bivariate" && (

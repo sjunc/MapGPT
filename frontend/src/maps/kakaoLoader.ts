@@ -22,7 +22,8 @@ export function loadKakaoMaps(): Promise<typeof kakao.maps> {
 
     const script = document.createElement("script");
     script.async = true;
-    script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(key)}&autoload=false`;
+    // clusterer: 점 지도에서 가까운 시설 마커를 묶는다.
+    script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(key)}&autoload=false&libraries=clusterer`;
 
     let settled = false;
     const timeoutId = window.setTimeout(() => {
