@@ -152,3 +152,17 @@ export interface AnalysisResponse {
   result: FinalResponse | null;
   errors: WorkflowError[];
 }
+
+/** GET /api/stats?days=7 — 최근 실행 기록 통계 (backend/app/api/schemas.py RunStats) */
+export interface RunStats {
+  days: number;
+  since: string;
+  total: number;
+  succeeded: number;
+  failed: number;
+  success_rate: number | null;
+  duration_p50_seconds: number | null;
+  duration_p90_seconds: number | null;
+  top_error_codes: { code: string; runs: number }[];
+  by_llm_model: { llm_model: string; runs: number }[];
+}

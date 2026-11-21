@@ -71,3 +71,44 @@ def get_run(conn: psycopg.Connection, run_id: str) -> dict[str, Any] | None:
 def count_runs_since(conn: psycopg.Connection, since: datetime) -> int:
     """since 이후에 시작한 분석 실행 수 (성공·실패 모두. 실패한 실행도 LLM을 호출한다)."""
     return conn.execute("SELECT count(*) FROM analysis.run WHERE started_at >= %s", (since,)).fetchone()[0]
+
+
+def run_stats(conn: psycopg.Connection, since: datetime) -> dict[str, Any]:
+    """since 이후에 시작한 실행의 건수·성공률·소요 시간 분위수·오류 코드·모델별 건수."""
+    total, succeeded, failed, p50, p90 = conn.execute(
+        """
+        SELECT count(*),
+               count(*) FILTER (WHERE status = 'succeeded'),
+               count(*) FILTER (WHERE status = 'failed'),
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM finished_at - started_at)),
+               percentile_cont(0.9) WITHIN GROUP (ORDER BY extract(epoch FROM finished_at - started_at))
+        FROM analysis.run WHERE started_at >= %s
+        """,
+        (since,),
+    ).fetchone()
+    errors = conn.execute(
+        """
+        SELECT e->>'code', count(DISTINCT r.run_id)
+        FROM analysis.run r, jsonb_array_elements(coalesce(r.errors, '[]'::jsonb)) e
+        WHERE r.started_at >= %s
+        GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 5
+        """,
+        (since,),
+    ).fetchall()
+    models = conn.execute(
+        """
+        SELECT coalesce(llm_model, ''), count(*) FROM analysis.run
+        WHERE started_at >= %s GROUP BY 1 ORDER BY 2 DESC, 1
+        """,
+        (since,),
+    ).fetchall()
+    return {
+        "total": total,
+        "succeeded": succeeded,
+        "failed": failed,
+        "success_rate": succeeded / total if total else None,
+        "duration_p50_seconds": p50,
+        "duration_p90_seconds": p90,
+        "top_error_codes": [{"code": code, "runs": runs} for code, runs in errors],
+        "by_llm_model": [{"llm_model": model, "runs": runs} for model, runs in models],
+    }

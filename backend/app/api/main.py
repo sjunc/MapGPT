@@ -10,7 +10,7 @@ from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
 import psycopg
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -19,7 +19,7 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from app.api.schemas import AnalysisRequest, AnalysisResponse
+from app.api.schemas import AnalysisRequest, AnalysisResponse, RunStats
 from app.config import Settings, get_settings
 from app.data_sources.acquisition import DataAcquirer
 from app.domain.catalog import DatasetMetadata
@@ -27,7 +27,7 @@ from app.llm.base import LLMError, StructuredLLM
 from app.llm.embeddings import Embedder, EmbeddingError
 from app.llm.factory import create_embedder, create_llm
 from app.repositories.catalog_repository import list_datasets
-from app.repositories.run_repository import count_runs_since, get_run
+from app.repositories.run_repository import count_runs_since, get_run, run_stats
 from app.workflows.analysis_workflow import AnalysisWorkflow
 
 
@@ -141,6 +141,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if run is None:
             raise HTTPException(status_code=404, detail="분석 실행 기록이 없습니다")
         return run
+
+    @app.get("/api/stats", response_model=RunStats)
+    def read_stats(pool: Pool, days: Annotated[int, Query(ge=1, le=90)] = 7) -> RunStats:
+        """최근 days일 동안 시작한 분석 실행의 운영 통계 (성공률, 소요 시간, 오류 코드, 모델별 건수)."""
+        since = datetime.now(KST) - timedelta(days=days)
+        with pool.connection() as conn:
+            stats = run_stats(conn, since)
+        return RunStats(days=days, since=since, **stats)
 
     @app.get("/api/datasets", response_model=list[DatasetMetadata])
     def read_datasets(pool: Pool) -> list[DatasetMetadata]:
