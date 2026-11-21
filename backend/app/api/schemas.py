@@ -15,3 +15,12 @@ class AnalysisResponse(BaseModel):
     status: RunStatus
     result: FinalResponse | None
     errors: list[WorkflowError]
+
+
+class AnalysisJobResponse(BaseModel):
+    """백그라운드 분석 작업을 받았다는 응답. 진행은 events_url(SSE), 결과는 result_url로 받는다."""
+
+    run_id: str
+    status: RunStatus
+    events_url: str
+    result_url: str

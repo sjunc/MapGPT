@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     # thinking 모델의 추론 강도 (예: none이면 끔). 비우면 모델 기본값을 쓴다.
     ollama_reasoning_effort: str | None = None
 
+    # 백그라운드 분석 작업 (POST /api/analysis-jobs). 시간 제한은 단계 사이에서 확인한다 (0이면 제한 없음).
+    analysis_max_concurrency: int = 4
+    analysis_time_budget_seconds: float = 180
+
     seoul_open_api_key: SecretStr | None = None
     raw_data_dir: Path = PROJECT_ROOT / "data" / "raw"
     sources_dir: Path = PROJECT_ROOT / "sources"  # 외부 출처 등록 파일 (*.yaml)

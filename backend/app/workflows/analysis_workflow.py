@@ -9,6 +9,8 @@ interpret_query → select_datasets → build_analysis_plan ⇄ validate_plan (�
 """
 
 import logging
+import threading
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -51,7 +53,15 @@ from app.domain.plan import (
 )
 from app.domain.maps import map_focus, map_style, metric_operation, point_count_operation, ratio_operation
 from app.domain.results import ValidationIssue, ValidationReport
-from app.domain.state import AgentState, DatasetHit, DatasetSearch, InterpretedQuery, PlanAttempt, WorkflowError
+from app.domain.state import (
+    AgentState,
+    DatasetHit,
+    DatasetSearch,
+    InterpretedQuery,
+    PlanAttempt,
+    StepTiming,
+    WorkflowError,
+)
 from app.executor.operation_executor import ExecutionContext, execute_operations, prepare_context
 from app.gis.tools import GisToolError, bivariate_spec, create_map_layer, hex_bins, point_locations
 from app.llm.base import LLMError, LLMOutputError, StructuredLLM
@@ -107,6 +117,16 @@ class _RunContext:
     acquirer: DataAcquirer | None = None  # 없으면 아직 받지 않은 등록 출처를 쓸 수 없다
 
 
+@dataclass(frozen=True)
+class ProgressEvent:
+    """단계 하나가 끝났다는 알림. failed면 그 단계에서 실패해 실행이 곧 끝난다."""
+
+    step: WorkflowStep
+    duration_ms: float  # 이 단계에 걸린 시간
+    elapsed_ms: float  # 실행 시작부터 지금까지
+    failed: bool = False
+
+
 class AnalysisWorkflow:
     def __init__(
         self, llm: StructuredLLM, pool: ConnectionPool, embedder: Embedder, acquirer: DataAcquirer | None = None
@@ -116,27 +136,94 @@ class AnalysisWorkflow:
         self._catalog = DatasetCatalog(pool, embedder)
         self._acquirer = acquirer
 
-    def run(self, question: str, scope: AnalysisScope = AnalysisScope.SEOUL) -> AgentState:
+    def run(
+        self,
+        question: str,
+        scope: AnalysisScope = AnalysisScope.SEOUL,
+        *,
+        run_id: str | None = None,
+        on_progress: Callable[[ProgressEvent], None] | None = None,
+        cancel: threading.Event | None = None,
+        time_budget_seconds: float | None = None,
+    ) -> AgentState:
+        """질문 하나를 끝까지 실행하고 실행 기록을 남긴다.
+
+        - 시작할 때 running으로 저장하고, 끝나면 같은 행을 최종 상태로 갱신한다.
+        - 단계가 끝날 때마다 on_progress로 알린다 (화면의 단계별 진행 표시).
+        - cancel이 설정되거나 time_budget_seconds를 넘으면 다음 단계로 가지 않고 실패로 끝낸다.
+          진행 중인 LLM 호출은 끊지 못하므로 그 단계가 끝난 뒤에 멈춘다.
+        """
         initial = AgentState(
-            run_id=str(uuid.uuid4()),
+            run_id=run_id or str(uuid.uuid4()),
             question=question,
             scope=scope,
             llm_provider=self._llm.provider,
             llm_model=self._llm.model,
             started_at=datetime.now(UTC),
         )
+        with self._pool.connection() as conn:
+            save_run(conn, initial)
         gis = _GisSession(self._pool)
+        started = time.monotonic()
+        last = started
+        values: dict[str, Any] = initial.model_dump()
+        timings: list[StepTiming] = []
+        stop: WorkflowError | None = None
         try:
             context = _RunContext(llm=self._llm, catalog=self._catalog, gis=gis, acquirer=self._acquirer)
-            values = ANALYSIS_GRAPH.invoke(initial, context=context)
+            # stream_mode="values"는 단계(노드)가 끝날 때마다 전체 상태를 내보낸다. 첫 값은 입력 상태다.
+            for index, chunk in enumerate(ANALYSIS_GRAPH.stream(initial, context=context, stream_mode="values")):
+                values = chunk
+                if index == 0:
+                    continue
+                now = time.monotonic()
+                step = WorkflowStep(chunk["current_step"])
+                timings.append(StepTiming(step=step, duration_ms=round((now - last) * 1000, 1)))
+                last = now
+                if on_progress is not None:
+                    on_progress(
+                        ProgressEvent(
+                            step=step,
+                            duration_ms=timings[-1].duration_ms,
+                            elapsed_ms=round((now - started) * 1000, 1),
+                            failed=bool(chunk["errors"]),
+                        )
+                    )
+                if chunk["errors"]:
+                    continue
+                stop = _stop_reason(step, cancel, time_budget_seconds, now - started)
+                if stop is not None:
+                    break  # 제너레이터를 닫으면 다음 노드는 실행되지 않는다
         finally:
             gis.release()  # create_map_layer 전에 실패로 끝났을 때
         state = AgentState.model_validate(values)
+        state.step_timings = timings
+        if stop is not None:
+            state.errors = [*state.errors, stop]
+            state.map_layer = None
+            state.final_response = None  # 끝까지 가지 않은 실행은 결과를 남기지 않는다
         state.status = RunStatus.FAILED if state.errors else RunStatus.SUCCEEDED
         state.finished_at = datetime.now(UTC)
         with self._pool.connection() as conn:
             save_run(conn, state)
         return state
+
+
+def _stop_reason(
+    step: WorkflowStep, cancel: threading.Event | None, budget: float | None, elapsed: float
+) -> WorkflowError | None:
+    """다음 단계로 가기 전에 취소·시간 초과를 확인한다. 마지막 단계가 끝났으면 멈출 것이 없다."""
+    if step == WorkflowStep.GENERATE_EXPLANATION:
+        return None
+    if cancel is not None and cancel.is_set():
+        return WorkflowError(step=step, code="CANCELLED", message="사용자가 분석을 취소했습니다")
+    if budget is not None and elapsed > budget:
+        return WorkflowError(
+            step=step,
+            code="TIME_BUDGET_EXCEEDED",
+            message=f"분석 시간 제한({budget:.0f}초)을 넘어 멈췄습니다. 질문을 단순하게 바꾸거나 잠시 뒤 다시 시도해 주세요",
+        )
+    return None
 
 
 # ── LLM 단계 ──────────────────────────────────────────────────────────────

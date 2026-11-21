@@ -1,4 +1,8 @@
-"""Provenance 저장소: 모든 분석 실행을 성공·실패와 관계없이 기록한다."""
+"""Provenance 저장소: 모든 분석 실행을 성공·실패와 관계없이 기록한다.
+
+실행을 시작할 때 running으로 한 번 저장하고, 끝나면 같은 행을 최종 상태로 덮어쓴다.
+그래서 실행 중에도 GET /api/analyses/{run_id}가 running을 돌려준다.
+"""
 
 from typing import Any
 
@@ -26,6 +30,10 @@ def save_run(conn: psycopg.Connection, state: AgentState) -> None:
                 run_id, question, status, analysis_plan, datasets, operations, crs, result_id,
                 llm_provider, llm_model, errors, state, started_at, finished_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (run_id) DO UPDATE SET
+                status = EXCLUDED.status, analysis_plan = EXCLUDED.analysis_plan, datasets = EXCLUDED.datasets,
+                operations = EXCLUDED.operations, crs = EXCLUDED.crs, result_id = EXCLUDED.result_id,
+                errors = EXCLUDED.errors, state = EXCLUDED.state, finished_at = EXCLUDED.finished_at
             """,
             (
                 state.run_id,

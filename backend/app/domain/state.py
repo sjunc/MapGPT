@@ -108,6 +108,13 @@ class WorkflowError(StrictModel):
     issues: list[ValidationIssue] = []
 
 
+class StepTiming(StrictModel):
+    """워크플로 단계 하나가 끝나기까지 걸린 시간 (재생성으로 같은 단계가 두 번 돌면 두 번 남는다)."""
+
+    step: WorkflowStep
+    duration_ms: float
+
+
 class AgentState(StrictModel):
     run_id: str
     question: str
@@ -129,6 +136,7 @@ class AgentState(StrictModel):
     map_layer: MapLayer | None = None
     final_response: FinalResponse | None = None
     errors: list[WorkflowError] = []
+    step_timings: list[StepTiming] = []  # 끝난 단계 순서대로 (관측: 어느 단계가 느린지)
     llm_provider: str
     llm_model: str
     started_at: datetime
