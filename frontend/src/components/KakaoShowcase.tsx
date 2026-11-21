@@ -53,6 +53,14 @@ function numberOf(feature: ShowcaseFeature | null, key: string): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+/** 비례 원을 그리는 단위 수 (지도 지표 값이 0보다 큰 단위) */
+function positiveCount(layer: FinalResponse["map_layer"]): number {
+  return layer.geojson.features.filter((feature) => {
+    const value = feature.properties[layer.metric];
+    return typeof value === "number" && value > 0;
+  }).length;
+}
+
 function MapLegend({ view, result, demo }: { view: ShowcaseView; result: FinalResponse; demo: boolean }) {
   const layer = result.map_layer;
   const colors = classColors("light", layer.classification.class_count, layerStyle(layer).emphasis);
@@ -79,7 +87,7 @@ function MapLegend({ view, result, demo }: { view: ShowcaseView; result: FinalRe
       {view === "bubble" && (
         <>
           <div className="kshow-bubble-scale"><i /><i /><i /><span>원 넓이 ∝ {layer.metric_label}</span></div>
-          <small>{demo ? "가상 시설 개수 · 표본 85개 표시" : "서버 지표 기준 · 최대 150개 단위 표시"}</small>
+          <small>{demo ? "가상 시설 개수 · 표본 85개 표시" : `서버 지표 기준 · 값이 0보다 큰 ${positiveCount(layer).toLocaleString("ko-KR")}개 단위 표시`}</small>
         </>
       )}
       {view === "point" && (

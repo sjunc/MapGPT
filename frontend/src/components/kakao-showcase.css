@@ -122,6 +122,8 @@
   transition: transform .14s ease;
 }
 .kshow-map-bubble:hover { background: #114e91; transform: scale(1.14); }
+/* 숫자 없는 작은 원: 테두리를 원 바깥에 얇게 그려 채운 색이 보이게 한다. */
+.kshow-root .kshow-map-bubble.small { box-sizing: content-box; border-width: 1px; box-shadow: 0 1px 3px #0d335d4d; }
 .kshow-aside { min-height: 0; background: #fff; border-left: 1px solid #e2e8f0; display: flex; flex-direction: column; overflow-y: auto; }
 .kshow-aside-header { padding: 31px 25px 24px; background: linear-gradient(155deg, #f2f8ff 0%, #ffffff 70%); border-bottom: 1px solid #e9eff6; }
 .kshow-kicker { font-size: 9px; letter-spacing: .14em; color: #4581b5; font-weight: 800; }

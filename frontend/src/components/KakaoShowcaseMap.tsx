@@ -3,7 +3,7 @@ import type { Feature, MultiPolygon, Position } from "geojson";
 import { loadKakaoMaps } from "../maps/kakaoLoader";
 import { toKakaoPolygonPaths } from "../maps/kakaoGeometry";
 import type { FinalResponse, UnitProperties } from "../types";
-import { classColors, formatValue, layerStyle } from "../theme";
+import { classColors, formatValue, layerStyle, symbolMaxRadius } from "../theme";
 
 export type ShowcaseView = "choropleth" | "bubble" | "point" | "bivariate";
 export type ShowcaseFeature = Feature<MultiPolygon, UnitProperties>;
@@ -216,21 +216,29 @@ export function KakaoShowcaseMap({
     }
 
     // 정적 데모는 가상 시설 개수를 쓰지만, 실제 분석에서는 서버 지표와 실제 좌표만 사용한다.
+    // 실제 결과는 값이 0보다 큰 모든 단위를, 정적 데모는 큰 값부터 표본 85개를 그린다. 작은 원을 나중에 올려 위에 보인다.
     const bubbleMetric = demo ? "daycare_count" : result.map_layer.metric;
-    const notable = [...features]
+    const positive = [...features]
       .filter((feature) => numberOf(feature, bubbleMetric) > 0)
-      .sort((a, b) => numberOf(b, bubbleMetric) - numberOf(a, bubbleMetric))
-      .slice(0, demo ? 85 : 150);
+      .sort((a, b) => numberOf(b, bubbleMetric) - numberOf(a, bubbleMetric));
+    const notable = demo ? positive.slice(0, 85) : positive;
 
     if (view === "bubble") {
       const maxValue = Math.max(1, ...notable.map((feature) => numberOf(feature, bubbleMetric)));
+      // 실제 결과는 MapLibre 화면과 같은 크기로 그린다: 원 넓이가 서버 구간의 최댓값 대비 값에 비례한다.
+      const liveMax = result.map_layer.classification.max ?? maxValue;
+      const liveMaxRadius = symbolMaxRadius(result.map_layer.feature_count);
       for (const feature of notable) {
         const value = numberOf(feature, bubbleMetric);
-        const radius = Math.max(7, 32 * Math.sqrt(value / maxValue));
+        const radius = demo
+          ? Math.max(7, 32 * Math.sqrt(value / maxValue))
+          : liveMaxRadius * Math.sqrt(value / liveMax);
+        // 작은 원에는 숫자를 넣지 않고 aria-label만 단다.
+        const small = !demo && radius < 12;
         const bubble = document.createElement("button");
         bubble.type = "button";
-        bubble.className = "kshow-map-bubble";
-        bubble.textContent = formatValue(value, 0);
+        bubble.className = small ? "kshow-map-bubble small" : "kshow-map-bubble";
+        if (!small) bubble.textContent = formatValue(value, 0);
         bubble.style.width = `${radius * 2}px`;
         bubble.style.height = `${radius * 2}px`;
         bubble.style.fontSize = radius < 13 ? "10px" : "12px";
