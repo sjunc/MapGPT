@@ -95,8 +95,6 @@
 .kshow-legend-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .kshow-legend-head span { font-size: 9px; color: #7390a9; font-weight: 800; letter-spacing: .12em; }
 .kshow-legend-head strong { font-size: 13px; }
-.kshow-swatches { display: grid; grid-template-columns: repeat(5, 1fr); height: 14px; gap: 3px; }
-.kshow-swatches div { border-radius: 2px; }
 .kshow-legend-ends { display: flex; justify-content: space-between; margin: 7px 0 10px; font-size: 10px; color: #516276; }
 .kshow-heat-scale { height: 12px; border: 1px solid #e1e8f0; border-radius: 3px; }
 .kshow-class-scale { display: grid; gap: 3px; }
@@ -111,6 +109,7 @@
 }
 .kshow-hex-tip strong { font-size: 14px; color: #155da0; }
 .kshow-legend small { display: block; color: #78899a; font-size: 10px; line-height: 1.5; }
+.kshow-legend .kshow-legend-note { margin-top: 7px; color: #5d6f82; }
 .kshow-legend-footer { display: flex; justify-content: space-between; margin-top: 11px; padding-top: 10px; border-top: 1px solid #ebeff4; color: #64748b; font-size: 10px; }
 .kshow-bubble-scale { display: flex; align-items: center; gap: 12px; min-height: 45px; margin: 4px 0 10px; }
 .kshow-bubble-scale i { display: block; border-radius: 50%; border: 1px solid #1765ad; background: rgba(37,99,183,.65); flex-shrink: 0; }
@@ -172,6 +171,13 @@
 }
 .kshow-ranking .kshow-rank:hover, .kshow-ranking .kshow-rank.active { background: #eff7ff; border-color: #d8ebff; }
 .kshow-rank-number { color: #8ea1b4; font-weight: 800; font-size: 11px; }
+.kshow-ranking.all { max-height: 420px; overflow-y: auto; padding-right: 4px; }
+.kshow-rank-toggle {
+  width: 100%; margin-top: 10px; padding: 9px; border: 1px solid #d8e6f3; border-radius: 9px;
+  background: #f5faff; color: #155fa7; font-size: 12px; font-weight: 700;
+}
+.kshow-rank-toggle:hover { background: #eaf4ff; }
+.kshow-rank-toggle:focus-visible { outline: 3px solid #f59e0b; outline-offset: 2px; }
 .kshow-rank-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .kshow-rank strong { color: #1b578b; }
 .kshow-rank-arrow { color: #a1b1c1; }

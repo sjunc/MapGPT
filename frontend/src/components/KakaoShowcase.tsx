@@ -3,12 +3,12 @@ import { apiUrl, getStoredAnalysis, requestAnalysis, type StoredAnalysis } from 
 import { loadDemoAnalysis } from "../demo";
 import { addRecentRun, readRecentRuns, saveRecentRuns, type RecentRun } from "../runHistory";
 import { readScope, saveScope, SCOPES, SCOPE_HINTS, SCOPE_LABELS } from "../scope";
-import { formatValue, classColors, HEAT_COLORS, layerStyle } from "../theme";
-import type { AnalysisScope, Classification, FinalResponse, MapView, WorkflowError } from "../types";
+import { BIVARIATE_COLORS, formatValue, classColors, HEAT_COLORS, layerStyle, NULL_REASONS } from "../theme";
+import type { AnalysisScope, BivariateAxis, Classification, FinalResponse, MapView, WorkflowError } from "../types";
 import { ErrorPanel } from "./ErrorPanel";
 import { ExecutionTrace } from "./ExecutionTrace";
 import {
-  BIVARIATE_COLORS,
+  DEMO_BIVARIATE_COLORS,
   KakaoShowcaseMap,
   type ShowcaseFeature,
   type ShowcaseView,
@@ -78,6 +78,10 @@ function ClassScale({ colors, classification }: { colors: string[]; classificati
   );
 }
 
+function breaksText(axis: BivariateAxis): string {
+  return axis.breaks.length > 0 ? axis.breaks.map((value) => formatValue(value)).join(" · ") : "구분 없음";
+}
+
 /** 비례 원을 그리는 단위 수 (지도 지표 값이 0보다 큰 단위) */
 function positiveCount(layer: FinalResponse["map_layer"]): number {
   return layer.geojson.features.filter((feature) => {
@@ -88,7 +92,8 @@ function positiveCount(layer: FinalResponse["map_layer"]): number {
 
 function MapLegend({ view, result, demo }: { view: ShowcaseView; result: FinalResponse; demo: boolean }) {
   const layer = result.map_layer;
-  const colors = classColors("light", layer.classification.class_count, layerStyle(layer).emphasis);
+  const style = layerStyle(layer);
+  const colors = classColors("light", layer.classification.class_count, style.emphasis);
   return (
     <div className="kshow-legend">
       <div className="kshow-legend-head">
@@ -97,11 +102,7 @@ function MapLegend({ view, result, demo }: { view: ShowcaseView; result: FinalRe
       </div>
       {view === "choropleth" && (
         <>
-          <div className="kshow-swatches" style={{ gridTemplateColumns: `repeat(${colors.length}, 1fr)` }}>
-            {colors.map((color, index) => (
-              <div key={`${color}-${index}`} title={`${index + 1}구간`} style={{ background: color }} />
-            ))}
-          </div>
+          <ClassScale colors={colors} classification={layer.classification} />
           <div className="kshow-legend-ends">
             <span>{layer.style?.legend_low ?? "작은 값"}</span>
             <span>{layer.style?.legend_high ?? "큰 값"}</span>
@@ -152,15 +153,21 @@ function MapLegend({ view, result, demo }: { view: ShowcaseView; result: FinalRe
           <div className="kshow-bi-layout">
             <div className="kshow-bi-grid">
               {[2, 1, 0].flatMap((y) => [0, 1, 2].map((x) => (
-                <span key={`${y}-${x}`} style={{ background: BIVARIATE_COLORS[y][x] }} />
+                <span key={`${y}-${x}`} style={{ background: (demo ? DEMO_BIVARIATE_COLORS : BIVARIATE_COLORS.light)[y][x] }} />
               )))}
             </div>
             <div><strong>가로</strong> {demo ? "어린이 인구" : layer.bivariate?.x.label}<br />
               <strong>세로</strong> {demo ? "시설 개수" : layer.bivariate?.y.label}</div>
           </div>
-          <small>{demo ? "정적 데모 지표를 3단계로 구분" : "백엔드의 이변량 분류 경계값 사용"}</small>
+          <small>
+            {demo || !layer.bivariate
+              ? "정적 데모 지표를 3단계로 구분"
+              : `경계값: ${layer.bivariate.x.label} ${breaksText(layer.bivariate.x)} / ${layer.bivariate.y.label} ${breaksText(layer.bivariate.y)}`}
+          </small>
         </>
       )}
+      {/* 서버가 이 결과의 기본 보기를 고른 이유. MapLibre 화면처럼 보기가 둘 이상일 때 모든 보기에서 보인다. */}
+      {style.views.length > 1 && style.note && <small className="kshow-legend-note">{style.note}</small>}
       <div className="kshow-legend-footer">
         <span>지역 {layer.geojson.features.length.toLocaleString("ko-KR")}개</span>
         <span>{layer.crs}</span>
@@ -191,6 +198,8 @@ export function KakaoShowcase() {
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const [focusRequest, setFocusRequest] = useState<{ key: string; sequence: number } | null>(null);
   const [resetSequence, setResetSequence] = useState(0);
+  // "전체 순위 보기"를 펼친 결과. 다른 결과로 바뀌면 다시 상위 순위만 보인다.
+  const [allRanksRunId, setAllRanksRunId] = useState<string | null>(null);
   // 늦게 도착한 이전 요청의 응답이 지금 주소의 화면을 덮어쓰지 않도록 구분한다.
   const requestSequence = useRef(0);
   const demo = route.runId === null && route.demo;
@@ -247,7 +256,26 @@ export function KakaoShowcase() {
     return index;
   }, [result]);
   const activeFeature = featureIndex.get(selectedKey ?? "") ?? null;
-  const ranking = result?.ranking.slice(0, 10) ?? [];
+  const showAllRanks = result !== null && allRanksRunId === result.run_id;
+  // 전체 순위는 응답에 담긴 순위 값으로 정렬만 하고 새로 계산하지 않는다 (기존 화면의 RankingTable과 같다).
+  const allRanks = useMemo(() => {
+    if (!result) return [];
+    const rankMetric = result.rank_metric;
+    return result.map_layer.geojson.features
+      .map((feature) => ({
+        unit_key: feature.properties.unit_key,
+        unit_name: feature.properties.unit_name,
+        rank: rankMetric ? numberOf(feature, rankMetric) : null,
+        value: numberOf(feature, result.metric.name),
+        null_reason: feature.properties.null_reason,
+      }))
+      .sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity) || a.unit_key.localeCompare(b.unit_key));
+  }, [result]);
+  const ranking = showAllRanks
+    ? allRanks
+    : (result?.ranking.slice(0, 10) ?? []).map((item) => ({
+      unit_key: item.unit_key, unit_name: item.unit_name, rank: item.rank, value: item.value, null_reason: null,
+    }));
   // 새 요청이 진행 중이거나 실패해도 지도에 남겨 둔 직전 성공 결과
   const showingPrevious = !demo && result !== null &&
     (loading || apiError !== null || failedRun !== null || runningId !== null);
@@ -611,11 +639,11 @@ export function KakaoShowcase() {
             </section>
           )}
 
-          {ranking.length > 0 && (
+          {result && ranking.length > 0 && (
             <section className="kshow-panel">
               <div className="kshow-section-title"><span className="kshow-kicker">RANKING</span><span>{demo ? "가상 순위" : "서버 산출 순위"}</span></div>
-              <h2>지역별 분석 순위</h2>
-              <div className="kshow-ranking">
+              <h2>{showAllRanks ? `전체 ${allRanks.length.toLocaleString("ko-KR")}개 지역 순위` : "지역별 분석 순위"}</h2>
+              <div className={showAllRanks ? "kshow-ranking all" : "kshow-ranking"}>
                 {ranking.map((item) => (
                   <button
                     type="button" key={item.unit_key}
@@ -624,13 +652,21 @@ export function KakaoShowcase() {
                     onMouseLeave={() => setHoveredKey(null)}
                     className={item.unit_key === selectedKey || item.unit_key === hoveredKey ? "kshow-rank active" : "kshow-rank"}
                   >
-                    <span className="kshow-rank-number">{String(item.rank).padStart(2, "0")}</span>
+                    <span className="kshow-rank-number">{item.rank === null ? "–" : String(item.rank).padStart(2, "0")}</span>
                     <span className="kshow-rank-title">{item.unit_name}</span>
-                    <strong>{formatValue(item.value)}</strong>
+                    <strong>{item.value === null ? (NULL_REASONS[item.null_reason ?? ""] ?? "값 없음") : formatValue(item.value)}</strong>
                     <span className="kshow-rank-arrow">↗</span>
                   </button>
                 ))}
               </div>
+              {(showAllRanks || allRanks.length > ranking.length) && (
+                <button
+                  type="button" className="kshow-rank-toggle" aria-expanded={showAllRanks}
+                  onClick={() => setAllRanksRunId(showAllRanks ? null : result.run_id)}
+                >
+                  {showAllRanks ? "상위만 보기" : `전체 순위 보기 (${allRanks.length.toLocaleString("ko-KR")}개)`}
+                </button>
+              )}
             </section>
           )}
 

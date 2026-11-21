@@ -4,7 +4,7 @@ import SimpleHeat, { type HeatPoint } from "simpleheat";
 import { loadKakaoMaps } from "../maps/kakaoLoader";
 import { toKakaoPolygonPaths } from "../maps/kakaoGeometry";
 import type { FinalResponse, UnitProperties } from "../types";
-import { classColors, formatValue, HEAT_COLORS, layerStyle, MAP_CHROME, symbolMaxRadius } from "../theme";
+import { BIVARIATE_COLORS, classColors, formatValue, HEAT_COLORS, layerStyle, MAP_CHROME, symbolMaxRadius } from "../theme";
 
 export type ShowcaseView = "choropleth" | "bubble" | "point" | "heatmap" | "hexbin" | "bivariate";
 export type ShowcaseFeature = Feature<MultiPolygon, UnitProperties>;
@@ -50,8 +50,8 @@ function heatSize(level: number): { radius: number; intensity: number } {
   const t = Math.min(1, Math.max(0, (18.8 - level - 9) / 4));
   return { radius: 6 + 16 * t, intensity: 0.12 + 0.78 * t };
 }
-// 시연 전용 3×3 팔레트. 실제 서비스에서는 서버가 제공하는 분류 기준을 따른다.
-export const BIVARIATE_COLORS = [
+// 시연 전용 3×3 팔레트. 실제 결과는 theme.ts의 BIVARIATE_COLORS와 서버가 제공하는 분류 기준을 따른다.
+export const DEMO_BIVARIATE_COLORS = [
   ["#e8e8e8", "#adc8d7", "#6c9ebd"],
   ["#e6b68d", "#b3a6a6", "#788fae"],
   ["#db8152", "#b67f78", "#735982"],
@@ -130,6 +130,11 @@ function facilityColor(feature: ShowcaseFeature, result: FinalResponse): string 
   return colors[Math.min(index, colors.length - 1)] ?? "#cbd5e1";
 }
 
+/** 이변량 축의 3분위 칸 번호(0~2). 같은 값이 많아 경계값이 2개보다 적으면 양 끝 칸을 쓴다 (MapLibre 화면의 axisClass와 같다). */
+function axisCell(value: number, breaks: number[]): number {
+  return breaks.length === 0 ? 1 : Math.round((classIndex(value, breaks) * 2) / breaks.length);
+}
+
 function twoValueColor(feature: ShowcaseFeature, result: FinalResponse, demo: boolean, thresholds: ReturnType<typeof getBivariateBreaks>) {
   const bivariate = result.map_layer.bivariate;
   if (!demo && !bivariate) return "#cbd5e1";
@@ -138,9 +143,38 @@ function twoValueColor(feature: ShowcaseFeature, result: FinalResponse, demo: bo
   const xValue = feature.properties[xMetric];
   const yValue = feature.properties[yMetric];
   if (typeof xValue !== "number" || typeof yValue !== "number") return "#cbd5e1";
-  const x = classIndex(xValue, demo ? thresholds.children : bivariate!.x.breaks);
-  const y = classIndex(yValue, demo ? thresholds.facilities : bivariate!.y.breaks);
-  return BIVARIATE_COLORS[Math.min(y, 2)][Math.min(x, 2)];
+  if (!demo) {
+    // 실제 결과: x(분모)는 주황, y(분자)는 파랑 쪽으로 진해지는 [y][x] 색
+    return BIVARIATE_COLORS.light[axisCell(yValue, bivariate!.y.breaks)][axisCell(xValue, bivariate!.x.breaks)];
+  }
+  const x = classIndex(xValue, thresholds.children);
+  const y = classIndex(yValue, thresholds.facilities);
+  return DEMO_BIVARIATE_COLORS[Math.min(y, 2)][Math.min(x, 2)];
+}
+
+/**
+ * 지도 위 UI가 결과를 가리지 않도록 지도를 맞출 때 그 밑을 비우는 여백 [위, 오른쪽, 아래, 왼쪽] (ChoroplethMap의 fitResultBounds와 같은 방식).
+ * 위는 상단 바·보기 전환·지도 버튼, 아래는 질문 입력창을 피한다. 범례는 지도 폭의 절반보다 좁으면(데스크톱) 왼쪽, 넓으면(모바일) 아래를 비운다.
+ * 지도가 가로·세로 80px 이상 남게 여백을 줄인다.
+ */
+function fitPadding(container: HTMLElement): [number, number, number, number] {
+  const rect = container.getBoundingClientRect();
+  const boxes = (selector: string) => [...document.querySelectorAll<HTMLElement>(selector)]
+    .map((element) => element.getBoundingClientRect())
+    .filter((box) => box.width > 0 && box.height > 0 && box.bottom > rect.top && box.top < rect.bottom);
+  const margin = 16;
+  const right = 24;
+  let top = Math.max(0, ...boxes(".kshow-topbar, .kshow-view-switch, .kshow-map-actions").map((box) => box.bottom - rect.top + margin));
+  let bottom = Math.max(0, ...boxes(".kshow-chat").map((box) => rect.bottom - box.top + margin));
+  let left = 24;
+  for (const legend of boxes(".kshow-legend")) {
+    if (legend.width < rect.width / 2) left = Math.max(left, legend.right - rect.left + margin);
+    else bottom = Math.max(bottom, rect.bottom - legend.top + margin);
+  }
+  top = Math.max(0, Math.min(Math.ceil(top), rect.height - 80));
+  bottom = Math.max(0, Math.min(Math.ceil(bottom), rect.height - top - 80));
+  left = Math.max(0, Math.min(Math.ceil(left), rect.width - right - 80));
+  return [top, right, bottom, left];
 }
 
 export function KakaoShowcaseMap({
@@ -410,21 +444,32 @@ export function KakaoShowcaseMap({
     previousHighlight.current = next;
   }, [hoveredKey, selectedKey, instance, view]);
 
-  // 순위표에서 선택한 항목으로 지도를 이동한다.
+  // 순위표에서 선택한 지역으로 지도를 옮긴다. 지도 위 UI를 피해 그 지역 전체가 보이게 맞추되 (MapLibre 화면의 focusFeature와 같다),
+  // 작은 지역도 레벨 5보다 더 확대하지 않는다. panTo 직후 setLevel을 부르면 이동 애니메이션이 끊겨 원래 중심에서 확대된다.
   useEffect(() => {
-    if (!instance || !focusRequest || !result) return;
-    const feature = result.map_layer.geojson.features.find(
-      (item) => item.properties.unit_key === focusRequest.key,
-    ) as ShowcaseFeature | undefined;
+    const node = elementRef.current;
+    if (!instance || !node || !focusRequest || !result) return;
+    const { maps, map } = instance;
+    const feature = result.map_layer.geojson.features.find((item) => item.properties.unit_key === focusRequest.key);
     if (!feature) return;
-    const [lng, lat] = feature.properties.label_point ?? representative(feature);
-    instance.map.panTo(new instance.maps.LatLng(lat, lng));
-    instance.map.setLevel(6);
+    const bounds = new maps.LatLngBounds();
+    for (const polygon of feature.geometry.coordinates) {
+      for (const [x, y] of polygon[0] ?? []) bounds.extend(new maps.LatLng(y, x));
+    }
+    if (bounds.isEmpty()) return;
+    map.setBounds(bounds, ...fitPadding(node));
+    if (map.getLevel() < 5) {
+      const sw = bounds.getSouthWest();
+      const ne = bounds.getNorthEast();
+      const center = new maps.LatLng((sw.getLat() + ne.getLat()) / 2, (sw.getLng() + ne.getLng()) / 2);
+      map.setLevel(5, { anchor: center });
+    }
   }, [instance, result, focusRequest]);
 
-  // 새 분석 결과가 들어오거나 전체 보기 버튼을 누르면 결과 영역 전체가 보이도록 이동한다. 결과가 없으면 기본 중심으로.
+  // 새 분석 결과가 들어오거나 전체 보기 버튼을 누르면 지도 위 UI를 피해 결과 영역 전체가 보이도록 이동한다. 결과가 없으면 기본 중심으로.
   useEffect(() => {
-    if (!instance) return;
+    const node = elementRef.current;
+    if (!instance || !node) return;
     const bounds = new instance.maps.LatLngBounds();
     let count = 0;
     for (const feature of result?.map_layer.geojson.features ?? []) {
@@ -438,7 +483,7 @@ export function KakaoShowcaseMap({
         }
       }
     }
-    if (count > 2) instance.map.setBounds(bounds);
+    if (count > 2) instance.map.setBounds(bounds, ...fitPadding(node));
     else {
       instance.map.setLevel(9);
       instance.map.panTo(new instance.maps.LatLng(CENTER.lat, CENTER.lng));
