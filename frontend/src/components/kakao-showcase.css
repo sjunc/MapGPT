@@ -231,6 +231,11 @@
 .kshow-chat-feedback button { border: 1px solid #b6d1ea; color: #155fa7; padding: 6px 10px; background: #fff; border-radius: 7px; }
 .kshow-demo-reset { border: 1px solid #bdd7ed; background: #eaf5ff; color: #155fa7; font-size: 12px; font-weight: 700; padding: 10px; border-radius: 9px; }
 .kshow-evidence p { margin-top: 9px; }
+.kshow-evidence a { word-break: break-all; }
+.kshow-previous {
+  margin: 0; padding: 10px 12px; border: 1px solid #f3dcae; border-radius: 9px;
+  background: #fff8ea; color: #84570b; font-size: 11px; line-height: 1.6;
+}
 /* 채팅창과 지도 범례가 겹치지 않도록 지도 범례를 위쪽에 배치한다. */
 .kshow-legend { bottom: 174px; }
 .kshow-corner-note { bottom: 157px; }

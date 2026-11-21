@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
-import { apiUrl, getStoredAnalysis, requestAnalysis } from "../api";
+import { apiUrl, getStoredAnalysis, requestAnalysis, type StoredAnalysis } from "../api";
 import { loadDemoAnalysis } from "../demo";
 import { addRecentRun, readRecentRuns, saveRecentRuns, type RecentRun } from "../runHistory";
 import { readScope, saveScope, SCOPES, SCOPE_HINTS, SCOPE_LABELS } from "../scope";
 import { formatValue, classColors, layerStyle } from "../theme";
-import type { AnalysisScope, FinalResponse, MapView } from "../types";
+import type { AnalysisScope, FinalResponse, MapView, WorkflowError } from "../types";
+import { ErrorPanel } from "./ErrorPanel";
+import { ExecutionTrace } from "./ExecutionTrace";
 import {
   BIVARIATE_COLORS,
   KakaoShowcaseMap,
@@ -12,7 +14,7 @@ import {
   type ShowcaseView,
 } from "./KakaoShowcaseMap";
 import { RecentRuns } from "./RecentRuns";
-import "../p7.css"; // RecentRuns가 쓰는 기존 화면 스타일
+import "../p7.css"; // RecentRuns·ExecutionTrace가 쓰는 기존 화면 스타일
 import "./kakao-showcase.css";
 
 const VIEWS: Array<{ id: ShowcaseView; api: MapView; label: string; icon: string; explanation: string }> = [
@@ -31,6 +33,8 @@ interface Route {
   runId: string | null;
   demo: boolean;
 }
+
+type FailedRun = { runId: string; errors: WorkflowError[] };
 
 function readRoute(): Route {
   const query = new URLSearchParams(window.location.search);
@@ -118,6 +122,10 @@ export function KakaoShowcase() {
   const [loading, setLoading] = useState(false);
   const [health, setHealth] = useState<"unknown" | "checking" | "online" | "degraded" | "offline">("unknown");
   const [runningId, setRunningId] = useState<string | null>(null);
+  const [failedRun, setFailedRun] = useState<FailedRun | null>(null);
+  const [storedRun, setStoredRun] = useState<StoredAnalysis | null>(null);
+  const [traceLoading, setTraceLoading] = useState(false);
+  const [traceError, setTraceError] = useState<string | null>(null);
   const [recentRuns, setRecentRuns] = useState<RecentRun[]>(readRecentRuns);
   const [view, setView] = useState<ShowcaseView>("choropleth");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -179,6 +187,9 @@ export function KakaoShowcase() {
   }, [result]);
   const activeFeature = featureIndex.get(selectedKey ?? "") ?? null;
   const ranking = result?.ranking.slice(0, 10) ?? [];
+  // 새 요청이 진행 중이거나 실패해도 지도에 남겨 둔 직전 성공 결과
+  const showingPrevious = !demo && result !== null &&
+    (loading || apiError !== null || failedRun !== null || runningId !== null);
 
   function resetMapState(nextView: ShowcaseView) {
     setView(nextView);
@@ -202,24 +213,59 @@ export function KakaoShowcase() {
     setRoute({ runId, demo: false });
   }
 
-  async function loadRun(runId: string) {
-    const sequence = ++requestSequence.current;
-    setLoading(true);
+  // 새 요청이나 주소 이동 전에 지난 실행의 상태 문구·오류·실행 기록을 지운다.
+  function clearRunFeedback() {
     setApiError(null);
     setServerMessage(null);
     setRunningId(null);
+    setFailedRun(null);
+    setStoredRun(null);
+    setTraceError(null);
+    setTraceLoading(false);
+  }
+
+  // 실패도 오류 패널에 보이고, 실행 ID는 실행 기록 패널에서 확인한다.
+  function showFailure(runId: string, errors: WorkflowError[]) {
+    setFailedRun({ runId, errors });
+    setServerMessage(`분석 실패 · 실행 ID: ${runId} · 원인은 결과 패널에 표시했어.`);
+  }
+
+  async function fetchTrace(runId: string, sequence: number) {
+    setTraceLoading(true);
+    setTraceError(null);
+    try {
+      const record = await getStoredAnalysis(runId);
+      if (requestSequence.current !== sequence) return;
+      setStoredRun(record);
+    } catch (cause: unknown) {
+      if (requestSequence.current !== sequence) return;
+      setTraceError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      if (requestSequence.current === sequence) setTraceLoading(false);
+    }
+  }
+
+  function refreshTrace(runId: string) {
+    void fetchTrace(runId, requestSequence.current);
+  }
+
+  async function loadRun(runId: string) {
+    const sequence = ++requestSequence.current;
+    setLoading(true);
+    clearRunFeedback();
     setLiveResult(null);
     resetMapState("choropleth");
     try {
       const record = await getStoredAnalysis(runId);
       if (requestSequence.current !== sequence) return;
+      setStoredRun(record);
       setQuestion(record.question);
       rememberRun(record.run_id, record.question);
       if (record.status === "succeeded") {
         if (!record.result) throw new Error("완료된 실행 기록에 분석 결과가 없습니다.");
         setNewResult(record.result);
       } else if (record.status === "failed") {
-        setApiError(record.provenance?.errors?.map((item) => item.message).join(" / ") || "서버 분석이 실패했습니다.");
+        showFailure(record.run_id, record.provenance?.errors ?? []);
       } else {
         setRunningId(record.run_id);
         setServerMessage("서버가 분석 진행 중이라고 응답했습니다. 아래 버튼으로 완료 여부를 확인할 수 있습니다.");
@@ -242,9 +288,7 @@ export function KakaoShowcase() {
     ++requestSequence.current;
     setLoading(false);
     setLiveResult(null);
-    setApiError(null);
-    setServerMessage(null);
-    setRunningId(null);
+    clearRunFeedback();
     resetMapState("choropleth");
   }
 
@@ -275,9 +319,7 @@ export function KakaoShowcase() {
     if (!text || loading || text.length > 500) return;
     const sequence = ++requestSequence.current;
     setLoading(true);
-    setApiError(null);
-    setServerMessage(null);
-    setRunningId(null);
+    clearRunFeedback();
     try {
       const payload = await requestAnalysis(text, scope);
       if (requestSequence.current !== sequence) return;
@@ -287,12 +329,13 @@ export function KakaoShowcase() {
         rememberRun(payload.run_id, payload.result.question);
         setNewResult(payload.result);
         setServerMessage(`분석 완료 · 실행 ID: ${payload.run_id}`);
+        void fetchTrace(payload.run_id, sequence);
       } else if (payload.status === "failed") {
+        // 실패해도 직전 성공 결과는 지도에 남긴다 (화면에는 "직전 결과"로 표시).
         showRunInUrl(payload.run_id);
         rememberRun(payload.run_id, text);
-        const details = payload.errors.map((entry) => entry.message).filter(Boolean).join(" / ");
-        setApiError(details || "백엔드 분석이 실패했습니다. 실행 기록을 확인해 주세요.");
-        setServerMessage(`실패한 실행 ID: ${payload.run_id}`);
+        showFailure(payload.run_id, payload.errors);
+        void fetchTrace(payload.run_id, sequence);
       } else {
         setRunningId(payload.run_id);
         setServerMessage("서버가 분석 진행 중이라고 응답했습니다. 아래 버튼으로 완료 여부를 확인할 수 있습니다.");
@@ -313,6 +356,7 @@ export function KakaoShowcase() {
     try {
       const payload = await getStoredAnalysis(runningId);
       if (requestSequence.current !== sequence) return;
+      setStoredRun(payload);
       if (payload.status === "succeeded" && payload.result) {
         if (route.runId !== payload.run_id) showRunInUrl(payload.run_id);
         rememberRun(payload.run_id, payload.question);
@@ -323,7 +367,7 @@ export function KakaoShowcase() {
         if (route.runId !== payload.run_id) showRunInUrl(payload.run_id);
         rememberRun(payload.run_id, payload.question);
         setRunningId(null);
-        setApiError(payload.provenance?.errors?.map((item) => item.message).join(" / ") || "서버 분석이 실패했습니다.");
+        showFailure(payload.run_id, payload.provenance?.errors ?? []);
       } else {
         setServerMessage("아직 분석 중입니다. 잠시 후 다시 확인해 주세요.");
       }
@@ -381,7 +425,9 @@ export function KakaoShowcase() {
             <img src="/MapGPT.png" alt="" />
             <div><strong>MAPGPT</strong><small>KAKAO MAP + ANALYSIS API</small></div>
           </div>
-          <span className="kshow-demo-tag">{demo ? "● DEMO · MOCK DATA" : result ? "● BACKEND · ANALYSIS RESULT" : "● BACKEND · READY"}</span>
+          <span className="kshow-demo-tag">
+            {demo ? "● DEMO · MOCK DATA" : showingPrevious ? "● BACKEND · 직전 결과" : result ? "● BACKEND · ANALYSIS RESULT" : "● BACKEND · READY"}
+          </span>
         </div>
 
         {result && (
@@ -414,7 +460,7 @@ export function KakaoShowcase() {
       <aside className="kshow-aside" aria-label="분석 결과 및 정보">
         <div className="kshow-aside-header">
           <span className="kshow-kicker">MAPGPT / SPATIAL ANALYSIS</span>
-          <h1>{demo ? "공간 분석 미리보기" : result ? "공간 분석 결과" : "공간 분석"}</h1>
+          <h1>{demo ? "공간 분석 미리보기" : showingPrevious ? "직전 분석 결과" : result ? "공간 분석 결과" : "공간 분석"}</h1>
           <p>
             {demo
               ? "시연 데이터로 지도를 표시하고 있어. 하단에 질문을 입력하면 실제 백엔드에 분석을 요청해."
@@ -436,6 +482,24 @@ export function KakaoShowcase() {
             onRemove={removeRecentRun}
             onClear={() => setRecentRuns([])}
           />
+
+          {failedRun && (
+            <>
+              <ErrorPanel errors={failedRun.errors} runId={failedRun.runId} />
+              <ExecutionTrace
+                provenance={storedRun?.run_id === failedRun.runId ? storedRun.provenance : null}
+                runId={failedRun.runId}
+                loading={traceLoading}
+                error={traceError}
+                demo={false}
+                onRefresh={() => refreshTrace(failedRun.runId)}
+              />
+            </>
+          )}
+
+          {showingPrevious && (
+            <p className="kshow-previous" role="status">아래 지도와 순위는 직전에 완료한 분석 결과야.</p>
+          )}
 
           <section className="kshow-panel kshow-prompt">
             <span className="kshow-kicker">CURRENT QUESTION</span>
@@ -519,7 +583,24 @@ export function KakaoShowcase() {
               ))}
               {result.assumptions.map((line, index) => <p key={`assumption-${index}`}>가정: {line}</p>)}
               {result.limitations.map((line, index) => <p key={`limit-${index}`}>한계: {line}</p>)}
+              <p>
+                실행 기록:{" "}
+                <a href={apiUrl(`/api/analyses/${encodeURIComponent(result.run_id)}`)} target="_blank" rel="noreferrer">
+                  {result.run_id}
+                </a>
+              </p>
             </section>
+          )}
+
+          {!demo && result && route.runId === result.run_id && (
+            <ExecutionTrace
+              provenance={storedRun?.run_id === result.run_id ? storedRun.provenance : null}
+              runId={result.run_id}
+              loading={traceLoading}
+              error={traceError}
+              demo={false}
+              onRefresh={() => refreshTrace(result.run_id)}
+            />
           )}
 
           <section className="kshow-footer">
@@ -558,7 +639,7 @@ export function KakaoShowcase() {
           </button>
         </div>
         {(apiError || serverMessage || runningId) && (
-          <div className={apiError ? "kshow-chat-feedback error" : "kshow-chat-feedback"} role={apiError ? "alert" : "status"}>
+          <div className={apiError || failedRun ? "kshow-chat-feedback error" : "kshow-chat-feedback"} role={apiError ? "alert" : "status"}>
             <span>{apiError ?? serverMessage}</span>
             {runningId && <button type="button" onClick={() => void refreshRunning()} disabled={loading}>실행 상태 확인</button>}
           </div>
