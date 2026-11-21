@@ -226,7 +226,7 @@ export function App() {
     }
   }
 
-  async function runAnalysis(text: string) {
+  async function runAnalysis(text: string, analysisScope: AnalysisScope = scope) {
     if (!text || loading) return;
 
     setPanelOpen(true);
@@ -242,7 +242,7 @@ export function App() {
     const sequence = ++requestSequence.current;
 
     try {
-      const next = DEMO_MODE ? await loadDemoAnalysis() : await requestAnalysis(text, scope);
+      const next = DEMO_MODE ? await loadDemoAnalysis() : await requestAnalysis(text, analysisScope);
       if (requestSequence.current !== sequence) return;
 
       if (next.status === "succeeded") {
@@ -281,6 +281,13 @@ export function App() {
   function askSuggestion(text: string) {
     setQuestion(text);
     void runAnalysis(text);
+  }
+
+  // 분석 범위 밖 지역이라 실패했을 때 범위를 전국으로 바꾸고 같은 질문을 다시 분석한다.
+  function retryInNationalScope() {
+    setScope("national");
+    saveScope("national");
+    void runAnalysis(question.trim(), "national");
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -500,7 +507,11 @@ export function App() {
 
             {failedRun && (
               <div className="p3-feedback-group">
-                <ErrorPanel errors={failedRun.errors} runId={failedRun.runId} />
+                <ErrorPanel
+                  errors={failedRun.errors}
+                  runId={failedRun.runId}
+                  onUseNationalScope={!DEMO_MODE && scope === "seoul" && question.trim() ? retryInNationalScope : undefined}
+                />
                 {!DEMO_MODE && (
                   <>
                     <button type="button" className="analysis-evidence-link" onClick={() => void copyRunLink(failedRun.runId)}>

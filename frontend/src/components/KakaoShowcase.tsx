@@ -436,7 +436,7 @@ export function KakaoShowcase() {
   }
 
   // override를 주면 입력창 대신 그 질문으로 분석한다 (예시 질문).
-  async function submitAnalysis(event?: FormEvent<HTMLFormElement>, override?: string) {
+  async function submitAnalysis(event?: FormEvent<HTMLFormElement>, override?: string, scopeOverride?: AnalysisScope) {
     event?.preventDefault();
     const text = (override ?? question).trim();
     if (!text || loading || text.length > 500) return;
@@ -444,7 +444,7 @@ export function KakaoShowcase() {
     setLoading(true);
     clearRunFeedback();
     try {
-      const payload = await requestAnalysis(text, scope);
+      const payload = await requestAnalysis(text, scopeOverride ?? scope);
       if (requestSequence.current !== sequence) return;
       if (payload.status === "succeeded") {
         if (!payload.result) throw new Error("분석 완료 응답에 결과 데이터가 없습니다.");
@@ -621,7 +621,15 @@ export function KakaoShowcase() {
 
           {failedRun && (
             <>
-              <ErrorPanel errors={failedRun.errors} runId={failedRun.runId} />
+              <ErrorPanel
+                errors={failedRun.errors}
+                runId={failedRun.runId}
+                onUseNationalScope={scope === "seoul" && question.trim() && !loading ? () => {
+                  setScope("national");
+                  saveScope("national");
+                  void submitAnalysis(undefined, undefined, "national");
+                } : undefined}
+              />
               <ExecutionTrace
                 provenance={storedRun?.run_id === failedRun.runId ? storedRun.provenance : null}
                 runId={failedRun.runId}
