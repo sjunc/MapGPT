@@ -1,0 +1,21 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "http://124.5.160.24:8000/api/:path*"
+    }
+  ],
+  "redirects": [
+    {
+      "source": "/",
+      "destination": "/?demo=1&map=kakao",
+      "permanent": false,
+      "missing": [
+        { "type": "query", "key": "demo" },
+        { "type": "query", "key": "run" },
+        { "type": "query", "key": "map" }
+      ]
+    }
+  ]
+}

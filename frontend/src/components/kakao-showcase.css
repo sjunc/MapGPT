@@ -177,3 +177,66 @@
   .kshow-legend-head { margin-bottom: 7px; }
   .kshow-legend small { font-size: 9px; }
 }
+
+/* 실제 API 연동 후 하단 질문 입력창. 모든 선택자에 kshow- 접두사를 사용한다. */
+.kshow-chat {
+  position: fixed; z-index: 20; left: 24px; bottom: 20px; right: 404px;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 13px 15px; background: rgba(255,255,255,.98);
+  border: 1px solid #cddfec; border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(15,23,42,.22);
+}
+.kshow-chat-top, .kshow-chat-row { display: flex; gap: 10px; align-items: center; }
+.kshow-chat-top { justify-content: space-between; }
+.kshow-chat-top > span { font-size: 10px; font-weight: 700; color: #607c98; }
+.kshow-chat-scopes { display: flex; gap: 4px; padding: 3px; background: #eff5fa; border-radius: 9px; }
+.kshow-chat-scopes button {
+  padding: 5px 12px; border: 0; border-radius: 7px; background: transparent;
+  color: #5b728b; font-size: 11px; font-weight: 700;
+}
+.kshow-chat-scopes button.active { color: #fff; background: #155fa7; }
+.kshow-chat-row textarea {
+  display: block; flex: 1; min-width: 0; min-height: 58px; max-height: 140px;
+  resize: vertical; padding: 11px 12px; border: 1px solid #d7e5f2;
+  outline-offset: 2px; border-radius: 11px; background: #fbfdff;
+  color: #24354d; font: inherit; font-size: 13px; line-height: 1.5;
+}
+.kshow-chat-row textarea:focus { border-color: #2677b8; outline: 2px solid #b9daf6; }
+.kshow-chat-send {
+  flex: none; align-self: stretch; min-width: 104px;
+  border: 0; border-radius: 10px; padding: 10px 16px;
+  background: #155fa7; color: #fff; font-size: 12px; font-weight: 800;
+}
+.kshow-chat-send:disabled { background: #94aac0; cursor: not-allowed; }
+.kshow-chat-feedback {
+  padding: 8px 10px; border-radius: 9px; background: #eff7ff;
+  color: #24517e; font-size: 11px; line-height: 1.5;
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+}
+.kshow-chat-feedback.error { background: #fff1f0; color: #a53329; }
+.kshow-chat-feedback button { border: 1px solid #b6d1ea; color: #155fa7; padding: 6px 10px; background: #fff; border-radius: 7px; }
+.kshow-demo-reset { border: 1px solid #bdd7ed; background: #eaf5ff; color: #155fa7; font-size: 12px; font-weight: 700; padding: 10px; border-radius: 9px; }
+.kshow-evidence p { margin-top: 9px; }
+/* 채팅창과 지도 범례가 겹치지 않도록 지도 범례를 위쪽에 배치한다. */
+.kshow-legend { bottom: 174px; }
+.kshow-corner-note { bottom: 157px; }
+@media (max-width: 1060px) {
+  .kshow-chat { right: 354px; }
+}
+@media (max-width: 790px) {
+  .kshow-chat { left: 12px; right: 12px; bottom: 12px; }
+  .kshow-legend { bottom: 22px; }
+  .kshow-corner-note { bottom: 6px; }
+  .kshow-root { padding-bottom: 160px; }
+  .kshow-stage { min-height: 440px; }
+}
+@media (max-width: 460px) {
+  .kshow-chat { padding: 10px; }
+  .kshow-chat-top > span { font-size: 9px; }
+  .kshow-chat-send { min-width: 88px; padding: 8px; font-size: 11px; }
+}
+
+.kshow-chat-status { display: flex; align-items: center; gap: 7px; }
+.kshow-chat-status span { font-size: 10px; color: #607c98; font-weight: 700; }
+.kshow-chat-status button { border: 1px solid #d0e0ef; border-radius: 8px; padding: 5px 9px; background: #fff; color: #235d91; font-size: 10px; font-weight: 700; }
+.kshow-chat-status button:disabled { opacity: .5; cursor: not-allowed; }

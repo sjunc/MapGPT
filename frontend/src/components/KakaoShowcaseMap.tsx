@@ -3,12 +3,14 @@ import type { Feature, MultiPolygon, Position } from "geojson";
 import { loadKakaoMaps } from "../maps/kakaoLoader";
 import { toKakaoPolygonPaths } from "../maps/kakaoGeometry";
 import type { FinalResponse, UnitProperties } from "../types";
+import { classColors, formatValue, layerStyle } from "../theme";
 
 export type ShowcaseView = "choropleth" | "bubble" | "point" | "bivariate";
 export type ShowcaseFeature = Feature<MultiPolygon, UnitProperties>;
 
 interface Props {
   result: FinalResponse;
+  demo: boolean;
   view: ShowcaseView;
   hoveredKey: string | null;
   selectedKey: string | null;
@@ -19,7 +21,6 @@ interface Props {
 }
 
 const CENTER = { lat: 37.5665, lng: 126.978 };
-const BLUE = ["#124b88", "#2677b8", "#56a0d2", "#94c7e5", "#cee5f2"];
 // 시연 전용 3×3 팔레트. 실제 서비스에서는 서버가 제공하는 분류 기준을 따른다.
 export const BIVARIATE_COLORS = [
   ["#e8e8e8", "#adc8d7", "#6c9ebd"],
@@ -93,19 +94,28 @@ function representative(feature: ShowcaseFeature): [number, number] {
 
 function facilityColor(feature: ShowcaseFeature, result: FinalResponse): string {
   const value = feature.properties[result.map_layer.metric];
-  if (typeof value !== "number") return "#cbd5e1";
-  const index = classIndex(value, result.map_layer.classification.breaks);
-  return BLUE[Math.min(index, BLUE.length - 1)];
+  if (typeof value !== "number" || !Number.isFinite(value)) return "#cbd5e1";
+  const { classification } = result.map_layer;
+  const colors = classColors("light", classification.class_count, layerStyle(result.map_layer).emphasis);
+  const index = classIndex(value, classification.breaks);
+  return colors[Math.min(index, colors.length - 1)] ?? "#cbd5e1";
 }
 
-function twoValueColor(feature: ShowcaseFeature, thresholds: ReturnType<typeof getBivariateBreaks>) {
-  const x = classIndex(numberOf(feature, "children_count"), thresholds.children);
-  const y = classIndex(numberOf(feature, "daycare_count"), thresholds.facilities);
+function twoValueColor(feature: ShowcaseFeature, result: FinalResponse, demo: boolean, thresholds: ReturnType<typeof getBivariateBreaks>) {
+  const bivariate = result.map_layer.bivariate;
+  if (!demo && !bivariate) return "#cbd5e1";
+  const xMetric = demo ? "children_count" : bivariate!.x.metric;
+  const yMetric = demo ? "daycare_count" : bivariate!.y.metric;
+  const xValue = feature.properties[xMetric];
+  const yValue = feature.properties[yMetric];
+  if (typeof xValue !== "number" || typeof yValue !== "number") return "#cbd5e1";
+  const x = classIndex(xValue, demo ? thresholds.children : bivariate!.x.breaks);
+  const y = classIndex(yValue, demo ? thresholds.facilities : bivariate!.y.breaks);
   return BIVARIATE_COLORS[Math.min(y, 2)][Math.min(x, 2)];
 }
 
 export function KakaoShowcaseMap({
-  result, view, hoveredKey, selectedKey, onHover, onSelect, focusRequest, resetSequence,
+  result, demo, view, hoveredKey, selectedKey, onHover, onSelect, focusRequest, resetSequence,
 }: Props) {
   const elementRef = useRef<HTMLDivElement>(null);
   const [instance, setInstance] = useState<{ maps: typeof kakao.maps; map: kakao.maps.Map } | null>(null);
@@ -168,7 +178,7 @@ export function KakaoShowcaseMap({
         const fill = view === "choropleth"
           ? facilityColor(feature, result)
           : view === "bivariate"
-            ? twoValueColor(feature, thresholds)
+            ? twoValueColor(feature, result, demo, thresholds)
             : "#dbeafe";
         const polygonPaths = toKakaoPolygonPaths(feature.geometry, maps);
         const featurePolygons: kakao.maps.Polygon[] = [];
@@ -203,29 +213,32 @@ export function KakaoShowcaseMap({
       }
     }
 
-    // 시연 가독성을 위해 원과 마커는 상위 85개 법정동만 표시한다.
+    // 정적 데모는 가상 시설 개수를 쓰지만, 실제 분석에서는 서버 지표와 실제 좌표만 사용한다.
+    const bubbleMetric = demo ? "daycare_count" : result.map_layer.metric;
     const notable = [...features]
-      .filter((feature) => numberOf(feature, "daycare_count") > 0)
-      .sort((a, b) => numberOf(b, "daycare_count") - numberOf(a, "daycare_count"))
-      .slice(0, 85);
+      .filter((feature) => numberOf(feature, bubbleMetric) > 0)
+      .sort((a, b) => numberOf(b, bubbleMetric) - numberOf(a, bubbleMetric))
+      .slice(0, demo ? 85 : 150);
 
     if (view === "bubble") {
-      const maxCount = Math.max(1, ...notable.map((feature) => numberOf(feature, "daycare_count")));
+      const maxValue = Math.max(1, ...notable.map((feature) => numberOf(feature, bubbleMetric)));
       for (const feature of notable) {
-        const count = numberOf(feature, "daycare_count");
-        const radius = Math.max(7, 32 * Math.sqrt(count / maxCount));
+        const value = numberOf(feature, bubbleMetric);
+        const radius = Math.max(7, 32 * Math.sqrt(value / maxValue));
         const bubble = document.createElement("button");
         bubble.type = "button";
         bubble.className = "kshow-map-bubble";
-        bubble.textContent = String(count);
+        bubble.textContent = formatValue(value, 0);
         bubble.style.width = `${radius * 2}px`;
         bubble.style.height = `${radius * 2}px`;
         bubble.style.fontSize = radius < 13 ? "10px" : "12px";
-        bubble.setAttribute("aria-label", `${feature.properties.unit_name} 가상 시설 ${count}개`);
+        bubble.setAttribute("aria-label", `${feature.properties.unit_name} ${result.map_layer.metric_label}: ${formatValue(value)}`);
         bubble.addEventListener("click", () => onSelectRef.current(feature.properties.unit_key));
         bubble.addEventListener("mouseenter", () => onHoverRef.current(feature.properties.unit_key));
         bubble.addEventListener("mouseleave", () => onHoverRef.current(null));
-        const [lng, lat] = representative(feature);
+        const [lng, lat] = !demo && feature.properties.label_point
+          ? feature.properties.label_point
+          : representative(feature);
         const overlay = new maps.CustomOverlay({
           map,
           position: new maps.LatLng(lat, lng),
@@ -240,17 +253,31 @@ export function KakaoShowcaseMap({
     }
 
     if (view === "point") {
-      for (const feature of notable) {
-        const [lng, lat] = representative(feature);
-        const marker = new maps.Marker({
-          map,
-          position: new maps.LatLng(lat, lng),
-          title: `${feature.properties.unit_name} · 가상 위치`,
-        });
-        markers.push(marker);
-        const click = () => onSelectRef.current(feature.properties.unit_key);
-        maps.event.addListener(marker, "click", click);
-        removeEvents.push(() => maps.event.removeListener(marker, "click", click));
+      if (demo) {
+        for (const feature of notable) {
+          const [lng, lat] = representative(feature);
+          const marker = new maps.Marker({
+            map, position: new maps.LatLng(lat, lng),
+            title: `${feature.properties.unit_name} · 시연용 가상 위치`,
+          });
+          markers.push(marker);
+          const click = () => onSelectRef.current(feature.properties.unit_key);
+          maps.event.addListener(marker, "click", click);
+          removeEvents.push(() => maps.event.removeListener(marker, "click", click));
+        }
+      } else {
+        // 700개를 넘는 경우 초기 렌더링 과부하를 방지한다. 전체 건수는 범례에 별도로 표시.
+        for (const feature of result.map_layer.points?.geojson.features.slice(0, 700) ?? []) {
+          const [lng, lat] = feature.geometry.coordinates;
+          const marker = new maps.Marker({
+            map, position: new maps.LatLng(lat, lng),
+            title: feature.properties.name ?? "시설 위치",
+          });
+          markers.push(marker);
+          const click = () => onSelectRef.current(feature.properties.unit_key);
+          maps.event.addListener(marker, "click", click);
+          removeEvents.push(() => maps.event.removeListener(marker, "click", click));
+        }
       }
     }
 
@@ -265,7 +292,7 @@ export function KakaoShowcaseMap({
       polygonsByKey.current.clear();
       previousHighlight.current = [];
     };
-  }, [instance, result, view]);
+  }, [instance, result, view, demo]);
 
   // hover / 선택 강조 시 다각형을 재생성하지 않고 스타일만 변경한다.
   useEffect(() => {
@@ -293,20 +320,37 @@ export function KakaoShowcaseMap({
       (item) => item.properties.unit_key === focusRequest.key,
     ) as ShowcaseFeature | undefined;
     if (!feature) return;
-    const [lng, lat] = representative(feature);
+    const [lng, lat] = feature.properties.label_point ?? representative(feature);
     instance.map.panTo(new instance.maps.LatLng(lat, lng));
     instance.map.setLevel(6);
   }, [instance, result, focusRequest]);
 
+  // 새 분석 결과가 들어오거나 전체 보기 버튼을 누르면 결과 영역 전체가 보이도록 이동한다.
   useEffect(() => {
     if (!instance) return;
-    instance.map.setLevel(9);
-    instance.map.panTo(new instance.maps.LatLng(CENTER.lat, CENTER.lng));
-  }, [instance, resetSequence]);
+    const bounds = new instance.maps.LatLngBounds();
+    let count = 0;
+    for (const feature of result.map_layer.geojson.features) {
+      for (const polygon of feature.geometry.coordinates) {
+        for (const ring of polygon) {
+          for (const position of ring) {
+            if (!Number.isFinite(position[0]) || !Number.isFinite(position[1])) continue;
+            bounds.extend(new instance.maps.LatLng(position[1], position[0]));
+            count += 1;
+          }
+        }
+      }
+    }
+    if (count > 2) instance.map.setBounds(bounds);
+    else {
+      instance.map.setLevel(9);
+      instance.map.panTo(new instance.maps.LatLng(CENTER.lat, CENTER.lng));
+    }
+  }, [instance, result, resetSequence]);
 
   return (
     <>
-      <div className="kshow-map" ref={elementRef} aria-label="카카오지도 시각화 데모" />
+      <div className="kshow-map" ref={elementRef} aria-label="카카오지도 분석 시각화" />
       {(loading || error) && (
         <div className="kshow-map-status" role={error ? "alert" : "status"}>
           {error ? (
