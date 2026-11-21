@@ -784,7 +784,9 @@ app/
 |---|---|---|---|
 | `POST` | `/api/analyses` | `{"question": "...", "scope": "seoul"}`(질문 1~500자, 범위 `seoul`·`national`, 기본 `seoul`)로 워크플로를 동기 실행 | 200 `{run_id, status, result, errors}`. 분석 실패도 200 + `status: "failed"`. 형식 오류 422, LLM·임베딩 설정 누락 503 |
 | `GET` | `/api/analyses/{run_id}` | 실행 기록과 결과 조회 | `{run_id, status, question, provenance, result}`. 없으면 404 |
+| `GET` | `/api/analyses/{run_id}/export?format=csv\|geojson` | 저장된 결과를 파일로 내려받기 | CSV(UTF-8 BOM, 단위마다 한 행) 또는 GeoJSON. 없으면 404, 결과 없는 실행 409 |
 | `GET` | `/api/datasets` | 카탈로그 메타데이터 목록 | `DatasetMetadata[]` |
+| `GET` | `/api/suggestions?scope=seoul\|national` | 예시 질문 | `string[]` (필요한 Dataset이 등록된 질문만) |
 | `GET` | `/api/health` | 상태 확인 | `{status, database, llm_provider, llm_model, embedding_model}` |
 
 성공 응답의 `result`(`FinalResponse`) 구조:

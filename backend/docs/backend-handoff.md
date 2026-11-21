@@ -165,7 +165,9 @@ API 테스트([tests/integration/test_api.py](../tests/integration/test_api.py))
 |---|---|---|---|
 | `POST` | `/api/analyses` | `{"question": "...", "scope": "seoul"}` (질문 1~500자, 범위 `seoul`·`national`, 기본 `seoul`) | 200 `{run_id, status, result, errors}`. 분석이 실패해도 200 + `status: "failed"`. 형식 오류 422, LLM·임베딩 설정 누락 503, 단계 밖 예외 500 |
 | `GET` | `/api/analyses/{run_id}` | `run_id`는 UUID | 200 `{run_id, status, question, provenance, result}`. 없으면 404 |
+| `GET` | `/api/analyses/{run_id}/export` | `format=csv`(기본)·`geojson` | 200 파일(`Content-Disposition: attachment; filename="mapgpt-<run_id 앞 8자>.<확장자>"`). CSV는 `text/csv`, UTF-8 BOM, 분석 단위마다 한 행(순위·지역 코드·지역 이름·상위 지역·지표 라벨 열, 순위순). GeoJSON은 `map_layer.geojson`(`application/geo+json`). 없는 실행 404, 결과가 없는 실행(실패·진행 중) 409, 다른 형식 422 |
 | `GET` | `/api/datasets` | 없음 | 200 `DatasetMetadata[]` (카탈로그) |
+| `GET` | `/api/suggestions` | `scope=seoul`(기본)·`national` | 200 `string[]`. 코드에 정한 예시 질문(`app/catalog/suggestions.py`) 중 필요한 Dataset이 모두 카탈로그에 등록된 것만. 서울 밖 지역 질문은 `national`에서만 |
 | `GET` | `/api/health` | 없음 | 200 `{status, database, llm_provider, llm_model, embedding_model}`. `status`는 `ok` 또는 `degraded` |
 
 - **실행 기록 조회:** `provenance`는 `AgentState`에서 지도와 최종 응답을 뺀 것이다. `result`는 `FinalResponse`이고, 실패한 실행이면 null이다. 이 엔드포인트에는 `response_model`이 없어 OpenAPI 문서의 스키마가 느슨하다.
