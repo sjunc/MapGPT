@@ -1,9 +1,11 @@
+import json
 import uuid
+from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.main import create_app, get_embedder, get_llm
+from app.api.main import KST, create_app, get_embedder, get_llm
 from app.config import Settings
 from tests.fakes import FakeEmbedder, daycare_llm
 from tests.support import QUESTION
@@ -11,19 +13,24 @@ from tests.support import QUESTION
 pytestmark = pytest.mark.integration
 
 
-@pytest.fixture
-def client(database_url, catalog):
+def _test_client(database_url: str, **overrides) -> TestClient:
     settings = Settings(
         database_url=database_url,
         llm_provider="ollama",
         ollama_model=None,
         openai_api_key=None,
         openai_embedding_model="test-embedding",
+        **overrides,
     )
     app = create_app(settings)
     app.dependency_overrides[get_llm] = lambda: daycare_llm()
     app.dependency_overrides[get_embedder] = lambda: FakeEmbedder()
-    with TestClient(app) as test_client:
+    return TestClient(app)
+
+
+@pytest.fixture
+def client(database_url, catalog):
+    with _test_client(database_url) as test_client:
         yield test_client
 
 
@@ -96,3 +103,100 @@ def test_catalog_and_health_endpoints(client):
         "llm_model": "",
         "embedding_model": "test-embedding",
     }
+
+
+def test_success_response_is_gzipped_when_the_client_accepts_it(client):
+    response = client.post("/api/analyses", json={"question": QUESTION}, headers={"Accept-Encoding": "gzip"})
+
+    assert response.headers["content-encoding"] == "gzip"
+    assert response.json()["status"] == "succeeded"  # httpx가 풀어서 읽는다
+
+
+def test_analysis_requests_are_rate_limited_per_client(database_url, catalog):
+    with _test_client(database_url, analysis_rate_limit="2/minute") as limited:
+        statuses = [limited.post("/api/analyses", json={"question": QUESTION}).status_code for _ in range(3)]
+        blocked = limited.post("/api/analyses", json={"question": QUESTION})
+        health = limited.get("/api/health")
+
+    assert statuses == [200, 200, 429]
+    assert "너무 잦습니다" in blocked.json()["detail"]
+    assert 1 <= int(blocked.headers["Retry-After"]) <= 60
+    assert health.status_code == 200  # 분석 요청만 센다
+
+
+@pytest.mark.parametrize("rate_limit", ["", "0"])
+def test_empty_or_zero_rate_limit_disables_it(database_url, catalog, rate_limit):
+    with _test_client(database_url, analysis_rate_limit=rate_limit) as unlimited:
+        statuses = {unlimited.post("/api/analyses", json={"question": QUESTION}).status_code for _ in range(6)}
+
+    assert statuses == {200}
+
+
+def _insert_run(conn, started_at: datetime) -> None:
+    conn.execute(
+        "INSERT INTO analysis.run (run_id, question, status, state, started_at) VALUES (%s, 'q', 'failed', '{}', %s)",
+        (uuid.uuid4(), started_at),
+    )
+    conn.commit()
+
+
+def test_daily_limit_counts_runs_since_kst_midnight(database_url, catalog, conn):
+    midnight = datetime.now(KST).replace(hour=0, minute=0, second=0, microsecond=0)
+    _insert_run(conn, midnight - timedelta(seconds=1))  # 어제 실행은 세지 않는다
+    _insert_run(conn, midnight)
+
+    with _test_client(database_url, analysis_daily_limit=2, analysis_rate_limit="") as capped:
+        allowed = capped.post("/api/analyses", json={"question": QUESTION})
+        blocked = capped.post("/api/analyses", json={"question": QUESTION})
+
+    assert allowed.status_code == 200
+    assert blocked.status_code == 429
+    assert "오늘의 분석 한도(2건)" in blocked.json()["detail"]
+    assert 1 <= int(blocked.headers["Retry-After"]) <= 24 * 3600
+    assert conn.execute("SELECT count(*) FROM analysis.run").fetchone()[0] == 3  # 막힌 요청은 실행하지 않는다
+
+
+def test_stats_summarise_recent_runs(client, conn):
+    now = datetime.now(KST)
+    rows = [  # (상태, 소요 초, 오류 코드, 모델, 며칠 전)
+        ("succeeded", 10, [], "gpt-4o-mini", 0),
+        ("succeeded", 20, [], "gpt-4o-mini", 1),
+        ("succeeded", 30, [], "qwen3.5:9b", 2),
+        ("failed", 2, ["PLAN_INVALID"], "gpt-4o-mini", 3),
+        ("failed", 4, ["PLAN_INVALID", "LLM_FAILED"], None, 6),
+        ("failed", 99, ["INTERNAL_ERROR"], "gpt-4o-mini", 8),  # 7일 밖
+    ]
+    for status, seconds, codes, model, days_ago in rows:
+        started = now - timedelta(days=days_ago, minutes=5)
+        errors = json.dumps([{"step": "validate_plan", "code": code, "message": "", "issues": []} for code in codes])
+        conn.execute(
+            """
+            INSERT INTO analysis.run (run_id, question, status, llm_model, errors, state, started_at, finished_at)
+            VALUES (%s, 'q', %s, %s, %s, '{}', %s, %s)
+            """,
+            (uuid.uuid4(), status, model, errors, started, started + timedelta(seconds=seconds)),
+        )
+    conn.commit()
+
+    stats = client.get("/api/stats").json()
+
+    assert (stats["days"], stats["total"], stats["succeeded"], stats["failed"]) == (7, 5, 3, 2)
+    assert stats["success_rate"] == pytest.approx(0.6)
+    assert stats["duration_p50_seconds"] == pytest.approx(10)
+    assert stats["duration_p90_seconds"] == pytest.approx(26)  # 2, 4, 10, 20, 30의 90% 분위(선형 보간)
+    assert stats["top_error_codes"] == [{"code": "PLAN_INVALID", "runs": 2}, {"code": "LLM_FAILED", "runs": 1}]
+    assert stats["by_llm_model"] == [
+        {"llm_model": "gpt-4o-mini", "runs": 3},
+        {"llm_model": "", "runs": 1},
+        {"llm_model": "qwen3.5:9b", "runs": 1},
+    ]
+    assert client.get("/api/stats", params={"days": 30}).json()["total"] == 6
+    assert client.get("/api/stats", params={"days": 0}).status_code == 422
+
+
+def test_stats_without_runs_have_no_rates(client):
+    stats = client.get("/api/stats").json()
+
+    assert stats["total"] == 0
+    assert stats["success_rate"] is None and stats["duration_p50_seconds"] is None
+    assert stats["top_error_codes"] == [] and stats["by_llm_model"] == []

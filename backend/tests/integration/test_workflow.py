@@ -175,6 +175,20 @@ def test_invalid_regional_summary_uses_validated_metadata_fallback(pool, catalog
     assert all(len(feature["properties"]["label_point"]) == 2 for feature in layer.geojson["features"])
 
 
+@pytest.mark.parametrize(
+    ("question", "order"), [("서울에서 인구가 많은 행정동", "desc"), ("서울에서 인구가 가장 적은 행정동", "asc")]
+)
+def test_fallback_ranks_in_the_direction_the_question_asks(pool, catalog, question, order):
+    llm = _population_llm(_invalid_population_plan([]), "인구수")
+
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run(question)
+
+    assert state.status == RunStatus.SUCCEEDED, state.errors
+    assert state.analysis_plan.operations[1].order == order
+    values = [item.value for item in state.final_response.ranking]
+    assert values == sorted(values, reverse=order == "desc")
+
+
 def test_fallback_is_not_used_when_it_would_drop_a_data_condition(pool, catalog):
     # 대체 계획은 필터 없이 집계하므로 0~5세 조건이 있던 질문에 전체 인구로 답하게 된다. 틀린 답 대신 실패로 끝낸다.
     age = {"dataset": "population_by_age", "where": {"field": "age", "operator": "between", "value": [0, 5]}}

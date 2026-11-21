@@ -12,11 +12,20 @@ from app.llm.schema import to_llm_json_schema
 class OllamaChatLLM:
     provider = "ollama"
 
-    def __init__(self, *, base_url: str, model: str, reasoning_effort: str | None = None, client: OpenAI | None = None):
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        model: str,
+        reasoning_effort: str | None = None,
+        timeout: float = 60,
+        max_retries: int = 1,
+        client: OpenAI | None = None,
+    ):
         self.model = model
         self._reasoning_effort = reasoning_effort
         # Ollama는 API 키를 검사하지 않지만 SDK는 값을 요구한다.
-        self._client = client or OpenAI(base_url=base_url, api_key="ollama")
+        self._client = client or OpenAI(base_url=base_url, api_key="ollama", timeout=timeout, max_retries=max_retries)
 
     def generate(self, *, system: str, user: str, output_type: type[T]) -> T:
         schema = to_llm_json_schema(output_type)

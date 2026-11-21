@@ -80,6 +80,9 @@ test -f .env || cp .env.example .env
 | `OLLAMA_BASE_URL`, `OLLAMA_MODEL` | 로컬 Ollama (예: `ollama pull qwen3.5:9b` 후 `OLLAMA_MODEL=qwen3.5:9b`) |
 | `OLLAMA_REASONING_EFFORT` | thinking 모델의 추론 강도. `none`이면 thinking을 끕니다 (qwen3.5:9b 해석 단계 130초 → 6초) |
 | `SEOUL_OPEN_API_KEY` | 서울 열린데이터광장 인증키. 어린이집 원본 캐시가 없으면 `ingest all` 전에 반드시 입력 |
+| `LLM_TIMEOUT_SECONDS`, `LLM_MAX_RETRIES` | LLM·임베딩 호출 하나의 타임아웃(기본 60초)과 재시도 횟수(기본 1회). 로컬 thinking 모델이 느리면 타임아웃을 늘립니다 |
+| `ANALYSIS_RATE_LIMIT` | `POST /api/analyses`의 클라이언트 IP별 요청 제한 (기본 `5/minute`, 예: `10/minute;100/day`). 비우거나 `0`이면 끕니다 |
+| `ANALYSIS_DAILY_LIMIT` | 한국 시간 자정부터 센 분석 실행 수의 하루 한도 (기본 300, 모든 클라이언트 합계). `0`이면 제한 없음 |
 
 외부 DB 접속 문자열 예시(실제 정보로 교체):
 
@@ -277,6 +280,13 @@ API: `POST /api/analyses`, `GET /api/analyses/{run_id}` (Provenance), `GET /api/
    현재 `frontend/vercel.json`은 루트 접속을 데모 화면으로 이동시키므로 실제 분석 확인에는 `/?demo=0`을 사용합니다.
 
 CORS는 브라우저의 응답 읽기 허용 규칙이며 API 인증·요청 제한을 대신하지 않습니다.
+
+분석 요청은 IP별 요청 제한(`ANALYSIS_RATE_LIMIT`)과 하루 한도(`ANALYSIS_DAILY_LIMIT`)를 넘으면 429와
+`Retry-After`를 돌려줍니다. IP는 uvicorn이 넘긴 클라이언트 주소이며, uvicorn은 `--forwarded-allow-ips`
+(기본 `127.0.0.1`)에 있는 프록시가 보낸 `X-Forwarded-For`만 믿습니다. 위 예처럼 같은 서버의 프록시가
+`127.0.0.1`로 넘기면 설정할 것이 없고, 프록시가 다른 주소에 있으면 그 주소를 `--forwarded-allow-ips`에 넣습니다.
+앱은 `X-Forwarded-For`를 직접 읽지 않습니다(누구나 위조할 수 있음). 요청 제한은 프로세스 메모리에서 세므로
+`--workers N`이면 프로세스마다 따로 셉니다.
 실제 `.env`는 수정·커밋하지 않고 서버와 Vercel에 각각 설정합니다.
 
 참고: [FastAPI CORS](https://fastapi.tiangolo.com/tutorial/cors/),
@@ -289,6 +299,8 @@ CORS는 브라우저의 응답 읽기 허용 규칙이며 API 인증·요청 제
 pytest              # unit + integration (integration은 docker compose의 PostGIS에 mapgpt_test DB를 만들어 사용)
 python scripts/check.py   # 작업 후 검증: ruff, pytest(unit + integration, DB 필요), 화면 타입 검사·빌드
 ```
+
+GitHub Actions(`.github/workflows/check.yml`)가 push·PR마다 compose로 DB를 띄우고 같은 `scripts/check.py`를 실행합니다.
 
 ```bash
 pytest -m e2e       # 실제 적재 데이터 + 실제 LLM·OpenAI 임베딩으로 성공 기준 1~12 확인

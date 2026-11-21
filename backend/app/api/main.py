@@ -1,18 +1,26 @@
 """REST API. 실행: uvicorn app.api.main:app --reload"""
 
+import math
+import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 from typing import Annotated, Any
+from zoneinfo import ZoneInfo
 
 import psycopg
-from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
 from psycopg_pool import ConnectionPool
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from app.api.jobs import AnalysisJobs, format_sse
-from app.api.schemas import AnalysisJobResponse, AnalysisRequest, AnalysisResponse
+from app.api.schemas import AnalysisJobResponse, AnalysisRequest, AnalysisResponse, RunStats
 from app.config import Settings, get_settings
 from app.data_sources.acquisition import DataAcquirer
 from app.domain.catalog import DatasetMetadata
@@ -20,7 +28,7 @@ from app.llm.base import LLMError, StructuredLLM
 from app.llm.embeddings import Embedder, EmbeddingError
 from app.llm.factory import create_embedder, create_llm
 from app.repositories.catalog_repository import list_datasets
-from app.repositories.run_repository import get_run
+from app.repositories.run_repository import count_runs_since, get_run, run_stats
 from app.workflows.analysis_workflow import AnalysisWorkflow
 
 
@@ -28,23 +36,60 @@ def get_pool(request: Request) -> ConnectionPool:
     return request.app.state.pool
 
 
+KST = ZoneInfo("Asia/Seoul")
+
+
 def get_llm(request: Request) -> StructuredLLM:
-    try:
-        return create_llm(request.app.state.settings)
-    except LLMError as error:
-        raise HTTPException(status_code=503, detail=str(error)) from error
+    # 클라이언트는 앱 시작 때 한 번 만든다. 설정이 없으면 그때의 오류를 요청마다 503으로 알린다.
+    if request.app.state.llm is None:
+        raise HTTPException(status_code=503, detail=request.app.state.llm_error)
+    return request.app.state.llm
 
 
 def get_embedder(request: Request) -> Embedder:
-    try:
-        return create_embedder(request.app.state.settings)
-    except EmbeddingError as error:
-        raise HTTPException(status_code=503, detail=str(error)) from error
+    if request.app.state.embedder is None:
+        raise HTTPException(status_code=503, detail=request.app.state.embedder_error)
+    return request.app.state.embedder
 
 
 Pool = Annotated[ConnectionPool, Depends(get_pool)]
 LLM = Annotated[StructuredLLM, Depends(get_llm)]
 Embedding = Annotated[Embedder, Depends(get_embedder)]
+
+
+def _rate_limit_exceeded(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    limit, key = request.state.view_rate_limit
+    reset_at, _ = request.app.state.limiter.limiter.get_window_stats(limit, *key)
+    retry_after = max(1, math.ceil(reset_at - time.time()))
+    return JSONResponse(
+        status_code=429,
+        content={"detail": f"분석 요청이 너무 잦습니다 (허용: {exc.detail}). {retry_after}초 뒤에 다시 시도하세요"},
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+def _check_daily_limit(pool: ConnectionPool, limit: int) -> None:
+    """한국 시간 자정부터 기록된 분석 실행이 한도에 이르면 429. 실행 중인 분석은 끝나야 기록되므로 동시 요청 수만큼 넘을 수 있다."""
+    if limit <= 0:
+        return
+    now = datetime.now(KST)
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    with pool.connection() as conn:
+        used = count_runs_since(conn, midnight)
+    if used >= limit:
+        retry_after = math.ceil((midnight + timedelta(days=1) - now).total_seconds())
+        raise HTTPException(
+            status_code=429,
+            detail=f"오늘의 분석 한도({limit}건)를 모두 썼습니다. 한국 시간 자정 이후에 다시 시도하세요",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+
+def _build_client(factory, settings: Settings, error_type: type[Exception]) -> tuple[Any, str | None]:
+    try:
+        return factory(settings), None
+    except error_type as error:
+        return None, str(error)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -68,22 +113,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["GET", "POST"],
         allow_headers=["Content-Type"],
     )
+    # 성공 응답은 행정동 GeoJSON을 포함해 수백 KB다. 작은 응답(오류, 헬스 체크)은 압축하지 않는다.
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
     app.state.settings = settings
+    app.state.llm, app.state.llm_error = _build_client(create_llm, settings, LLMError)
+    app.state.embedder, app.state.embedder_error = _build_client(create_embedder, settings, EmbeddingError)
+    # 클라이언트 IP별 제한. 저장소가 프로세스 메모리라 --workers N이면 프로세스마다 따로 센다.
+    # 리버스 프록시 뒤에서는 uvicorn --forwarded-allow-ips(FORWARDED_ALLOW_IPS)에 프록시 주소를 넣어야
+    # request.client가 실제 클라이언트가 된다. X-Forwarded-For를 앱이 직접 믿지 않는다(위조 가능).
+    app.state.limiter = Limiter(key_func=get_remote_address)
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded)
+    rate_limit = settings.analysis_rate_limit.strip()
 
-    @app.post("/api/analyses", response_model=AnalysisResponse)
-    def create_analysis(body: AnalysisRequest, pool: Pool, llm: LLM, embedder: Embedding) -> AnalysisResponse:
+    def create_analysis(
+        request: Request, body: AnalysisRequest, pool: Pool, llm: LLM, embedder: Embedding
+    ) -> AnalysisResponse:
         """질문을 분석 워크플로로 실행한다. 분석 실패도 run으로 기록되며 status=failed로 반환한다."""
+        _check_daily_limit(pool, settings.analysis_daily_limit)
         acquirer = DataAcquirer.from_settings(settings, pool, embedder)
         state = AnalysisWorkflow(llm, pool, embedder, acquirer).run(body.question, body.scope)
         return AnalysisResponse(
             run_id=state.run_id, status=state.status, result=state.final_response, errors=state.errors
         )
 
-    @app.post("/api/analysis-jobs", response_model=AnalysisJobResponse, status_code=202)
+    if rate_limit and rate_limit != "0":
+        create_analysis = app.state.limiter.limit(rate_limit)(create_analysis)
+    app.post("/api/analyses", response_model=AnalysisResponse)(create_analysis)
+
     def create_analysis_job(
-        body: AnalysisRequest, request: Request, pool: Pool, llm: LLM, embedder: Embedding
+        request: Request, body: AnalysisRequest, pool: Pool, llm: LLM, embedder: Embedding
     ) -> AnalysisJobResponse:
-        """질문을 백그라운드에서 실행하고 바로 run_id를 돌려준다. 진행은 events, 결과는 GET /api/analyses/{run_id}."""
+        """질문을 백그라운드에서 실행하고 바로 run_id를 돌려준다. 진행은 events, 결과는 GET /api/analyses/{run_id}.
+
+        동기 분석과 같은 요청 제한·하루 한도를 받는다 (같은 LLM 비용이 든다).
+        """
+        _check_daily_limit(pool, settings.analysis_daily_limit)
         acquirer = DataAcquirer.from_settings(settings, pool, embedder)
         job = request.app.state.jobs.submit(AnalysisWorkflow(llm, pool, embedder, acquirer), body.question, body.scope)
         return AnalysisJobResponse(
@@ -92,6 +156,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             events_url=f"/api/analysis-jobs/{job.run_id}/events",
             result_url=f"/api/analyses/{job.run_id}",
         )
+
+    if rate_limit and rate_limit != "0":
+        create_analysis_job = app.state.limiter.limit(rate_limit)(create_analysis_job)
+    app.post("/api/analysis-jobs", response_model=AnalysisJobResponse, status_code=202)(create_analysis_job)
 
     @app.get("/api/analysis-jobs/{run_id}/events")
     def stream_analysis_job(run_id: uuid.UUID, request: Request, pool: Pool) -> StreamingResponse:
@@ -133,6 +201,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if run is None:
             raise HTTPException(status_code=404, detail="분석 실행 기록이 없습니다")
         return run
+
+    @app.get("/api/stats", response_model=RunStats)
+    def read_stats(pool: Pool, days: Annotated[int, Query(ge=1, le=90)] = 7) -> RunStats:
+        """최근 days일 동안 시작한 분석 실행의 운영 통계 (성공률, 소요 시간, 오류 코드, 모델별 건수)."""
+        since = datetime.now(KST) - timedelta(days=days)
+        with pool.connection() as conn:
+            stats = run_stats(conn, since)
+        return RunStats(days=days, since=since, **stats)
 
     @app.get("/api/datasets", response_model=list[DatasetMetadata])
     def read_datasets(pool: Pool) -> list[DatasetMetadata]:
