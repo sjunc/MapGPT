@@ -19,6 +19,7 @@
   - `src`는 약 770줄이고, 런타임 라이브러리는 React와 MapLibre뿐이다.
   - 타입 검사와 빌드는 통과한다.
 - **지도:** 팀은 처음에 카카오맵을 쓰기로 했지만, 구현 기준이었던 개발 전달 문서(23·29·42번)가 MapLibre를 명시해 MapLibre로 만들었다. 어느 쪽으로 갈지는 담당자가 정한다(F1). 바꾸더라도 지도 컴포넌트 하나만 다시 만들면 된다.
+- **카카오 지도 화면 (2026-11-21):** `?map=kakao`로 여는 카카오맵 화면이 따로 있고, Vercel 배포의 `/`는 이 화면의 가상 데모로 간다. MapLibre 화면과 같은 지도 보기·주소(`run`)·최근 실행·실패 상세·실행 기록을 갖췄다([3.5절](#35-카카오-지도-화면-2026-11-21)).
 - **첫 분석 주제에 묶인 부분:** 순위 표의 "행정동" 같은 문구가 코드에 고정되어 있다. 범례 양끝 문구와 색 방향은 응답(`map_layer.style`)에서 받는다.
 - **지도 보기 (2026-11-15):** 개수·합계 지표는 비례 원이 기본이고 "원 크기"·"색 구간" 버튼으로 단계 구분도와 바꿔 볼 수 있다. 비율·평균은 단계 구분도만 쓴다. 보기와 강조 방향은 백엔드가 정해 `map_layer.style`로 보내고, 원 위치는 각 단위의 `properties.label_point`다. 지표가 시설 개수면 `map_layer.points`(시설 위치)가 함께 와서 "점"(가까운 곳은 묶음)·"밀도" 보기가 더해지고, 위치를 물으면 점, 밀집한 곳을 물으면 밀도가 기본이다. 같은 크기 육각형 칸마다 센 `map_layer.hexbins`로 "육각 격자" 보기도 있고, 점이 1만 개를 넘어 위치가 오지 않으면 위치·밀집 질문은 육각 격자가 기본이다. 비율 지표는 `map_layer.bivariate`(분모·분자 3분위)로 "두 지표"(이변량) 보기를 더한다(2026-11-16).
 - **백엔드와 함께 정할 것:** 진행 상황 표시(지금은 경과 시간만), 배포 시 서빙 방식, 응답 타입 동기화.
@@ -41,7 +42,7 @@
 | 구분 | 내용 |
 |---|---|
 | 스택 | Vite 8.3, React 19.3, TypeScript 7.0(strict), MapLibre GL 6.13 |
-| 런타임 의존성 | `react`, `react-dom`, `maplibre-gl` 셋뿐이다. 상태 관리·UI·라우터 라이브러리는 없다 |
+| 런타임 의존성 | `react`, `react-dom`, `maplibre-gl`, `simpleheat`(카카오 화면의 밀도 지도, 2026-11-21). 카카오 지도 SDK는 실행 중에 카카오 서버에서 불러온다. 상태 관리·UI·라우터 라이브러리는 없다 |
 | 스타일 | `styles.css` 하나. 색은 CSS 변수로 두고, `prefers-color-scheme`으로 라이트·다크를 바꾼다. 860px 미만에서는 세로로 쌓는다 |
 | 배경지도 | OpenFreeMap positron(라이트), dark(다크). API 키가 필요 없다 |
 | 개발 서버 | `:5173`. `/api`를 FastAPI `:8000`으로 프록시한다(타임아웃 300초) |
@@ -194,6 +195,65 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
 - **잃는 것:** 다크 배경지도
 - **절충안:** MapLibre를 유지하면서 국내 배경지도 타일(예: 브이월드)로 바꾸는 방법도 있다. 키와 약관은 따로 확인해야 하고, 아직 검증하지 않았다.
 
+### 3.5 카카오 지도 화면 (2026-11-21)
+
+팀원이 만든 카카오맵 화면(FE/jsm)을 분석 API에 연결했고, MapLibre 화면과 같은 기능을 갖추도록 채웠다. Vercel 배포의 `/`는 이 화면의 가상 데모(`/?demo=1&map=kakao`)로 간다(`vercel.json`). MapLibre 화면(`App`)과 백엔드는 그대로다.
+
+**주소:** `main.tsx`는 `map=kakao`가 있으면 카카오 화면을, 없으면 MapLibre 화면을 연다. 카카오 화면에서는 주소가 무엇을 보일지 정한다.
+
+| 주소 | 화면 |
+|---|---|
+| `/?map=kakao` | 빈 지도와 안내 문구 |
+| `/?map=kakao&run=<run_id>` | 저장된 실행. 성공이면 결과, 실패면 빈 지도와 오류 상세 |
+| `/?demo=1&map=kakao` | 가상 데모(`public/demo/analysis.json`) |
+| `/?run=<run_id>` | MapLibre 화면에서 같은 실행 |
+
+- 분석하거나 실행을 열면 주소를 `?map=kakao&run=<id>`로 바꾼다(`pushState`). 새로고침과 뒤로·앞으로 가기는 같은 규칙으로 화면을 되살리고, 늦게 온 이전 응답은 버린다.
+- "가상 데모로 돌아가기"는 주소를 `?demo=1&map=kakao`로 바꾼다. 데모 데이터는 늘 불러 두지만 주소가 데모일 때만 보인다.
+
+**기능:** MapLibre 화면과 같다.
+
+- 지도 보기는 단계 구분도, 비례 원, 점(시설 위치), 밀도, 육각 격자, 이변량이다.
+  - 서버가 `map_layer.style.views`로 허용하고 필요한 데이터(`points`, `hexbins`, `bivariate`)가 있는 보기만 보인다.
+  - 처음에는 서버 기본 보기로 연다.
+  - 데모 데이터에는 점과 격자가 없어 데모는 원래 네 가지(단계 구분도·비례 원·점·이변량)만 쓴다.
+- 최근 실행(`runHistory.ts`)은 이 브라우저에만 저장되고, MapLibre 화면과 같은 목록이다.
+- 실패하면 `ErrorPanel`로 상세를 보인다. 직전 성공 결과는 지도에 남기고 "직전 결과"로 표시한다.
+- 결과와 실패 모두 Agent 실행 기록(`ExecutionTrace`)과 원본 JSON 링크를 보인다.
+- 범례는 구간 경계값, 육각형 칸 크기·넓이, 이변량 경계값, 서버가 보기를 고른 이유(`style.note`)를 보인다.
+- 결과에 지도를 맞출 때 상단 바·보기 전환·지도 버튼·범례·질문 입력창의 위치를 재서 결과를 가리지 않게 여백을 둔다. 순위를 누르면 같은 여백으로 그 지역에 맞춘다.
+- 순위는 상위 10개를 보이고, "전체 순위 보기"로 모든 단위를 펼친다. 응답의 순위 값으로 정렬만 한다.
+
+**카카오맵으로 그리는 방법:** 카카오 지도 API는 GeoJSON 레이어와 히트맵이 없어 보기마다 객체를 만든다.
+
+| 보기 | 구현 |
+|---|---|
+| 단계 구분도·이변량 | 단위마다 `kakao.maps.Polygon`. 색은 서버 구간(`classification.breaks`, `bivariate.*.breaks`)과 `theme.ts`의 같은 색. 이변량의 시연용 팔레트는 데모에만 쓴다 |
+| 비례 원 | `CustomOverlay`에 단 DOM 버튼. 반지름은 `symbolMaxRadius(feature_count) × √(값 ÷ 최댓값)`이고, 12px 미만인 원은 숫자 없이 `aria-label`만 단다 |
+| 점 | 기본 마커와 `MarkerClusterer`(SDK `libraries=clusterer`, 평균 위치, 레벨 5 이상에서 묶음). 마커를 누르면 그 시설의 단위를 고른다 |
+| 밀도 | 지도 위에 `pointer-events: none`인 canvas를 겹치고 `simpleheat`로 그린다. 지도가 움직이면 `requestAnimationFrame`으로 다시 그린다 |
+| 육각 격자 | 칸마다 `Polygon`을 그리고, 아래에 단위 경계를 `Polyline`으로 깐다. 칸을 누르면 그 칸의 개수를 보인다 |
+
+- 밀도 크기는 MapLibre와 같다. 줌 9→13에서 반지름 6→22px, 세기 0.12→0.9, 불투명도는 0.85다.
+  - 카카오 레벨 L은 MapLibre 줌 약 18.8 − L로 바꿔 쓴다. 레벨 9의 축척 막대가 4km=58px(약 69m/px)이다.
+  - simpleheat는 밀도를 불투명도로도 쓴다. 그래서 같은 매개변수에서도 드문 곳이 MapLibre보다 옅게 보인다.
+- 화면에 보이는 LLM 문자열은 모두 React 텍스트나 `textContent`로 넣는다.
+
+**환경 변수**
+
+| 이름 | 쓰는 곳 | 내용 |
+|---|---|---|
+| `VITE_KAKAO_MAP_APP_KEY` | 화면 빌드(`frontend/.env`, Vercel 프로젝트 환경 변수) | 카카오 JavaScript 키. 공개 클라이언트 키만 넣는다. 화면을 여는 도메인(포트 포함)을 카카오 개발자 콘솔에 등록해야 지도가 뜨므로, 로컬 개발 서버도 등록한 포트로 띄운다 |
+| `MAPGPT_BACKEND_URL` | 개발 서버(`vite.config.ts`)만 | `/api` 프록시 대상. 비우면 `vite.config.ts`의 기본 대상(외부 서버)으로 간다. 로컬 API를 쓰려면 `MAPGPT_BACKEND_URL=http://127.0.0.1:8000 npm run dev`로 띄운다. 브라우저 코드에는 들어가지 않는다 |
+| `VITE_API_BASE_URL` | 화면 빌드 | 분리 배포의 API 주소([2.1절](#21-api-사용)). 비우면 `/api` 프록시를 쓴다 |
+
+**아직 없는 것**
+
+- 다크 모드가 없다. 화면은 라이트로 고정하고, 함께 쓰는 카드 컴포넌트도 라이트 색을 쓴다.
+- 마우스를 올렸을 때의 툴팁이 없다.
+- 진행 중인 실행을 자동으로 조회하지 않는다.
+- 좁은 화면에서는 범례가 지도의 큰 부분을 가려, 결과를 맞출 영역이 작다. MapLibre 화면은 좁은 화면에서 범례를 결과 패널로 옮긴다.
+
 ## 4. 첫 분석 주제에 묶인 부분
 
 지금 화면은 "인구 대비 시설 공급 부족을 행정동별로 보는" 첫 분석 주제에 맞춰 문구와 방향이 고정되어 있다. 두 번째 분석 주제(예: 지하철역 500m 밖 지역)나 다른 공간 단위가 생기면 고쳐야 한다.
@@ -307,6 +367,9 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
 | 오류 | [frontend/src/components/ErrorPanel.tsx](../src/components/ErrorPanel.tsx) |
 | 색 램프, 배경지도, 값 포맷, 결측 사유 | [frontend/src/theme.ts](../src/theme.ts) |
 | 레이아웃·색 토큰 | [frontend/src/styles.css](../src/styles.css) |
+| 화면 고르기(`map=kakao`) | [frontend/src/main.tsx](../src/main.tsx) |
+| 카카오 화면: 주소, 패널, 범례, 순위 | [frontend/src/components/KakaoShowcase.tsx](../src/components/KakaoShowcase.tsx), [kakao-showcase.css](../src/components/kakao-showcase.css) |
+| 카카오 지도: 보기별 그리기, 지도 맞춤 | [frontend/src/components/KakaoShowcaseMap.tsx](../src/components/KakaoShowcaseMap.tsx), [frontend/src/maps/](../src/maps/) |
 | 개발 서버·프록시 | [frontend/vite.config.ts](../vite.config.ts) |
 | 백엔드 응답 모델 | [app/api/schemas.py](../../backend/app/api/schemas.py), [app/domain/results.py](../../backend/app/domain/results.py), [app/domain/state.py](../../backend/app/domain/state.py) |
 
