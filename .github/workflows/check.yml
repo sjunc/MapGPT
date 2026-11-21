@@ -1,0 +1,50 @@
+# 로컬 작업 후 검증과 같은 backend/scripts/check.py(ruff, pytest unit+integration, 화면 타입 검사·빌드)를 돌린다.
+# e2e는 실제 LLM 키가 필요해 돌리지 않는다.
+name: check
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TEST_DATABASE_URL: postgresql://mapgpt:mapgpt@localhost:5432/mapgpt_test
+    steps:
+      - uses: actions/checkout@v4
+
+      # services:는 미리 만든 이미지만 받으므로, 로컬과 같은 이미지(docker/postgres: PostGIS + pgvector)를
+      # compose로 빌드해 띄우고 healthcheck가 통과할 때까지 기다린다.
+      - name: PostGIS + pgvector DB
+        working-directory: backend
+        run: docker compose up -d --build --wait
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Python 의존성
+        working-directory: backend
+        run: pip install -e ".[dev]"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 화면 의존성
+        working-directory: frontend
+        run: npm ci
+
+      - name: 검증 (ruff, pytest, 화면 타입 검사·빌드)
+        working-directory: backend
+        run: python scripts/check.py
