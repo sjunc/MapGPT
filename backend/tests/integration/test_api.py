@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.api.main import KST, create_app, get_embedder, get_llm
 from app.config import Settings
+from app.llm.base import LLMError
 from tests.fakes import FakeEmbedder, daycare_llm
 from tests.support import QUESTION
 
@@ -200,3 +201,50 @@ def test_stats_without_runs_have_no_rates(client):
     assert stats["total"] == 0
     assert stats["success_rate"] is None and stats["duration_p50_seconds"] is None
     assert stats["top_error_codes"] == [] and stats["by_llm_model"] == []
+
+
+def test_export_csv_and_geojson_from_stored_result(client):
+    body = client.post("/api/analyses", json={"question": QUESTION}).json()
+    run_id = body["run_id"]
+
+    csv_response = client.get(f"/api/analyses/{run_id}/export", params={"format": "csv"})
+    geojson_response = client.get(f"/api/analyses/{run_id}/export", params={"format": "geojson"})
+
+    assert csv_response.status_code == 200
+    assert csv_response.headers["content-type"] == "text/csv; charset=utf-8"
+    assert csv_response.headers["content-disposition"] == f'attachment; filename="mapgpt-{run_id[:8]}.csv"'
+    text = csv_response.content.decode("utf-8")
+    lines = text.removeprefix("﻿").splitlines()
+    assert text.startswith("﻿")
+    assert lines[0].startswith("순위,지역 코드,지역 이름,상위 지역,")
+    assert len(lines) == 1 + len(body["result"]["map_layer"]["geojson"]["features"])
+    assert lines[1].split(",")[:3] == ["1", body["result"]["ranking"][0]["unit_key"], "카동"]
+
+    assert geojson_response.status_code == 200
+    assert geojson_response.headers["content-type"] == "application/geo+json"
+    assert geojson_response.headers["content-disposition"].endswith(f'mapgpt-{run_id[:8]}.geojson"')
+    assert geojson_response.json() == body["result"]["map_layer"]["geojson"]
+
+
+def test_export_of_failed_or_unknown_run(client):
+    client.app.dependency_overrides[get_llm] = lambda: daycare_llm(interpreted=[LLMError("OpenAI 호출 실패: 401")])
+    failed = client.post("/api/analyses", json={"question": QUESTION}).json()
+
+    assert failed["status"] == "failed"
+    assert client.get(f"/api/analyses/{failed['run_id']}/export").status_code == 409
+    assert client.get(f"/api/analyses/{uuid.uuid4()}/export").status_code == 404
+    assert client.get(f"/api/analyses/{failed['run_id']}/export", params={"format": "xlsx"}).status_code == 422
+
+
+def test_suggestions_only_use_registered_datasets(client):
+    seoul = client.get("/api/suggestions").json()
+    national = client.get("/api/suggestions", params={"scope": "national"}).json()
+
+    # 테스트 카탈로그에는 행정동 경계·인구·어린이집만 있어 시군구 경계·전국 경계가 필요한 질문은 빠진다.
+    assert seoul == [
+        "서울 행정동 중 영유아 인구 대비 어린이집이 부족한 곳은?",
+        "강남구 어린이집이 어디에 몰려 있나요?",
+        "서울 행정동별 0~5세 인구",
+    ]
+    assert national == seoul
+    assert client.get("/api/suggestions", params={"scope": "busan"}).status_code == 422

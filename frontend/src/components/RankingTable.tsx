@@ -30,11 +30,13 @@ export function RankingTable({ result, hoveredKey, onHover, selectedKey, onSelec
     return rows.sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity) || a.properties.unit_key.localeCompare(b.properties.unit_key));
   }, [result, rankMetric]);
   const rows = showAll ? allRows : allRows.slice(0, result.ranking.length);
+  // 응답에 공간 단위 이름이 없어 '지역'으로 쓰고, 순위 이름(예: "부족 순위")은 순위 Operation 라벨을 쓴다.
+  const rankLabel = (rankMetric && result.metric_labels[rankMetric]) || "순위";
 
   return (
     <section className="card">
       <div className="card-header">
-        <h2>{showAll ? `전체 ${allRows.length}개 행정동` : `공급 부족 상위 ${result.ranking.length}개 행정동`}</h2>
+        <h2>{showAll ? `전체 ${allRows.length}개 지역` : `${rankLabel} 상위 ${result.ranking.length}개 지역`}</h2>
         <button type="button" className="link-button" onClick={() => setShowAll((value) => !value)}>
           {showAll ? "상위만 보기" : "전체 표 보기"}
         </button>
@@ -44,7 +46,7 @@ export function RankingTable({ result, hoveredKey, onHover, selectedKey, onSelec
           <thead>
             <tr>
               <th scope="col">순위</th>
-              <th scope="col">행정동</th>
+              <th scope="col">지역</th>
               <th scope="col" className="num">{result.metric.label}</th>
               {columns.map(([name, label]) => (
                 <th key={name} scope="col" className="num">{label}</th>

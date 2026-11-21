@@ -11,6 +11,7 @@ import { ChoroplethMap } from "./components/ChoroplethMap";
 import { AnalysisResultPanel } from "./components/AnalysisResultPanel";
 import { ErrorPanel } from "./components/ErrorPanel";
 import { Legend } from "./components/Legend";
+import { SuggestionChips } from "./components/SuggestionChips";
 import { loadDemoAnalysis } from "./demo";
 import { SCOPE_HINTS, SCOPE_LABELS, SCOPES, readScope, saveScope } from "./scope";
 import { layerStyle, useColorScheme } from "./theme";
@@ -245,7 +246,7 @@ export function App() {
     }
   }
 
-  async function runAnalysis(text: string) {
+  async function runAnalysis(text: string, analysisScope: AnalysisScope = scope) {
     if (!text || loading) return;
 
     setPanelOpen(true);
@@ -266,7 +267,7 @@ export function App() {
     try {
       const next = DEMO_MODE
         ? await loadDemoAnalysis()
-        : await runAnalysisJob(text, scope, {
+        : await runAnalysisJob(text, analysisScope, {
             signal: controller.signal,
             // 시작하자마자 주소와 최근 실행에 남겨, 새로고침해도 진행 중인 실행을 다시 따라갈 수 있게 한다.
             onStarted: (runId) => {
@@ -312,6 +313,19 @@ export function App() {
 
   function cancelAnalysis() {
     jobAbort.current?.abort();
+  }
+
+  // 예시 질문을 누르면 입력창을 채우고 바로 분석한다.
+  function askSuggestion(text: string) {
+    setQuestion(text);
+    void runAnalysis(text);
+  }
+
+  // 분석 범위 밖 지역이라 실패했을 때 범위를 전국으로 바꾸고 같은 질문을 다시 분석한다.
+  function retryInNationalScope() {
+    setScope("national");
+    saveScope("national");
+    void runAnalysis(question.trim(), "national");
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -534,7 +548,11 @@ export function App() {
 
             {failedRun && (
               <div className="p3-feedback-group">
-                <ErrorPanel errors={failedRun.errors} runId={failedRun.runId} />
+                <ErrorPanel
+                  errors={failedRun.errors}
+                  runId={failedRun.runId}
+                  onUseNationalScope={!DEMO_MODE && scope === "seoul" && question.trim() ? retryInNationalScope : undefined}
+                />
                 {!DEMO_MODE && (
                   <>
                     <button type="button" className="analysis-evidence-link" onClick={() => void copyRunLink(failedRun.runId)}>
@@ -558,6 +576,7 @@ export function App() {
                 >
                   같은 질문 다시 시도
                 </button>
+                {!DEMO_MODE && <SuggestionChips scope={scope} disabled={loading} onPick={askSuggestion} />}
               </div>
             )}
 
@@ -586,6 +605,7 @@ export function App() {
                 <p className="muted">
                   질문을 입력하면 등록된 데이터를 바탕으로 공간 분석을 수행하고 지도·순위·근거를 보여줍니다.
                 </p>
+                {!DEMO_MODE && <SuggestionChips scope={scope} disabled={loading} onPick={askSuggestion} />}
               </section>
             )}
 

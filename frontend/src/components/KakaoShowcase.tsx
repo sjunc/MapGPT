@@ -15,6 +15,8 @@ import {
   type ShowcaseView,
 } from "./KakaoShowcaseMap";
 import { RecentRuns } from "./RecentRuns";
+import { ResultShare } from "./ResultShare";
+import { SuggestionChips } from "./SuggestionChips";
 import "../p7.css"; // RecentRuns·ExecutionTrace가 쓰는 기존 화면 스타일
 import "./kakao-showcase.css";
 
@@ -202,6 +204,8 @@ export function KakaoShowcase() {
   const [zoomRequest, setZoomRequest] = useState<{ delta: 1 | -1; sequence: number } | null>(null);
   // "전체 순위 보기"를 펼친 결과. 다른 결과로 바뀌면 다시 상위 순위만 보인다.
   const [allRanksRunId, setAllRanksRunId] = useState<string | null>(null);
+  // 링크를 복사한 결과. 다른 결과로 바뀌면 다시 "링크 복사"로 보인다.
+  const [copiedRunId, setCopiedRunId] = useState<string | null>(null);
   // 늦게 도착한 이전 요청의 응답이 지금 주소의 화면을 덮어쓰지 않도록 구분한다.
   const requestSequence = useRef(0);
   const [progress, setProgress] = useState<JobProgress | null>(null);
@@ -413,6 +417,18 @@ export function KakaoShowcase() {
     restoreFromUrl();
   }
 
+  async function copyRunLink(runId: string) {
+    const url = new URL(window.location.href);
+    url.search = new URLSearchParams({ map: "kakao", run: runId }).toString();
+    try {
+      await navigator.clipboard.writeText(url.toString());
+      setCopiedRunId(runId);
+    } catch {
+      setCopiedRunId(null);
+      setServerMessage("링크를 복사하지 못했어. 주소창의 ?map=kakao&run=... 링크를 직접 복사해 줘.");
+    }
+  }
+
   function zoomMap(delta: 1 | -1) {
     setZoomRequest((previous) => ({ delta, sequence: (previous?.sequence ?? 0) + 1 }));
   }
@@ -422,9 +438,10 @@ export function KakaoShowcase() {
     setFocusRequest((previous) => ({ key, sequence: (previous?.sequence ?? 0) + 1 }));
   }
 
-  async function submitAnalysis(event?: FormEvent<HTMLFormElement>) {
+  // override를 주면 입력창 대신 그 질문으로 분석한다 (예시 질문).
+  async function submitAnalysis(event?: FormEvent<HTMLFormElement>, override?: string, scopeOverride?: AnalysisScope) {
     event?.preventDefault();
-    const text = question.trim();
+    const text = (override ?? question).trim();
     if (!text || loading || text.length > 500) return;
     const sequence = ++requestSequence.current;
     setLoading(true);
@@ -433,7 +450,7 @@ export function KakaoShowcase() {
     const controller = new AbortController();
     jobAbort.current = controller;
     try {
-      const payload = await runAnalysisJob(text, scope, {
+      const payload = await runAnalysisJob(text, scopeOverride ?? scope, {
         signal: controller.signal,
         // 시작하자마자 주소와 최근 실행에 남겨, 새로고침해도 진행 중인 실행을 다시 열 수 있게 한다.
         onStarted: (runId) => {
@@ -635,7 +652,15 @@ export function KakaoShowcase() {
 
           {failedRun && (
             <>
-              <ErrorPanel errors={failedRun.errors} runId={failedRun.runId} />
+              <ErrorPanel
+                errors={failedRun.errors}
+                runId={failedRun.runId}
+                onUseNationalScope={scope === "seoul" && question.trim() && !loading ? () => {
+                  setScope("national");
+                  saveScope("national");
+                  void submitAnalysis(undefined, undefined, "national");
+                } : undefined}
+              />
               <ExecutionTrace
                 provenance={storedRun?.run_id === failedRun.runId ? storedRun.provenance : null}
                 runId={failedRun.runId}
@@ -663,7 +688,22 @@ export function KakaoShowcase() {
                     ? "서버 응답을 기다리는 중이야."
                     : "아래 입력창에 질문을 입력하면 서버가 분석한 결과를 지도와 순위로 보여 줘."}
             </p>
+            {!demo && !result && (
+              <SuggestionChips
+                scope={scope}
+                disabled={loading}
+                onPick={(text) => { setQuestion(text); void submitAnalysis(undefined, text); }}
+              />
+            )}
           </section>
+
+          {!demo && result && (
+            <ResultShare
+              runId={result.run_id}
+              onCopyLink={() => void copyRunLink(result.run_id)}
+              linkCopied={copiedRunId === result.run_id}
+            />
+          )}
 
           {result && (
             <section className="kshow-panel">

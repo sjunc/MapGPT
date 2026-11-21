@@ -6,14 +6,14 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo
 
 import psycopg
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from psycopg_pool import ConnectionPool
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
@@ -21,15 +21,18 @@ from slowapi.util import get_remote_address
 
 from app.api.jobs import AnalysisJobs, format_sse
 from app.api.schemas import AnalysisJobResponse, AnalysisRequest, AnalysisResponse, RunStats
+from app.catalog.suggestions import suggested_questions
 from app.config import Settings, get_settings
 from app.data_sources.acquisition import DataAcquirer
 from app.domain.catalog import DatasetMetadata
+from app.domain.enums import AnalysisScope
 from app.llm.base import LLMError, StructuredLLM
 from app.llm.embeddings import Embedder, EmbeddingError
 from app.llm.factory import create_embedder, create_llm
 from app.repositories.catalog_repository import list_datasets
 from app.repositories.run_repository import count_runs_since, get_run, run_stats
 from app.workflows.analysis_workflow import AnalysisWorkflow
+from app.workflows.export import export_filename, result_csv, result_geojson
 
 
 def get_pool(request: Request) -> ConnectionPool:
@@ -210,10 +213,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             stats = run_stats(conn, since)
         return RunStats(days=days, since=since, **stats)
 
+    @app.get("/api/analyses/{run_id}/export")
+    def export_analysis(
+        run_id: uuid.UUID,
+        pool: Pool,
+        export_format: Annotated[Literal["csv", "geojson"], Query(alias="format")] = "csv",
+    ) -> Response:
+        """저장된 분석 결과를 파일로 내려받는다. CSV는 분석 단위마다 한 행, GeoJSON은 지도에 그린 FeatureCollection."""
+        with pool.connection() as conn:
+            run = get_run(conn, str(run_id))
+        if run is None:
+            raise HTTPException(status_code=404, detail="분석 실행 기록이 없습니다")
+        if run["result"] is None:
+            raise HTTPException(
+                status_code=409, detail="이 실행에는 내려받을 분석 결과가 없습니다 (실패했거나 진행 중)"
+            )
+        headers = {"Content-Disposition": f'attachment; filename="{export_filename(run["run_id"], export_format)}"'}
+        if export_format == "csv":
+            return Response(result_csv(run["result"]), media_type="text/csv; charset=utf-8", headers=headers)
+        return JSONResponse(result_geojson(run["result"]), media_type="application/geo+json", headers=headers)
+
     @app.get("/api/datasets", response_model=list[DatasetMetadata])
     def read_datasets(pool: Pool) -> list[DatasetMetadata]:
         with pool.connection() as conn:
             return list_datasets(conn)
+
+    @app.get("/api/suggestions", response_model=list[str])
+    def read_suggestions(pool: Pool, scope: AnalysisScope = AnalysisScope.SEOUL) -> list[str]:
+        """화면 빈 상태의 예시 질문. 필요한 Dataset이 모두 등록된 질문만 돌려준다."""
+        with pool.connection() as conn:
+            registered = {d.dataset_id for d in list_datasets(conn)}
+        return suggested_questions(scope, registered)
 
     @app.get("/api/health")
     def health(pool: Pool) -> dict[str, str]:

@@ -3,6 +3,7 @@ import { Legend } from "./Legend";
 import { RankingTable } from "./RankingTable";
 import { ResultDetails } from "./ResultDetails";
 import { ExecutionTrace } from "./ExecutionTrace";
+import { ResultShare } from "./ResultShare";
 import type { RunProvenance } from "../api";
 import { type ColorScheme, formatValue, NULL_REASONS } from "../theme";
 import type { FinalResponse, MapView } from "../types";
@@ -155,6 +156,8 @@ export function AnalysisResultPanel({
               <p className="muted">이번 분석 결과에는 순위 정보가 없습니다.</p>
             </section>
           )}
+
+          {!demo && <ResultShare runId={result.run_id} onCopyLink={onCopyLink} linkCopied={linkCopied} />}
 
           <button type="button" className="analysis-evidence-link" onClick={() => setView("evidence")}>
             데이터 출처와 분석 방법 확인 <span aria-hidden="true">→</span>

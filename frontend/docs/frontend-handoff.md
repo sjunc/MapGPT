@@ -108,6 +108,8 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
 |---|---|
 | `POST /api/analyses` | 분석 요청 ([api.ts](../src/api.ts)). 본문은 `{question, scope}`이고, `scope`는 헤더의 "분석 범위" 토글(서울·전국, 기본 서울, 이 브라우저에 기억)에서 온다 ([scope.ts](../src/scope.ts)) |
 | `GET /api/analyses/{run_id}` | "실행 기록" 링크로 원본 JSON을 새 탭에 연다 |
+| `GET /api/analyses/{run_id}/export?format=csv\|geojson` | 두 화면 결과 패널의 "결과 내려받기·공유"(`ResultShare.tsx`)가 링크로 연다(`api.ts`의 `exportUrl`). 서버가 attachment로 보내 fetch 없이 내려받는다. 데모에서는 보이지 않는다 |
+| `GET /api/suggestions?scope=` | 빈 상태의 예시 질문(`SuggestionChips.tsx`). 지금 분석 범위로 받고, 누르면 입력창을 채우고 바로 분석한다. 불러오지 못하면 보이지 않는다 |
 | `GET /api/datasets`, `GET /api/health` | 쓰지 않는다 |
 
 - **응답 처리:**
@@ -261,7 +263,7 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
 
 | 위치 | 고정된 것 |
 |---|---|
-| `RankingTable.tsx` | 제목 "공급 부족 상위 N개 행정동"과 "전체 N개 행정동", 열 이름 "행정동" |
+| `RankingTable.tsx` | (2026-11-22 고침) 제목은 "<순위 라벨> 상위 N개 지역"·"전체 N개 지역", 열 이름은 "지역". 공간 단위 이름이 응답에 생기면 "지역" 대신 쓴다 |
 | `theme.ts` | 결측 사유 문구("분모(인구)가 0", "인구 자료 없음", "시설 자료 없음") |
 | `App.tsx` | 예시 질문, 진행 표시용 단계 목록(7개, 실제 단계는 9개), 안내 문구 |
 
@@ -298,15 +300,12 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
 - 같은 응답의 `provenance`에 해석 결과, 데이터 후보와 유사도, 데이터 선택 근거, 계획 시도와 검증 오류가 모두 있다.
 - 이것을 읽기 쉬운 패널로 보여주면 사용자가 결과를 믿을 근거가 되고, 실패 원인을 찾기도 쉬워진다.
 
-### 5.4 오류 안내
+### 5.4 오류 안내 (2026-11-22 반영)
 
-- 지금은 오류 코드(`REGION_NOT_SUPPORTED` 등)와 백엔드 메시지를 그대로 보여준다.
-- 자주 나는 코드에는 사용자용 안내를 붙이는 것을 권한다.
-  - `REGION_OUT_OF_SCOPE`: 백엔드 메시지가 이미 "설정에서 분석 범위를 전국으로 바꿔 주세요"를 안내한다. 토글로 바로 이어지게 할 수 있다.
-  - `REGION_NOT_SUPPORTED`: "이 지역은 아직 데이터가 없습니다"
-  - `UNIT_NOT_SUPPORTED`: "행정동 단위만 지원합니다"
-- 지원하는 질문 예시도 보여주면 좋다.
-- 코드별 의미는 [개요 문서 3.7절](../../backend/docs/agent-design-overview.md#37-실패-코드-모음-workflowerrorcode)과 [10.2절](../../backend/docs/agent-design-overview.md#102-자주-보는-오류)에 있다.
+- `ErrorPanel`이 자주 나는 코드(`REGION_OUT_OF_SCOPE`, `REGION_NOT_SUPPORTED`, `UNIT_NOT_SUPPORTED`, `UNSUPPORTED_QUESTION`, `INCOMPLETE_INTERPRETATION`, `DATA_NOT_AVAILABLE`, `NO_MATCHING_DATA`, `PLAN_INVALID`, `LLM_FAILED`, 서버 문제 코드)에 사용자 안내 문장을 먼저 보이고, 서버 메시지와 issues, 단계·원래 코드(작은 글씨)를 그 아래에 둔다. 안내 문구는 `ERROR_HINTS`에 있다.
+- 서울 범위에서 `REGION_OUT_OF_SCOPE`면 "전국 범위로 바꿔 다시 분석" 버튼이 범위 토글을 전국으로 바꾸고 같은 질문을 다시 보낸다(두 화면).
+- MapLibre 화면은 실패 패널 아래에도 예시 질문을 보인다. 카카오 화면은 결과가 없으면 현재 질문 칸에 보인다.
+- 코드별 의미는 [개요 문서 3.7절](../../backend/docs/agent-design-overview.md#37-실패-코드-모음-workflowerrorcode)과 [10.2절](../../backend/docs/agent-design-overview.md#102-자주-보는-오류)에 있다. 코드가 늘면 `ERROR_HINTS`도 함께 본다.
 
 ### 5.5 접근성과 입력 장치
 
@@ -333,7 +332,8 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
 
 ### 5.8 그 밖에
 
-- `GET /api/datasets`로 등록된 데이터와 지원 지역을 보여주면, 사용자가 어떤 질문을 할 수 있는지 알기 쉽다.
+- 어떤 질문을 할 수 있는지는 예시 질문(`GET /api/suggestions`, 2026-11-22)으로 보인다. `GET /api/datasets`로 등록된 데이터와 지원 지역 목록까지 보여주는 것은 아직 없다.
+- 분석 결과는 CSV·GeoJSON으로 내려받고 링크로 나눌 수 있다(2026-11-22). 지도 이미지 저장은 없다.
 - 다크 모드는 운영체제 설정만 따른다. 직접 바꾸는 버튼은 없다.
 
 ## 6. 프론트엔드 담당자 결정 사항
