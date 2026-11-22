@@ -53,6 +53,13 @@ export function classColors(scheme: ColorScheme, classCount: number, emphasis: M
   return Array.from({ length: classCount }, (_, i) => ramp[Math.round((i * (ramp.length - 1)) / (classCount - 1))]);
 }
 
+/** 서버 구간 [경계값 이상, 다음 경계값 미만)에서 값이 속한 구간 번호 (MapLibre 화면의 step 식과 같다). */
+export function classIndex(value: number, breaks: number[]): number {
+  let index = 0;
+  while (index < breaks.length && value >= breaks[index]) index += 1;
+  return index;
+}
+
 // 밀도 지도(연속 크기)의 순차 램프: 밀도 낮음 → 높음. 같은 파랑 100~700 단계를 고르게 써서, 밀도 0에 가까운 끝은
 // 배경으로 스며들고 가장 밀집한 곳이 가장 눈에 띈다 (라이트는 옅음→진함, 다크는 어두움→밝음).
 // dataviz validate_palette.js --ordinal: 밝기 단조·단계 간격·단일 색상 통과. 배경 대비 2:1은 띠 모양 순서형 색의

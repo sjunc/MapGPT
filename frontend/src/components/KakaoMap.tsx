@@ -7,7 +7,7 @@ import { loadKakaoMaps } from "../maps/kakaoLoader";
 import { toKakaoPolygonPaths } from "../maps/kakaoGeometry";
 import { fitPadding } from "../maps/padding";
 import { clusterHtml, facilityHtml, hexHtml, tooltipHtml } from "../maps/tooltips";
-import { BIVARIATE_COLORS, classColors, HEAT_COLORS, layerStyle, MAP_CHROME, symbolMaxRadius } from "../theme";
+import { BIVARIATE_COLORS, classColors, classIndex, HEAT_COLORS, layerStyle, MAP_CHROME, symbolMaxRadius } from "../theme";
 import type { FinalResponse, MapView, UnitProperties } from "../types";
 import type { FocusRequest } from "./ChoroplethMap";
 import "./kakao-map.css";
@@ -108,12 +108,6 @@ function dotImage(maps: typeof kakao.maps): kakao.maps.MarkerImage {
 function numberOf(feature: UnitFeature, field: string): number | null {
   const value = feature.properties[field];
   return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function classIndex(value: number, breaks: number[]): number {
-  let index = 0;
-  while (index < breaks.length && value >= breaks[index]) index += 1;
-  return index;
 }
 
 /** 단계 구분도 색: 서버 구간 [경계값 이상, 다음 경계값 미만)의 색 (MapLibre 화면의 step 식과 같다). 값이 없으면 회색이다. */
