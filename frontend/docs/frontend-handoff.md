@@ -225,7 +225,11 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
 **두 지도의 차이**
 
 - **테마:** 카카오 지도에는 다크 배경지도가 없다. `<html data-theme="light">`로 화면을 밝은 테마에 고정한다(`styles.css`).
-- **지도 버튼(+/−, ↺):** MapLibre 컨트롤과 같은 클래스(`.maplibregl-ctrl-*`)로 같은 자리에 둔다. 카카오 기본 막대 컨트롤(`ZoomControl`)은 쓰지 않는다.
+- **지도 버튼(+/−, ↺, 위성):** MapLibre 컨트롤과 같은 클래스(`.maplibregl-ctrl-*`)로 같은 자리에 둔다. 카카오 기본 막대 컨트롤(`ZoomControl`)은 쓰지 않는다. "위성"은 카카오 지도에만 있다.
+- **위성 사진(2026-11-22):** "위성" 버튼을 누르면 지도 종류를 `HYBRID`(스카이뷰 + 지명·도로 이름)로 바꾼다.
+  - 지도 객체는 그대로라 쿼터를 더 쓰지 않는다.
+  - 켜짐 상태는 `KakaoMap` 안에 있다. 새 분석·결과 초기화·보기 전환에도 유지되고, 새로고침하면 일반 지도로 돌아간다. 주소에는 넣지 않는다.
+  - 사진 위에서는 면 불투명도를 낮추고, 지역 경계선과 hover·선택 테두리를 흰색으로 그린다(`KakaoMap.tsx`의 `BASEMAP`). 그래서 지도 색이 범례 색보다 옅게 보인다.
 - **지도 맞춤:**
   - 결과·지역에 맞출 때 여백은 두 지도가 `maps/padding.ts`를 함께 쓴다.
   - 카카오 레벨은 정수라 같은 여백에서도 MapLibre보다 조금 작게 맞는다.
@@ -238,11 +242,11 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
 
 | 보기 | 구현 |
 |---|---|
-| 단계 구분도·이변량 | 단위마다 `kakao.maps.Polygon`. 배경지도 글자가 타일에 들어 있어 불투명도는 0.7이다 |
+| 단계 구분도·이변량 | 단위마다 `kakao.maps.Polygon`. 배경지도 글자가 타일에 들어 있어 불투명도는 0.7이다(위성 사진에서는 0.45) |
 | 비례 원 | `CustomOverlay`에 단 원. 반지름은 `symbolMaxRadius(feature_count) × √(값 ÷ 최댓값)`이고, 대표점(`label_point`)이 있는 단위만 그린다 |
 | 점 | 점 모양 `MarkerImage`와 `MarkerClusterer`(SDK `libraries=clusterer`). 레벨 5 이상에서 묶고, 묶음 원 크기는 10·50·200곳 기준이다 |
 | 밀도 | 지도 위에 `pointer-events: none`인 canvas를 겹치고 `simpleheat`로 그린다. 지도가 움직이면 다시 그린다 |
-| 육각 격자 | 칸마다 `Polygon` |
+| 육각 격자 | 칸마다 `Polygon`. 불투명도는 0.85다(위성 사진에서는 0.6) |
 
 - 비례 원·점·밀도·육각 격자 보기는 지역 경계를 `Polyline`으로 그린다.
 - 점·밀도·육각 격자 보기는 그 아래에 투명한 `Polygon`을 깐다. 점이나 칸이 없는 곳에서 지역 툴팁과 선택을 받는다(MapLibre의 `units-hit`).
@@ -261,6 +265,7 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
 **아직 없는 것**
 
 - 카카오 지도의 다크 모드
+- **MapLibre 화면의 위성 사진:** 키 없이 쓸 수 있는 국내 위성 타일이 없어 넣지 않았다. 넣으려면 브이월드 같은 위성 타일과 인증키·도메인 등록이 필요하고 약관도 확인해야 한다([3.4절](#34-바꿀-때-범위)의 절충안과 같다).
 - **경계선이 덮인다:** 밀도 canvas가 지역 경계선 위에 겹쳐 경계선이 옅게 보인다. 육각 격자 칸은 강조하지 않은 경계선을 덮는다. MapLibre는 경계선을 칸과 밀도 위에 그린다.
 
 ## 4. 첫 분석 주제에 묶인 부분
@@ -378,7 +383,7 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
 | 색 램프, 배경지도, 값 포맷, 결측 사유 | [frontend/src/theme.ts](../src/theme.ts) |
 | 레이아웃·색 토큰 | [frontend/src/styles.css](../src/styles.css) |
 | 지도 고르기(`map=kakao`), 데모 주소, 숨긴 데모 복귀 버튼 | [frontend/src/App.tsx](../src/App.tsx) |
-| 카카오 지도: 보기별 그리기, 지도 버튼, 툴팁 | [frontend/src/components/KakaoMap.tsx](../src/components/KakaoMap.tsx), [kakao-map.css](../src/components/kakao-map.css) |
+| 카카오 지도: 보기별 그리기, 지도 버튼(위성 사진 포함), 툴팁 | [frontend/src/components/KakaoMap.tsx](../src/components/KakaoMap.tsx), [kakao-map.css](../src/components/kakao-map.css) |
 | 두 지도가 함께 쓰는 툴팁 내용·맞춤 여백, 카카오 SDK 불러오기 | [frontend/src/maps/](../src/maps/) |
 | 개발 서버·프록시 | [frontend/vite.config.ts](../vite.config.ts) |
 | 백엔드 응답 모델 | [app/api/schemas.py](../../backend/app/api/schemas.py), [app/domain/results.py](../../backend/app/domain/results.py), [app/domain/state.py](../../backend/app/domain/state.py) |
