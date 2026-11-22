@@ -1,4 +1,4 @@
-/* 결과 내려받기·공유 (MapLibre 화면과 카카오 화면이 함께 쓴다). 카카오 화면은 .kshow-root가 라이트 값을 넣는다. */
+/* 결과 내려받기·공유 (결과 패널). */
 .result-share {
   display: flex;
   flex-wrap: wrap;

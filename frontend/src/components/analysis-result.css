@@ -106,6 +106,10 @@
   gap: 10px;
 }
 
+.analysis-stats-three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .analysis-stat {
   display: flex;
   flex-direction: column;

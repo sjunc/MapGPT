@@ -1,0 +1,40 @@
+/* 카카오 지도(KakaoMap.tsx). 지도 위 UI는 MapLibre 화면과 같은 App 틀과 styles.css·p6.css를 쓴다. */
+
+/* z-index 0: 카카오 지도 안의 레이어를 이 안에 가둬 밀도 canvas와 지도 버튼이 지도 위에 오게 한다. */
+.kakao-map { z-index: 0; }
+.kakao-heat { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; pointer-events: none; opacity: 0.85; }
+.kakao-heat[hidden] { display: none; }
+
+.kakao-map-status {
+  position: absolute; inset: 0; z-index: 2;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  padding: 36px; background: var(--page); color: var(--text-secondary); text-align: center; line-height: 1.5;
+}
+.kakao-map-status strong { font-size: 17px; color: var(--text-primary); }
+.kakao-map-status small { max-width: 430px; color: var(--text-muted); }
+
+/* 지도 툴팁: MapLibre 화면의 팝업(.maplibregl-popup-content, styles.css)과 같은 모양. 내용은 styles.css의 .tooltip */
+.kakao-map-tooltip {
+  position: relative; width: max-content; max-width: 280px; padding: 10px 12px; border-radius: 8px;
+  background: var(--surface-1); color: var(--text-primary); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  font: 12px/20px "Helvetica Neue", Arial, Helvetica, sans-serif; white-space: normal;
+  transform: translateY(calc(-1 * var(--tip-offset, 12px))); pointer-events: none;
+}
+/* 고정한 툴팁만 마우스를 받고, MapLibre 클릭 팝업처럼 닫기 버튼을 보인다. */
+.kakao-map-tooltip.pinned { pointer-events: auto; }
+.kakao-map-tooltip:not(.pinned) .maplibregl-popup-close-button { display: none; }
+
+/* 비례 원. 크기·색·테두리는 KakaoMap.tsx가 MapLibre 화면과 같은 값으로 넣는다. */
+.kakao-bubble { box-sizing: border-box; border: 1px solid; border-radius: 50%; cursor: pointer; }
+
+/* 좁은 화면: 카카오 로고·축척을 MapLibre 출처 표기(p6.css의 .maplibregl-ctrl-bottom-right)와 같은 높이로 올려
+   질문 입력창과 결과 시트에 가리지 않게 한다. 카카오가 넣은 bottom 값은 그대로 두고 위로 옮긴다. */
+@media (max-width: 860px) {
+  .map-first .kakao-copyright {
+    transform: translateY(calc(-1 * (var(--p6-panel-bottom) + var(--p6-sheet-height) + 8px)));
+  }
+
+  .map-first.p6-panel-hidden .kakao-copyright {
+    transform: translateY(calc(-82px - env(safe-area-inset-bottom, 0px)));
+  }
+}

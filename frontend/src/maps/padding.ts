@@ -1,4 +1,4 @@
-/** 지도를 결과·지역에 맞출 때 지도 위 UI가 가리는 쪽을 비우는 여백 (px). */
+/** 지도를 결과·지역에 맞출 때 지도 위 UI가 가리는 쪽을 비우는 여백 (px). MapLibre 지도와 카카오 지도가 함께 쓴다. */
 export interface FitPadding {
   top: number;
   right: number;

@@ -8,13 +8,14 @@ import { addRecentRun, readRecentRuns, saveRecentRuns } from "./runHistory";
 import type { RecentRun } from "./runHistory";
 import { BaseMap } from "./components/BaseMap";
 import { ChoroplethMap } from "./components/ChoroplethMap";
+import { KakaoMap } from "./components/KakaoMap";
 import { AnalysisResultPanel } from "./components/AnalysisResultPanel";
 import { ErrorPanel } from "./components/ErrorPanel";
 import { Legend } from "./components/Legend";
 import { SuggestionChips } from "./components/SuggestionChips";
 import { loadDemoAnalysis } from "./demo";
 import { SCOPE_HINTS, SCOPE_LABELS, SCOPES, readScope, saveScope } from "./scope";
-import { layerStyle, useColorScheme } from "./theme";
+import { type ColorScheme, layerStyle, useColorScheme } from "./theme";
 import type { AnalysisResponse, AnalysisScope, MapView, WorkflowError } from "./types";
 import type { FocusRequest } from "./components/ChoroplethMap";
 import "./p3.css";
@@ -25,9 +26,19 @@ import "./p7.css";
 import "./p8.css";
 
 const EXAMPLE = "서울에서 어린이 인구 대비 어린이집이 부족한 행정동을 알려줘.";
-const DEMO_MODE = new URLSearchParams(window.location.search).get("demo") === "1";
+// map=kakao면 지도만 카카오 지도로 바꾸고 나머지 화면은 같다.
+// 카카오 지도에는 다크 배경지도가 없어 화면을 밝은 테마로 고정한다 (styles.css의 data-theme).
+const KAKAO_MAP = new URLSearchParams(window.location.search).get("map") === "kakao";
+if (KAKAO_MAP) document.documentElement.dataset.theme = "light";
 
 type FailedRun = { runId: string; errors: WorkflowError[] };
+
+/** 주소가 화면을 정한다. run이 있으면 그 실행, 없고 demo=1이면 가상 데모, 둘 다 없으면 빈 지도다. */
+function readRoute(): { runId: string | null; demo: boolean } {
+  const query = new URLSearchParams(window.location.search);
+  const runId = query.get("run") || null;
+  return { runId, demo: runId === null && query.get("demo") === "1" };
+}
 
 function useElapsedSeconds(running: boolean): number {
   const [seconds, setSeconds] = useState(0);
@@ -43,13 +54,19 @@ function useElapsedSeconds(running: boolean): number {
 }
 
 export function App() {
-  const scheme = useColorScheme();
+  const systemScheme = useColorScheme();
+  const scheme: ColorScheme = KAKAO_MAP ? "light" : systemScheme;
   const [question, setQuestion] = useState("");
   const [scope, setScope] = useState<AnalysisScope>(readScope);
   const [panelOpen, setPanelOpen] = useState(true);
   const [mobileExpanded, setMobileExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState<AnalysisResponse | null>(null);
+  // 지금 보이는 결과가 가상 데모인지 (주소 ?demo=1)
+  const [demo, setDemo] = useState(false);
+  // 숨긴 "가상 데모로 돌아가기" 버튼. 로고를 빠르게 세 번 누르면 보인다.
+  const [demoReturnShown, setDemoReturnShown] = useState(false);
+  const logoClicks = useRef<number[]>([]);
   const [requestError, setRequestError] = useState<string | null>(null);
   const [failedRun, setFailedRun] = useState<FailedRun | null>(null);
   const [runningRunId, setRunningRunId] = useState<string | null>(null);
@@ -76,28 +93,8 @@ export function App() {
     if (result) setViewChoice({ runId: result.run_id, view: next });
   };
 
-  // Demo Mode에서는 서버 없이 같은 분석 결과 UI를 사용한다.
   useEffect(() => {
-    if (!DEMO_MODE) return;
-    let active = true;
-
-    loadDemoAnalysis()
-      .then((data) => {
-        if (active) setResponse(data);
-      })
-      .catch((error: unknown) => {
-        if (active) {
-          setRequestError(error instanceof Error ? error.message : String(error));
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!DEMO_MODE) saveRecentRuns(recentRuns);
+    saveRecentRuns(recentRuns);
   }, [recentRuns]);
 
   function rememberRun(runId: string, text: string) {
@@ -105,8 +102,8 @@ export function App() {
   }
 
   function updateRunUrl(runId: string | null, replace = false) {
-    if (DEMO_MODE) return;
     const url = new URL(window.location.href);
+    url.searchParams.delete("demo"); // 실행을 열거나 결과를 지우면 가상 데모 주소에서 벗어난다
     if (runId) url.searchParams.set("run", runId);
     else url.searchParams.delete("run");
     if (replace) window.history.replaceState(null, "", url);
@@ -129,7 +126,6 @@ export function App() {
   }
 
   async function loadRun(runId: string) {
-    if (DEMO_MODE) return;
     const sequence = ++requestSequence.current;
     setLoading(true);
     setRequestError(null);
@@ -140,6 +136,7 @@ export function App() {
     setTraceLoading(false);
     setLinkCopied(false);
     setResponse(null);
+    setDemo(false);
     setHoveredKey(null);
     setSelectedKey(null);
     setFocusRequest(null);
@@ -185,16 +182,47 @@ export function App() {
     }
   }
 
+  // 가상 데모(public/demo/analysis.json)를 보인다. 서버 없이도 보이고, 여기서 질문하면 실제 분석을 요청한다.
+  async function showDemo() {
+    const sequence = ++requestSequence.current;
+    setLoading(false);
+    setRequestError(null);
+    setFailedRun(null);
+    setRunningRunId(null);
+    setStoredRun(null);
+    setTraceError(null);
+    setTraceLoading(false);
+    setLinkCopied(false);
+    setResponse(null);
+    setDemo(false);
+    setHoveredKey(null);
+    setSelectedKey(null);
+    setFocusRequest(null);
+    setPanelOpen(true);
+    setMobileExpanded(false);
+
+    try {
+      const data = await loadDemoAnalysis();
+      if (requestSequence.current !== sequence) return;
+      setResponse(data);
+      setDemo(true);
+    } catch (error) {
+      if (requestSequence.current !== sequence) return;
+      setRequestError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   // URL 주소창 직접 진입 및 브라우저 뒤로/앞으로 이동 대응.
   useEffect(() => {
-    if (DEMO_MODE) return;
     const restore = () => {
-      const runId = new URLSearchParams(window.location.search).get("run");
-      if (runId) void loadRun(runId);
+      const route = readRoute();
+      if (route.runId) void loadRun(route.runId);
+      else if (route.demo) void showDemo();
       else {
         ++requestSequence.current;
         setLoading(false);
         setResponse(null);
+        setDemo(false);
         setStoredRun(null);
         setRequestError(null);
         setFailedRun(null);
@@ -227,13 +255,32 @@ export function App() {
     setRecentRuns((previous) => previous.filter((entry) => entry.runId !== runId));
   }
 
+  // 숨긴 "가상 데모로 돌아가기": 로고를 1초 안에 세 번 누르면 버튼이 나타나고, 다시 세 번 누르면 숨는다.
+  function knockLogo() {
+    const now = performance.now();
+    logoClicks.current = [...logoClicks.current.filter((time) => now - time < 1000), now];
+    if (logoClicks.current.length < 3) return;
+    logoClicks.current = [];
+    setDemoReturnShown((shown) => !shown);
+  }
+
+  function returnToDemo() {
+    if (loading) return;
+    setDemoReturnShown(false);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("run");
+    url.searchParams.set("demo", "1");
+    window.history.pushState(null, "", url);
+    void showDemo();
+  }
+
   function refreshTrace(runId: string) {
-    if (DEMO_MODE) return;
+    if (demo) return;
     void fetchTrace(runId, requestSequence.current);
   }
 
   async function copyRunLink(runId: string) {
-    if (DEMO_MODE) return;
+    if (demo) return;
     const url = new URL(window.location.href);
     url.searchParams.delete("demo");
     url.searchParams.set("run", runId);
@@ -260,25 +307,31 @@ export function App() {
     setTraceLoading(false);
     setLinkCopied(false);
     setProgress(null);
+    // 가상 데모에서 질문하면 데모를 지우고 실제 분석 결과만 보인다 (데모는 "이전에 완료한 분석 결과"가 아니다).
+    if (demo) {
+      setResponse(null);
+      setDemo(false);
+      setHoveredKey(null);
+      setSelectedKey(null);
+      setFocusRequest(null);
+    }
     const sequence = ++requestSequence.current;
     const controller = new AbortController();
     jobAbort.current = controller;
 
     try {
-      const next = DEMO_MODE
-        ? await loadDemoAnalysis()
-        : await runAnalysisJob(text, analysisScope, {
-            signal: controller.signal,
-            // 시작하자마자 주소와 최근 실행에 남겨, 새로고침해도 진행 중인 실행을 다시 따라갈 수 있게 한다.
-            onStarted: (runId) => {
-              if (requestSequence.current !== sequence) return;
-              updateRunUrl(runId);
-              rememberRun(runId, text);
-            },
-            onProgress: (value) => {
-              if (requestSequence.current === sequence) setProgress(value);
-            },
-          });
+      const next = await runAnalysisJob(text, analysisScope, {
+        signal: controller.signal,
+        // 시작하자마자 주소와 최근 실행에 남겨, 새로고침해도 진행 중인 실행을 다시 따라갈 수 있게 한다.
+        onStarted: (runId) => {
+          if (requestSequence.current !== sequence) return;
+          updateRunUrl(runId);
+          rememberRun(runId, text);
+        },
+        onProgress: (value) => {
+          if (requestSequence.current === sequence) setProgress(value);
+        },
+      });
       if (requestSequence.current !== sequence) return;
 
       if (next.status === "succeeded") {
@@ -287,14 +340,12 @@ export function App() {
         setHoveredKey(null);
         setSelectedKey(null);
         setFocusRequest(null);
-        if (!DEMO_MODE) {
-          rememberRun(next.run_id, next.result.question);
-          void fetchTrace(next.run_id, sequence);
-        }
+        rememberRun(next.run_id, next.result.question);
+        void fetchTrace(next.run_id, sequence);
       } else if (next.status === "failed") {
         // 실패해도 직전 성공 결과는 지도에 남긴다.
         setFailedRun({ runId: next.run_id, errors: next.errors });
-        if (!DEMO_MODE) void fetchTrace(next.run_id, sequence);
+        void fetchTrace(next.run_id, sequence);
       } else {
         setRunningRunId(next.run_id);
       }
@@ -361,6 +412,7 @@ export function App() {
   function clearResult() {
     if (loading) return;
     setResponse(null);
+    setDemo(false);
     setRequestError(null);
     setFailedRun(null);
     setRunningRunId(null);
@@ -390,11 +442,27 @@ export function App() {
 
   const showingPreviousResult = Boolean(result) &&
     (loading || requestError !== null || failedRun !== null || runningRunId !== null);
+  // 통계 카드의 분석 범위: 그 실행의 범위. 실행 기록이 아직 오지 않았으면 범위 토글 값이고, 가상 데모는 서울 데이터다.
+  const resultScope: AnalysisScope = demo
+    ? "seoul"
+    : (storedRun?.run_id === result?.run_id ? storedRun?.provenance?.scope : undefined) ?? scope;
 
   return (
     <div className={`app map-first${!panelOpen ? " p6-panel-hidden" : mobileExpanded ? " p6-sheet-expanded" : ""}`}>
       <main className="map-canvas" aria-label="공간 분석 지도">
-        {result ? (
+        {KAKAO_MAP ? (
+          <KakaoMap
+            result={result}
+            view={view}
+            hoveredKey={hoveredKey}
+            onHover={setHoveredKey}
+            selectedKey={selectedKey}
+            onSelect={selectFromMap}
+            focusRequest={focusRequest}
+            panelOpen={panelOpen}
+            panelExpanded={mobileExpanded}
+          />
+        ) : result ? (
           <ChoroplethMap
             result={result}
             view={view}
@@ -421,7 +489,8 @@ export function App() {
       <div className="map-gradient" aria-hidden="true" />
 
       <header className="floating-header">
-        <div className="brand">
+        {/* 로고를 빠르게 세 번 누르면 숨긴 "가상 데모로 돌아가기" 버튼이 데모 표시 자리에 나타난다 (팀 시연용). */}
+        <div className="brand" onClick={knockLogo}>
           <div className="brand-mark" aria-hidden="true">
             <img src="/MapGPT.png" alt="" />
           </div>
@@ -429,30 +498,40 @@ export function App() {
             <strong>MAPGPT</strong>
             <span>GEO SPATIAL AI</span>
           </div>
-          {DEMO_MODE && <span className="p3-demo-label">데모 · 가상 수치</span>}
+          {demo && <span className="p3-demo-label">데모 · 가상 수치</span>}
+          {!demo && demoReturnShown && !loading && (
+            <button
+              type="button"
+              className="p3-demo-label p3-demo-return"
+              onClick={(event) => {
+                event.stopPropagation();
+                returnToDemo();
+              }}
+            >
+              가상 데모로 돌아가기
+            </button>
+          )}
         </div>
         <div className="p4-header-actions">
-          {!DEMO_MODE && (
-            <div className="p8-scope" role="radiogroup" aria-label="분석 범위">
-              <span className="p8-scope-label" aria-hidden="true">분석 범위</span>
-              {SCOPES.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  role="radio"
-                  aria-checked={scope === option}
-                  onClick={() => {
-                    setScope(option);
-                    saveScope(option);
-                  }}
-                  disabled={loading}
-                  title={SCOPE_HINTS[option]}
-                >
-                  {SCOPE_LABELS[option]}
-                </button>
-              ))}
-            </div>
-          )}
+          <div className="p8-scope" role="radiogroup" aria-label="분석 범위">
+            <span className="p8-scope-label" aria-hidden="true">분석 범위</span>
+            {SCOPES.map((option) => (
+              <button
+                key={option}
+                type="button"
+                role="radio"
+                aria-checked={scope === option}
+                onClick={() => {
+                  setScope(option);
+                  saveScope(option);
+                }}
+                disabled={loading}
+                title={SCOPE_HINTS[option]}
+              >
+                {SCOPE_LABELS[option]}
+              </button>
+            ))}
+          </div>
           {(result || requestError || failedRun || runningRunId) && (
             <button
               type="button"
@@ -508,17 +587,15 @@ export function App() {
           </div>
 
           <div id="analysis-sidebar-content" className="result-panel-content">
-            {!DEMO_MODE && (
-              <RecentRuns
-                entries={recentRuns}
-                currentRunId={result?.run_id ?? failedRun?.runId ?? runningRunId}
-                disabled={loading}
-                onOpen={openRecentRun}
-                onRemove={removeRecentRun}
-                onClear={() => setRecentRuns([])}
-              />
-            )}
-            {loading && (DEMO_MODE || !progress) && (
+            <RecentRuns
+              entries={recentRuns}
+              currentRunId={result?.run_id ?? failedRun?.runId ?? runningRunId}
+              disabled={loading}
+              onOpen={openRecentRun}
+              onRemove={removeRecentRun}
+              onClear={() => setRecentRuns([])}
+            />
+            {loading && !progress && (
               <section className="card progress p3-feedback" role="status" aria-live="polite">
                 <div className="spinner" aria-hidden="true" />
                 <div>
@@ -527,7 +604,7 @@ export function App() {
                 </div>
               </section>
             )}
-            {loading && !DEMO_MODE && progress && (
+            {loading && progress && (
               <JobProgressPanel progress={progress} elapsed={elapsed} onCancel={cancelAnalysis} />
             )}
 
@@ -551,23 +628,19 @@ export function App() {
                 <ErrorPanel
                   errors={failedRun.errors}
                   runId={failedRun.runId}
-                  onUseNationalScope={!DEMO_MODE && scope === "seoul" && question.trim() ? retryInNationalScope : undefined}
+                  onUseNationalScope={scope === "seoul" && question.trim() ? retryInNationalScope : undefined}
                 />
-                {!DEMO_MODE && (
-                  <>
-                    <button type="button" className="analysis-evidence-link" onClick={() => void copyRunLink(failedRun.runId)}>
-                      {linkCopied ? "실패한 실행의 링크 복사 완료" : "실패한 실행의 링크 복사"}
-                    </button>
-                    <ExecutionTrace
-                      provenance={storedRun?.run_id === failedRun.runId ? storedRun.provenance : null}
-                      runId={failedRun.runId}
-                      loading={traceLoading}
-                      error={traceError}
-                      demo={false}
-                      onRefresh={() => refreshTrace(failedRun.runId)}
-                    />
-                  </>
-                )}
+                <button type="button" className="analysis-evidence-link" onClick={() => void copyRunLink(failedRun.runId)}>
+                  {linkCopied ? "실패한 실행의 링크 복사 완료" : "실패한 실행의 링크 복사"}
+                </button>
+                <ExecutionTrace
+                  provenance={storedRun?.run_id === failedRun.runId ? storedRun.provenance : null}
+                  runId={failedRun.runId}
+                  loading={traceLoading}
+                  error={traceError}
+                  demo={false}
+                  onRefresh={() => refreshTrace(failedRun.runId)}
+                />
                 <button
                   type="button"
                   className="p3-retry"
@@ -576,7 +649,7 @@ export function App() {
                 >
                   같은 질문 다시 시도
                 </button>
-                {!DEMO_MODE && <SuggestionChips scope={scope} disabled={loading} onPick={askSuggestion} />}
+                <SuggestionChips scope={scope} disabled={loading} onPick={askSuggestion} />
               </div>
             )}
 
@@ -605,7 +678,7 @@ export function App() {
                 <p className="muted">
                   질문을 입력하면 등록된 데이터를 바탕으로 공간 분석을 수행하고 지도·순위·근거를 보여줍니다.
                 </p>
-                {!DEMO_MODE && <SuggestionChips scope={scope} disabled={loading} onPick={askSuggestion} />}
+                <SuggestionChips scope={scope} disabled={loading} onPick={askSuggestion} />
               </section>
             )}
 
@@ -624,7 +697,8 @@ export function App() {
                 provenance={storedRun?.run_id === result.run_id ? storedRun.provenance : null}
                 traceLoading={traceLoading}
                 traceError={traceError}
-                demo={DEMO_MODE}
+                demo={demo}
+                scope={resultScope}
                 onRefreshTrace={() => refreshTrace(result.run_id)}
                 onCopyLink={() => void copyRunLink(result.run_id)}
                 linkCopied={linkCopied}
@@ -645,12 +719,12 @@ export function App() {
               maxLength={500}
             />
           <button type="submit" disabled={loading || !question.trim()}>
-            {loading ? `분석 중 ${elapsed}초` : DEMO_MODE ? "데모 다시 보기" : "분석"}
+            {loading ? `분석 중 ${elapsed}초` : "분석"}
           </button>
         </div>
         <p className="prompt-hint">
-          {DEMO_MODE
-            ? "데모 모드: 지도와 분석 수치는 시연용이며 실제 분석 결과가 아닙니다."
+          {demo
+            ? "지도와 수치는 시연용 가상 데이터입니다. 질문을 입력하면 실제 분석을 요청합니다."
             : "질문을 입력하면 데이터 기반 공간 분석 결과를 지도로 보여줍니다."}
         </p>
       </form>

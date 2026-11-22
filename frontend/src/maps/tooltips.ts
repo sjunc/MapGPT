@@ -1,5 +1,5 @@
 /**
- * 지도 툴팁 내용.
+ * 지도 툴팁 내용. MapLibre 지도(ChoroplethMap)와 카카오 지도(KakaoMap)가 같은 내용을 보이도록 함께 쓴다.
  * 이스케이프한 HTML 문자열을 돌려준다.
  */
 import type { FacilityProperties, FinalResponse, UnitProperties } from "../types";

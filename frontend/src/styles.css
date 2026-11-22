@@ -13,8 +13,9 @@
   font-family: system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", sans-serif;
 }
 
+/* data-theme="light": 카카오 지도처럼 밝은 배경지도만 있을 때 시스템 다크 모드여도 밝은 테마를 쓴다 (App.tsx). */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     color-scheme: dark;
     --surface-1: #1a1a19;
     --page: #0d0d0d;

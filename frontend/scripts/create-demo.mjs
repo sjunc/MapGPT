@@ -45,6 +45,18 @@ byValue.forEach((feature, index) => { feature.properties.demo_rank = index + 1; 
 
 const values = byValue.map((feature) => feature.properties.daycare_per_1000_children);
 const breaks = [...new Set([1, 2, 3, 4].map((part) => values[Math.floor((values.length * part) / 5)]))];
+
+// 이변량 지도의 3분위 경계값. 백엔드 gis/tools.py의 quantile_breaks와 같은 방식이다 (같은 값이 겹치면 경계가 줄어든다).
+function quantileBreaks(numbers, classes) {
+  const ordered = [...numbers].sort((a, b) => a - b);
+  const result = [];
+  for (let i = 1; i < classes; i += 1) {
+    const candidate = ordered[Math.round((i * (ordered.length - 1)) / classes)];
+    if (candidate > ordered[0] && (!result.length || candidate > result.at(-1))) result.push(candidate);
+  }
+  return result;
+}
+
 const runId = "demo-local";
 const metric = "daycare_per_1000_children";
 const payload = {
@@ -85,6 +97,27 @@ const payload = {
       feature_count: rows.length,
       null_count: 0,
       geojson: { type: "FeatureCollection", features: rows },
+      // 서버가 비율 지표에 주는 지도 보기와 같다 (backend/app/domain/maps.py의 map_style): 단계 구분도와 분자·분모 이변량
+      style: {
+        default_view: "choropleth",
+        views: ["choropleth", "bivariate"],
+        emphasis: "low",
+        legend_low: "공급 부족",
+        legend_high: "여유",
+        note: "비율·평균이라서 지역 크기와 관계없이 값 구간별 색으로 비교합니다.",
+      },
+      bivariate: {
+        x: {
+          metric: "children_count",
+          label: "어린이 인구 (가상)",
+          breaks: quantileBreaks(rows.map((feature) => feature.properties.children_count), 3),
+        },
+        y: {
+          metric: "daycare_count",
+          label: "어린이집 수 (가상)",
+          breaks: quantileBreaks(rows.map((feature) => feature.properties.daycare_count), 3),
+        },
+      },
     },
     analysis_method: [
       "2015년 법정동 경계를 지도에 표시합니다. 이 경계는 최신 행정동 경계와 다를 수 있습니다.",

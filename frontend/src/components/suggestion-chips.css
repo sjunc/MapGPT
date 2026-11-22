@@ -1,4 +1,4 @@
-/* 예시 질문 (MapLibre 화면과 카카오 화면이 함께 쓴다). 카카오 화면은 .kshow-root가 라이트 값을 넣는다. */
+/* 예시 질문 (환영 카드와 실패 패널 아래). */
 .suggestion-chips { margin-top: 14px; }
 .suggestion-chips-title { display: block; margin-bottom: 8px; color: var(--text-secondary); font-size: 12px; font-weight: 600; }
 .suggestion-chips ul { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }

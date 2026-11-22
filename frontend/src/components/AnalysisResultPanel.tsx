@@ -5,8 +5,9 @@ import { ResultDetails } from "./ResultDetails";
 import { ExecutionTrace } from "./ExecutionTrace";
 import { ResultShare } from "./ResultShare";
 import type { RunProvenance } from "../api";
-import { type ColorScheme, formatValue, NULL_REASONS } from "../theme";
-import type { FinalResponse, MapView } from "../types";
+import { SCOPE_LABELS } from "../scope";
+import { type ColorScheme, formatValue, layerStyle, NULL_REASONS } from "../theme";
+import type { AnalysisScope, FinalResponse, MapView } from "../types";
 import "./analysis-result.css";
 
 type PanelView = "overview" | "evidence" | "trace";
@@ -25,6 +26,8 @@ interface Props {
   traceLoading: boolean;
   traceError: string | null;
   demo: boolean;
+  /** 이 결과를 분석한 범위 (통계 카드) */
+  scope: AnalysisScope;
   onRefreshTrace: () => void;
   onCopyLink: () => void;
   linkCopied: boolean;
@@ -33,7 +36,7 @@ interface Props {
 /** 백엔드 계산 결과를 그대로 표시한다. 지표·순위·구간을 프런트에서 재계산하지 않는다. */
 export function AnalysisResultPanel({
   result, mapView, onMapViewChange, scheme, hoveredKey, onHover, selectedKey, onSelect, onClearSelection,
-  provenance, traceLoading, traceError, demo, onRefreshTrace, onCopyLink, linkCopied,
+  provenance, traceLoading, traceError, demo, scope, onRefreshTrace, onCopyLink, linkCopied,
 }: Props) {
   const [view, setView] = useState<PanelView>("overview");
 
@@ -93,6 +96,22 @@ export function AnalysisResultPanel({
               <span>{result.metric.interpretation}</span>
             </div>
           </section>
+
+          {/* 카카오 화면에서 옮겨 온 통계 카드: 분석 범위, 바꿔 볼 수 있는 지도 보기 수, 결과 출처 */}
+          <div className="analysis-stats analysis-stats-three" aria-label="분석 개요">
+            <div className="analysis-stat">
+              <span>분석 범위</span>
+              <strong>{SCOPE_LABELS[scope]}</strong>
+            </div>
+            <div className="analysis-stat">
+              <span>시각화</span>
+              <strong>{layerStyle(result.map_layer).views.length}종</strong>
+            </div>
+            <div className="analysis-stat">
+              <span>데이터</span>
+              <strong>{demo ? "가상" : "서버"}</strong>
+            </div>
+          </div>
 
           <div className="analysis-stats" aria-label="분석 데이터 현황">
             <div className="analysis-stat">

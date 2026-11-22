@@ -17,6 +17,24 @@
   white-space: nowrap;
 }
 
+/* 로고를 빠르게 세 번 누르면 나오는 "가상 데모로 돌아가기" (App.tsx). 세 번 눌러도 글자가 선택되거나 화면이 확대되지 않게 한다. */
+.map-first .brand {
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.p3-demo-return {
+  font-family: inherit;
+  color: var(--accent) !important;
+  cursor: pointer;
+}
+
+.p3-demo-return:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .p3-feedback {
   flex-shrink: 0;
 }
