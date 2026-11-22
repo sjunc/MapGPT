@@ -18,13 +18,13 @@ import {
   type ColorScheme,
   HEAT_COLORS,
   MAP_CHROME,
-  NULL_REASONS,
   classColors,
-  formatValue,
   layerStyle,
   symbolMaxRadius,
 } from "../theme";
 import type { BivariateAxis, FacilityProperties, FinalResponse, MapView, UnitProperties } from "../types";
+import { fitPadding } from "../maps/padding";
+import { clusterHtml, facilityHtml, hexHtml, tooltipHtml } from "../maps/tooltips";
 import { MapResetControl } from "./MapResetControl";
 
 setWorkerUrl(maplibreWorkerUrl);
@@ -165,56 +165,11 @@ function setUnitState(map: MapLibreMap, id: string, state: Record<string, boolea
   }
 }
 
-// LLM이 만든 문자열은 팝업 HTML에 삽입하기 전에 반드시 이스케이프한다.
-function escapeHtml(text: string): string {
-  return text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-}
-
-function tooltipHtml(result: FinalResponse, properties: UnitProperties): string {
-  const { metric, metric_label } = result.map_layer;
-  const rows = Object.entries(result.metric_labels)
-    .filter(([name]) => name !== metric)
-    .map(([name, label]) => `<tr><th>${escapeHtml(label)}</th><td>${formatValue(properties[name] as number | null)}</td></tr>`)
-    .join("");
-  const value = properties[metric] as number | null;
-  const valueText = value === null ? (NULL_REASONS[properties.null_reason ?? ""] ?? "값 없음") : formatValue(value);
-  const place = escapeHtml(`${properties.parent_name ?? ""} ${properties.unit_name}`);
-  return `<div class="tooltip"><strong>${place}</strong>
-    <div class="tooltip-value">${escapeHtml(metric_label)}: <b>${valueText}</b></div><table>${rows}</table></div>`;
-}
-
-// 시설 이름은 외부 데이터라 이스케이프한다.
-function facilityHtml(result: FinalResponse, properties: FacilityProperties): string {
-  const unit = result.map_layer.geojson.features.find((item) => item.properties.unit_key === properties.unit_key);
-  const place = unit ? `${unit.properties.parent_name ?? ""} ${unit.properties.unit_name}` : "";
-  return `<div class="tooltip"><strong>${escapeHtml(properties.name ?? "이름 없음")}</strong>
-    <div class="tooltip-value">${escapeHtml(place)}</div></div>`;
-}
-
-function hexHtml(result: FinalResponse, count: number): string {
-  const hexbins = result.map_layer.hexbins;
-  const size = hexbins ? ` (한 변 ${hexbins.cell_size_m.toLocaleString("ko-KR")}m)` : "";
-  return `<div class="tooltip"><strong>${count.toLocaleString("ko-KR")}곳</strong>
-    <div class="tooltip-value">이 육각형 칸${size} 안의 수</div></div>`;
-}
-
-function clusterHtml(count: number): string {
-  return `<div class="tooltip"><strong>${count.toLocaleString("ko-KR")}곳</strong>
-    <div class="tooltip-value">가까운 곳을 묶었습니다. 누르면 확대합니다.</div></div>`;
-}
-
 function featureHtml(result: FinalResponse, feature: MapGeoJSONFeature): string {
   if (feature.layer.id === FACILITY_LAYERS[0]) return clusterHtml(feature.properties.point_count as number);
   if (feature.layer.id === FACILITY_LAYERS[2]) return facilityHtml(result, feature.properties as FacilityProperties);
   if (feature.layer.id === HEX_LAYERS[0]) return hexHtml(result, feature.properties.count as number);
   return tooltipHtml(result, feature.properties as UnitProperties);
-}
-
-// 데스크톱에서 오른쪽 아래 범례가 결과 지역을 가리지 않도록, 지도를 맞출 때 범례 윗변 아래를 비운다.
-// 모바일에서는 범례가 지도 위에 없다(크기 0).
-function legendClearance(rect: DOMRect): number {
-  const legend = document.querySelector<HTMLElement>(".map-legend")?.getBoundingClientRect();
-  return legend && legend.height > 0 ? Math.ceil(rect.bottom - legend.top + 16) : 0;
 }
 
 function fitResultBounds(map: MapLibreMap, result: FinalResponse, panelOpen: boolean) {
@@ -233,20 +188,8 @@ function fitResultBounds(map: MapLibreMap, result: FinalResponse, panelOpen: boo
   const rect = map.getContainer().getBoundingClientRect();
   if (rect.width < 120 || rect.height < 120) return;
 
-  const mobile = window.matchMedia("(max-width: 860px)").matches;
-  const panel = panelOpen ? document.querySelector<HTMLElement>(".result-panel") : null;
-  const panelRect = panel?.getBoundingClientRect();
-
-  const requestedLeft = !mobile && panelRect ? panelRect.right - rect.left + 24 : 24;
-  const requestedBottom = mobile && panelRect ? rect.bottom - panelRect.top + 24 : Math.max(110, legendClearance(rect));
-
-  const top = Math.min(100, Math.floor(rect.height * 0.2));
-  const right = 24;
-  const left = Math.max(0, Math.min(Math.ceil(requestedLeft), rect.width - right - 80));
-  const bottom = Math.max(0, Math.min(Math.ceil(requestedBottom), rect.height - top - 80));
-
   map.fitBounds(bounds, {
-    padding: { top, right, bottom, left },
+    padding: fitPadding(map.getContainer(), panelOpen),
     duration: 0,
     maxZoom: 12,
   });
@@ -262,24 +205,8 @@ function focusFeature(map: MapLibreMap, result: FinalResponse, key: string, pane
   }
   if (bounds.isEmpty()) return;
 
-  const rect = map.getContainer().getBoundingClientRect();
-  const panelRect = panelOpen
-    ? document.querySelector<HTMLElement>(".result-panel")?.getBoundingClientRect()
-    : undefined;
-  const mobile = window.matchMedia("(max-width: 860px)").matches;
-  const top = Math.min(100, Math.floor(rect.height * 0.2));
-  const right = 24;
-  const left = Math.max(0, Math.min(
-    !mobile && panelRect ? Math.ceil(panelRect.right - rect.left + 24) : 24,
-    rect.width - right - 80,
-  ));
-  const bottom = Math.max(0, Math.min(
-    mobile && panelRect ? Math.ceil(rect.bottom - panelRect.top + 24) : Math.max(110, legendClearance(rect)),
-    rect.height - top - 80,
-  ));
-
   map.fitBounds(bounds, {
-    padding: { top, right, bottom, left },
+    padding: fitPadding(map.getContainer(), panelOpen),
     maxZoom: 13.5,
     duration: 450,
   });
