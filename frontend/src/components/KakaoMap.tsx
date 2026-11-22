@@ -6,6 +6,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { loadKakaoMaps } from "../maps/kakaoLoader";
 import { toKakaoPolygonPaths } from "../maps/kakaoGeometry";
 import { fitPadding } from "../maps/padding";
+import { FLAG_SIZE, flagFoot, rankFlagElement, rankFlags } from "../maps/rankFlags";
 import { clusterHtml, facilityHtml, hexHtml, tooltipHtml } from "../maps/tooltips";
 import { BIVARIATE_COLORS, classColors, classIndex, HEAT_COLORS, layerStyle, MAP_CHROME, symbolMaxRadius } from "../theme";
 import type { FinalResponse, MapView, UnitProperties } from "../types";
@@ -500,6 +501,33 @@ export function KakaoMap({
           tooltip.leave();
         },
       });
+    }
+
+    // 순위 1~3위 지역의 대표점에 깃발을 단다 (MapLibre 화면과 같다). 깃발은 이웃 지역 위에 걸칠 수 있어,
+    // 깃발에 올리거나 누르면 깃발이 가리키는 지역을 강조·선택하고 툴팁은 깃발 위에 띄운다. 1위가 맨 위다.
+    for (const flag of rankFlags(result)) {
+      const [lng, lat] = flag.position;
+      const position = new maps.LatLng(lat, lng);
+      const key = flag.properties.unit_key;
+      const html = tooltipHtml(result, flag.properties);
+      const foot = flagFoot(flag);
+      const element = rankFlagElement(flag);
+      element.addEventListener("click", () => {
+        onSelectRef.current(key);
+        tooltip.pin(html, position, foot.y + 4);
+      });
+      element.addEventListener("mouseenter", () => {
+        onHoverRef.current(key);
+        tooltip.hover(html, position, foot.y + 4);
+      });
+      element.addEventListener("mouseleave", () => {
+        onHoverRef.current(null);
+        tooltip.leave();
+      });
+      overlays.push(new maps.CustomOverlay({
+        map, position, content: element, clickable: true, zIndex: 8 - flag.rank,
+        xAnchor: foot.x / FLAG_SIZE.width, yAnchor: foot.y / FLAG_SIZE.height,
+      }));
     }
 
     outlinesByKey.current = outlines;

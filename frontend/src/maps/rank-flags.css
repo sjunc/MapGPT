@@ -1,0 +1,14 @@
+/* 순위 1~3위 깃발 (rankFlags.ts). 두 지도가 함께 쓴다.
+   천·깃대는 글자색, 천의 글자와 2px 테두리는 면 색 토큰이라 라이트·다크 테마와 아래 지도 색에 관계없이 구분된다.
+   지도의 파랑은 값을 나타내는 색이라 깃발에는 쓰지 않는다. */
+.rank-flag { display: block; width: 36px; height: 36px; cursor: pointer; }
+.rank-flag svg { display: block; overflow: visible; }
+.rank-flag-halo { fill: var(--surface-1); stroke: var(--surface-1); stroke-width: 4; stroke-linejoin: round; }
+.rank-flag-cloth { fill: var(--text-primary); }
+.rank-flag-pole { stroke: var(--text-primary); stroke-width: 2; }
+.rank-flag-foot { fill: var(--text-primary); stroke: var(--surface-1); stroke-width: 1.5; }
+.rank-flag-label {
+  fill: var(--surface-1);
+  font: 700 12px system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", sans-serif;
+  text-anchor: middle;
+}

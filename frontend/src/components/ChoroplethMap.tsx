@@ -5,6 +5,8 @@ import {
   LngLatBounds,
   Map as MapLibreMap,
   type MapGeoJSONFeature,
+  type MapMouseEvent,
+  Marker,
   NavigationControl,
   Popup,
   setWorkerUrl,
@@ -24,6 +26,7 @@ import {
 } from "../theme";
 import type { BivariateAxis, FacilityProperties, FinalResponse, MapView, UnitProperties } from "../types";
 import { fitPadding } from "../maps/padding";
+import { flagFoot, flagUnitKey, rankFlagElement, rankFlags } from "../maps/rankFlags";
 import { clusterHtml, facilityHtml, hexHtml, tooltipHtml } from "../maps/tooltips";
 import { MapResetControl } from "./MapResetControl";
 
@@ -165,6 +168,26 @@ function setUnitState(map: MapLibreMap, id: string, state: Record<string, boolea
   }
 }
 
+// 지도마다 지금 달린 순위 깃발. 새 결과가 오면 떼고 다시 단다.
+const FLAG_MARKERS = new WeakMap<MapLibreMap, Marker[]>();
+
+/** 순위 1~3위 지역의 대표점에 깃발을 단다. 뒤에 단 마커가 위에 그려지므로 3위부터 단다(rankFlags 순서). */
+function placeRankFlags(map: MapLibreMap, result: FinalResponse) {
+  for (const marker of FLAG_MARKERS.get(map) ?? []) marker.remove();
+  FLAG_MARKERS.set(map, rankFlags(result).map((flag) => {
+    const foot = flagFoot(flag);
+    return new Marker({ element: rankFlagElement(flag), anchor: "top-left", offset: [-foot.x, -foot.y] })
+      .setLngLat(flag.position)
+      .addTo(map);
+  }));
+}
+
+/** 마우스 아래가 순위 깃발이면 그 깃발의 지역. 깃발은 이웃 지역 위에 걸칠 수 있어 아래 면보다 먼저 본다. */
+function flaggedUnit(result: FinalResponse, event: MapMouseEvent): UnitProperties | undefined {
+  const key = flagUnitKey(event.originalEvent.target);
+  return key === null ? undefined : result.map_layer.geojson.features.find((item) => item.properties.unit_key === key)?.properties;
+}
+
 function featureHtml(result: FinalResponse, feature: MapGeoJSONFeature): string {
   if (feature.layer.id === FACILITY_LAYERS[0]) return clusterHtml(feature.properties.point_count as number);
   if (feature.layer.id === FACILITY_LAYERS[2]) return facilityHtml(result, feature.properties as FacilityProperties);
@@ -225,6 +248,7 @@ function applyResult(map: MapLibreMap, result: FinalResponse, scheme: ColorSchem
   map.setPaintProperty(SYMBOL_LAYERS[1], "circle-radius", symbolRadius(result));
   map.setFilter(SYMBOL_LAYERS[1], ["!=", value, null]); // 값이 없는 지역은 원을 그리지 않는다
   map.setLayoutProperty(SYMBOL_LAYERS[1], "circle-sort-key", ["-", 0, ["to-number", value]]); // 작은 원이 위에
+  placeRankFlags(map, result);
   applyView(map, view);
   fitResultBounds(map, result, panelOpen);
 }
@@ -476,6 +500,14 @@ export function ChoroplethMap({
     // 마우스 hover: 일시적인 팝업과 표/지도 강조 동기화. 보이는 보기의 면·원·시설 점에서만 일어난다.
     instance.on("mousemove", (event) => {
       if (!ready.current) return;
+      const flagged = flaggedUnit(latest.current.result, event);
+      if (flagged) {
+        latest.current.onHover(flagged.unit_key);
+        if (!clickPopup.isOpen()) {
+          hoverPopup.setLngLat(event.lngLat).setHTML(tooltipHtml(latest.current.result, flagged)).addTo(instance);
+        }
+        return;
+      }
       const feature = instance.queryRenderedFeatures(event.point, { layers: INTERACTIVE_LAYERS })[0];
       if (!feature) {
         clearHover();
@@ -495,6 +527,13 @@ export function ChoroplethMap({
     instance.on("click", (event) => {
       if (!ready.current) return;
 
+      const flagged = flaggedUnit(latest.current.result, event);
+      if (flagged) {
+        hoverPopup.remove();
+        latest.current.onSelect(flagged.unit_key);
+        clickPopup.setLngLat(event.lngLat).setHTML(tooltipHtml(latest.current.result, flagged)).addTo(instance);
+        return;
+      }
       const feature = instance.queryRenderedFeatures(event.point, { layers: INTERACTIVE_LAYERS })[0];
       if (!feature) {
         clickPopup.remove();
