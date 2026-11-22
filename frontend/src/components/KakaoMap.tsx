@@ -42,6 +42,17 @@ const FOCUS_MIN_LEVEL = 5;
 // 지역 경계선: 단계 구분도·이변량은 면 사이의 흰 구분선, 그 밖의 보기는 MapLibre 화면의 옅은 지역 경계선
 const FILL_LINE = { strokeWeight: 1, strokeColor: "#ffffff", strokeOpacity: 0.9 };
 const UNIT_LINE = { strokeWeight: 1, strokeColor: CHROME.outline, strokeOpacity: 0.8 };
+// 배경지도에 따라 바뀌는 값. 위성 사진(스카이뷰) 위에서는 사진이 비치도록 면을 옅게 칠하고,
+// 지역 경계선과 hover·선택 테두리는 MapLibre 다크 화면(어두운 배경)처럼 흰색으로 그린다.
+const BASEMAP = {
+  roadmap: { fillOpacity: 0.7, hexOpacity: 0.85, unitLine: UNIT_LINE, highlight: CHROME.hover },
+  satellite: {
+    fillOpacity: 0.45,
+    hexOpacity: 0.6,
+    unitLine: { ...UNIT_LINE, strokeColor: "#ffffff", strokeOpacity: 0.7 },
+    highlight: MAP_CHROME.dark.hover,
+  },
+};
 // 묶음 원: MapLibre 화면처럼 시설 10·50·200곳 미만이면 반지름 10·13·17·22px, 그 이상은 22px
 const CLUSTER_STEPS = [10, 50, 200];
 const CLUSTER_RADII = [10, 13, 17, 22];
@@ -134,10 +145,10 @@ function bivariateColor(feature: UnitFeature, result: FinalResponse): string {
   return BIVARIATE_COLORS.light[axisCell(y, spec.y.breaks)][axisCell(x, spec.x.breaks)];
 }
 
-/** 비례 원 테두리: MapLibre 화면처럼 기본은 1px 밝은 선, hover는 2px·선택은 3px 검은 선 */
-function strokeBubble(element: HTMLElement, emphasis: Emphasis) {
-  element.style.borderColor = emphasis === "none" ? CHROME.separator : CHROME.hover;
-  element.style.boxShadow = emphasis === "none" ? "" : `0 0 0 ${emphasis === "selected" ? 2 : 1}px ${CHROME.hover}`;
+/** 비례 원 테두리: MapLibre 화면처럼 기본은 1px 밝은 선, hover는 2px·선택은 3px 강조선(일반 지도는 검정, 위성 사진은 흰색) */
+function strokeBubble(element: HTMLElement, emphasis: Emphasis, highlight: string) {
+  element.style.borderColor = emphasis === "none" ? CHROME.separator : highlight;
+  element.style.boxShadow = emphasis === "none" ? "" : `0 0 0 ${emphasis === "selected" ? 2 : 1}px ${highlight}`;
 }
 
 /** 다각형 외곽 링으로 만든 범위 (MapLibre 화면의 fitResultBounds·focusFeature와 같다) */
@@ -233,6 +244,8 @@ export function KakaoMap({
   const [instance, setInstance] = useState<Instance | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // 위성 사진(스카이뷰) 켜짐. 새 분석·결과 초기화·보기 전환에도 유지하고, 새로고침하면 일반 지도로 돌아간다.
+  const [satellite, setSatellite] = useState(false);
   const outlinesByKey = useRef(new Map<string, UnitShape[]>());
   const bubblesByKey = useRef(new Map<string, HTMLElement>());
   const previousHighlight = useRef<string[]>([]);
@@ -287,10 +300,11 @@ export function KakaoMap({
     target.map.setCenter(new target.maps.LatLng(CENTER.lat, CENTER.lng));
   }
 
-  // 보기 변경 시 지도 인스턴스는 유지하고 기존 도형·오버레이만 교체한다.
+  // 보기나 배경지도(위성 사진)를 바꾸면 지도 인스턴스는 유지하고 기존 도형·오버레이만 교체한다.
   useEffect(() => {
     if (!instance || !result) return;
     const { maps, map } = instance;
+    const basemap = BASEMAP[satellite ? "satellite" : "roadmap"];
     const features = result.map_layer.geojson.features as UnitFeature[];
     const shapes: UnitShape[] = [];
     const markers: kakao.maps.Marker[] = [];
@@ -354,7 +368,7 @@ export function KakaoMap({
       if (filled(view)) {
         const fillColor = view === "choropleth" ? choroplethColor(feature, result) : bivariateColor(feature, result);
         const polygons = paths.map((path) => new maps.Polygon({
-          map, path, ...FILL_LINE, fillColor, fillOpacity: 0.7, zIndex: 1,
+          map, path, ...FILL_LINE, fillColor, fillOpacity: basemap.fillOpacity, zIndex: 1,
         }));
         for (const polygon of polygons) unitEvents(polygon, feature);
         shapes.push(...polygons);
@@ -362,7 +376,7 @@ export function KakaoMap({
         continue;
       }
       // 그 밖의 보기는 지역 경계선만 그린다. 선택한 지역의 선이 위로 올라와도 면이 없어 칸·점 클릭을 막지 않는다.
-      const lines = paths.map((path) => new maps.Polyline({ map, path, ...UNIT_LINE, zIndex: 1 }));
+      const lines = paths.map((path) => new maps.Polyline({ map, path, ...basemap.unitLine, zIndex: 1 }));
       shapes.push(...lines);
       outlines.set(key, lines);
       if (hitArea(view)) {
@@ -395,7 +409,7 @@ export function KakaoMap({
         element.style.width = `${radius * 2}px`;
         element.style.height = `${radius * 2}px`;
         element.style.background = rgba(CHROME.symbol, 0.78);
-        strokeBubble(element, "none");
+        strokeBubble(element, "none", basemap.highlight);
         element.addEventListener("click", () => {
           onSelectRef.current(key);
           tooltip.pin(html, center, radius + 6);
@@ -423,7 +437,7 @@ export function KakaoMap({
         const html = hexHtml(result, hex.properties.count);
         for (const path of toKakaoPolygonPaths(hex.geometry, maps)) {
           const polygon = new maps.Polygon({
-            map, path, fillColor, fillOpacity: 0.85,
+            map, path, fillColor, fillOpacity: basemap.hexOpacity,
             strokeWeight: 1, strokeColor: CHROME.separator, strokeOpacity: 0.8, zIndex: 2,
           });
           shapes.push(polygon);
@@ -505,32 +519,41 @@ export function KakaoMap({
       previousHighlight.current = [];
       tooltipRef.current = null;
     };
-  }, [instance, result, view]);
+  }, [instance, result, view, satellite]);
 
   // 선택을 풀면(선택 해제 버튼 등) 고정한 툴팁도 닫는다 (MapLibre 화면의 클릭 팝업과 같다).
   useEffect(() => {
     if (selectedKey === null) tooltipRef.current?.close();
   }, [selectedKey]);
 
-  // hover·선택 강조: 도형을 다시 만들지 않고 테두리만 바꾼다. MapLibre 화면처럼 hover 2.5px·선택 4px 검은 선이다.
+  // hover·선택 강조: 도형을 다시 만들지 않고 테두리만 바꾼다. MapLibre 화면처럼 hover 2.5px·선택 4px 선이고,
+  // 일반 지도에서는 검정, 위성 사진에서는 흰색이다.
   useEffect(() => {
     const next = [hoveredKey, selectedKey].filter((key): key is string => key !== null);
-    const base = filled(view) ? FILL_LINE : UNIT_LINE;
+    const { unitLine, highlight } = BASEMAP[satellite ? "satellite" : "roadmap"];
+    const base = filled(view) ? FILL_LINE : unitLine;
     for (const key of new Set([...previousHighlight.current, ...next])) {
       const emphasis: Emphasis = key === selectedKey ? "selected" : key === hoveredKey ? "hover" : "none";
       for (const shape of outlinesByKey.current.get(key) ?? []) {
         shape.setOptions({
           strokeWeight: emphasis === "selected" ? 4 : emphasis === "hover" ? 2.5 : base.strokeWeight,
-          strokeColor: emphasis === "none" ? base.strokeColor : CHROME.hover,
+          strokeColor: emphasis === "none" ? base.strokeColor : highlight,
           strokeOpacity: emphasis === "none" ? base.strokeOpacity : 1,
         });
         shape.setZIndex(emphasis === "selected" ? 5 : emphasis === "hover" ? 3 : 1);
       }
       const bubble = bubblesByKey.current.get(key);
-      if (bubble) strokeBubble(bubble, emphasis);
+      if (bubble) strokeBubble(bubble, emphasis, highlight);
     }
     previousHighlight.current = next;
-  }, [hoveredKey, selectedKey, instance, result, view]);
+  }, [hoveredKey, selectedKey, instance, result, view, satellite]);
+
+  // 위성 사진(스카이뷰): 지도 객체는 그대로 두고 지도 종류만 바꾼다(쿼터를 더 쓰지 않는다). 지명·도로 이름이 함께 나오는 HYBRID다.
+  useEffect(() => {
+    if (!instance) return;
+    const { maps, map } = instance;
+    map.setMapTypeId(satellite ? maps.MapTypeId.HYBRID : maps.MapTypeId.ROADMAP);
+  }, [instance, satellite]);
 
   // 결과가 없으면 서울 기본 위치로 돌아간다 (MapLibre 화면의 BaseMap).
   useEffect(() => {
@@ -651,6 +674,18 @@ export function KakaoMap({
           <div className="maplibregl-ctrl maplibregl-ctrl-group">
             <button type="button" className="p4-reset-view" title={resetLabel} aria-label={resetLabel} onClick={reset}>
               ↺
+            </button>
+          </div>
+          <div className="maplibregl-ctrl maplibregl-ctrl-group">
+            <button
+              type="button"
+              className="kakao-satellite-toggle"
+              title="위성 사진"
+              aria-label="위성 사진"
+              aria-pressed={satellite}
+              onClick={() => setSatellite((on) => !on)}
+            >
+              위성
             </button>
           </div>
         </div>

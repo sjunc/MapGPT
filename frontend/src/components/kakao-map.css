@@ -27,6 +27,10 @@
 /* 비례 원. 크기·색·테두리는 KakaoMap.tsx가 MapLibre 화면과 같은 값으로 넣는다. */
 .kakao-bubble { box-sizing: border-box; border: 1px solid; border-radius: 50%; cursor: pointer; }
 
+/* 위성 사진(스카이뷰) 버튼: MapLibre 컨트롤 버튼(29px) 안의 글자. 켜면 범례 보기 전환(.view-switch .on)처럼 강조색으로 채운다. */
+.maplibregl-ctrl button.kakao-satellite-toggle { font-size: 11px; font-weight: 700; color: #303030; }
+.maplibregl-ctrl button.kakao-satellite-toggle[aria-pressed="true"] { background: var(--accent); color: #fff; }
+
 /* 좁은 화면: 카카오 로고·축척을 MapLibre 출처 표기(p6.css의 .maplibregl-ctrl-bottom-right)와 같은 높이로 올려
    질문 입력창과 결과 시트에 가리지 않게 한다. 카카오가 넣은 bottom 값은 그대로 두고 위로 옮긴다. */
 @media (max-width: 860px) {
