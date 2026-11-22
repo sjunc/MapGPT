@@ -21,6 +21,7 @@
 - **지도:** 팀은 처음에 카카오맵을 쓰기로 했지만, 구현 기준이었던 개발 전달 문서(23·29·42번)가 MapLibre를 명시해 MapLibre로 만들었다. 어느 쪽으로 갈지는 담당자가 정한다(F1). 바꾸더라도 지도 컴포넌트 하나만 다시 만들면 된다.
 - **카카오 지도 (2026-11-21, 2026-11-22 화면 통합):** `?map=kakao`면 같은 화면에서 지도만 카카오 지도로 바꾼다. Vercel 배포의 `/`는 카카오 지도의 가상 데모로 간다([3.5절](#35-카카오-지도)).
 - **결과 패널 (2026-11-22):** 결과·순위 탭은 답 카드(순위 1위 지역·값·지표) → 순위 막대 목록 → AI 요약(두 줄, "더 보기"로 펼침) → 통계 한 줄(분석 범위·지역 수·값 없음·시각화·데이터) 순서다. 순위가 없는 결과는 답 카드에 요약 문장을 보인다.
+- **순위 깃발 (2026-11-22):** 순위가 있는 결과는 두 지도 모두 1~3위 지역의 대표점(`label_point`)에 "N위" 깃발을 단다. 동순위는 모두 달고, 깃발에 올리거나 누르면 그 지역을 강조·선택한다.
 - **첫 분석 주제에 묶인 부분:** 순위 표의 "행정동" 같은 문구가 코드에 고정되어 있다. 범례 양끝 문구와 색 방향은 응답(`map_layer.style`)에서 받는다.
 - **지도 보기 (2026-11-15):** 개수·합계 지표는 비례 원이 기본이고 "원 크기"·"색 구간" 버튼으로 단계 구분도와 바꿔 볼 수 있다. 비율·평균은 단계 구분도만 쓴다. 보기와 강조 방향은 백엔드가 정해 `map_layer.style`로 보내고, 원 위치는 각 단위의 `properties.label_point`다. 지표가 시설 개수면 `map_layer.points`(시설 위치)가 함께 와서 "점"(가까운 곳은 묶음)·"밀도" 보기가 더해지고, 위치를 물으면 점, 밀집한 곳을 물으면 밀도가 기본이다. 같은 크기 육각형 칸마다 센 `map_layer.hexbins`로 "육각 격자" 보기도 있고, 점이 1만 개를 넘어 위치가 오지 않으면 위치·밀집 질문은 육각 격자가 기본이다. 비율 지표는 `map_layer.bivariate`(분모·분자 3분위)로 "두 지표"(이변량) 보기를 더한다(2026-11-16).
 - **백엔드와 함께 정할 것:** 진행 상황 표시(지금은 경과 시간만), 배포 시 서빙 방식, 응답 타입 동기화.
@@ -149,6 +150,7 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
    - 육각 격자는 단계 구분도와 같은 램프이고, 칸 수가 많은 쪽이 항상 가장 눈에 띈다.
    - 이변량 지도는 파랑(분자)·주황(분모)을 섞은 3×3 색(`BIVARIATE_COLORS`)이다. 다크 모드는 일반 시각의 칸 구분이 약해(ΔE 10.3) 툴팁에 두 값이 함께 보인다.
    - 값 없음은 회색이다.
+   - 순위 깃발은 값을 나타내지 않아 지도의 파랑을 쓰지 않는다. 천·깃대는 글자색(`--text-primary`), 글자와 2px 테두리는 면 색(`--surface-1`)이라 라이트·다크와 아래 지도 색에 관계없이 보인다.
    - 색을 바꾸면 라이트·다크 모두에서 순서가 구분되는지 다시 확인한다.
 
 ## 3. 지도: MapLibre와 카카오맵
@@ -247,6 +249,7 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
 | 점 | 점 모양 `MarkerImage`와 `MarkerClusterer`(SDK `libraries=clusterer`). 레벨 5 이상에서 묶고, 묶음 원 크기는 10·50·200곳 기준이다 |
 | 밀도 | 지도 위에 `pointer-events: none`인 canvas를 겹치고 `simpleheat`로 그린다. 지도가 움직이면 다시 그린다 |
 | 육각 격자 | 칸마다 `Polygon`. 불투명도는 0.85다(위성 사진에서는 0.6) |
+| 순위 깃발 | `CustomOverlay`에 단 깃발(`maps/rankFlags.ts`, MapLibre 화면은 `Marker`). 1위가 위(zIndex 7·6·5)이고 툴팁(10)보다 아래다. 밀도 보기에서는 밀도 canvas가 지도 위에 겹쳐 있어, 밀집한 곳의 깃발이 흐려질 수 있다(툴팁도 같다) |
 
 - 비례 원·점·밀도·육각 격자 보기는 지역 경계를 `Polyline`으로 그린다.
 - 점·밀도·육각 격자 보기는 그 아래에 투명한 `Polygon`을 깐다. 점이나 칸이 없는 곳에서 지역 툴팁과 선택을 받는다(MapLibre의 `units-hit`).
@@ -378,6 +381,7 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
 | 범례 | [frontend/src/components/Legend.tsx](../src/components/Legend.tsx) |
 | 결과 패널: 답 카드, AI 요약, 통계 한 줄 | [frontend/src/components/AnalysisResultPanel.tsx](../src/components/AnalysisResultPanel.tsx) |
 | 순위 막대 목록 | [frontend/src/components/RankingTable.tsx](../src/components/RankingTable.tsx) |
+| 지도의 순위 1~3위 깃발 (두 지도 공통) | [frontend/src/maps/rankFlags.ts](../src/maps/rankFlags.ts), [rank-flags.css](../src/maps/rank-flags.css) |
 | 데이터·방법·가정·한계 | [frontend/src/components/ResultDetails.tsx](../src/components/ResultDetails.tsx) |
 | 오류 | [frontend/src/components/ErrorPanel.tsx](../src/components/ErrorPanel.tsx) |
 | 색 램프, 배경지도, 값 포맷, 결측 사유 | [frontend/src/theme.ts](../src/theme.ts) |
