@@ -48,3 +48,23 @@ def test_fetch_service_reports_api_errors_without_the_key(monkeypatch):
     with pytest.raises(SeoulApiError) as error:
         fetch_service("secret-key", "TestPoints")
     assert "ERROR-500" in str(error.value) and "secret-key" not in str(error.value)
+
+
+def test_fetch_service_appends_request_parameters_after_the_range(monkeypatch):
+    urls = []
+
+    def opener(url: str, timeout: float):
+        urls.append(url)
+        body = {
+            "list_total_count": 1,
+            "RESULT": {"CODE": "INFO-000", "MESSAGE": "정상"},
+            "row": [{"COL_ENG_NM": "LAT"}],
+        }
+        return io.BytesIO(json.dumps({"SearchOpenAPIIOValueService": body}).encode())
+
+    monkeypatch.setattr(seoul_openapi.urllib.request, "urlopen", opener)
+
+    rows = fetch_service("secret-key", "SearchOpenAPIIOValueService", params=("OA-20883",))
+
+    assert rows == [{"COL_ENG_NM": "LAT"}]
+    assert urls == ["http://openapi.seoul.go.kr:8088/secret-key/json/SearchOpenAPIIOValueService/1/1000/OA-20883/"]

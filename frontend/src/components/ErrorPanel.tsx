@@ -27,6 +27,7 @@ const ERROR_HINTS: Record<string, string> = {
   INCOMPLETE_INTERPRETATION: "질문에서 분석할 지역이나 단위를 찾지 못했습니다. '서울 행정동별'처럼 지역과 단위를 함께 적어 주세요.",
   DATA_NOT_AVAILABLE: "질문에 필요한 데이터가 아직 등록되어 있지 않거나, 분석 지역에 그 데이터가 없습니다. 아래 메시지에서 빠진 데이터를 확인해 주세요.",
   NO_MATCHING_DATA: "조건에 맞는 데이터가 없습니다. 조건(시설 유형·연령 등)이나 지역을 넓혀 다시 물어봐 주세요.",
+  DATA_ACQUISITION_FAILED: "필요한 데이터를 받지 못했거나, 받은 데이터가 자동 검사(좌표·지역)를 통과하지 못했습니다. 아래 메시지를 확인해 주세요.",
   PLAN_INVALID: "질문을 실행할 수 있는 분석 계획으로 바꾸지 못했습니다. 질문을 더 짧고 분명하게 바꿔 다시 시도해 주세요.",
   LLM_FAILED: "AI 모델을 호출하지 못했습니다. 잠시 후 같은 질문을 다시 시도해 주세요. 계속되면 서버의 LLM 설정을 확인해야 합니다.",
   CATALOG_INDEX_STALE: SERVER_PROBLEM,

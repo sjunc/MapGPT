@@ -1,8 +1,18 @@
 import psycopg
+from psycopg import sql
 from psycopg.types.json import Jsonb
 
-from app.domain.catalog import DatasetMetadata, RegionRef
+from app.domain.catalog import AUTO_PUBLIC_API_CATEGORY, DatasetMetadata, RegionRef
 from app.domain.enums import SpatialLevel
+
+
+def _auto_clause(auto: bool | None) -> sql.SQL:
+    """자동 후보 조건 (d.metadata 기준, 인자 auto_category): None이면 모두, True면 자동 후보만, False면 뺀다."""
+    if auto is None:
+        return sql.SQL("TRUE")
+    if auto:
+        return sql.SQL("d.metadata->>'category' = %(auto_category)s")
+    return sql.SQL("d.metadata->>'category' IS DISTINCT FROM %(auto_category)s")
 
 
 def upsert_dataset(conn: psycopg.Connection, metadata: DatasetMetadata) -> None:
@@ -16,9 +26,30 @@ def upsert_dataset(conn: psycopg.Connection, metadata: DatasetMetadata) -> None:
     )
 
 
-def list_datasets(conn: psycopg.Connection) -> list[DatasetMetadata]:
-    rows = conn.execute("SELECT metadata FROM catalog.dataset ORDER BY dataset_id").fetchall()
+def list_datasets(conn: psycopg.Connection, *, include_auto: bool = True) -> list[DatasetMetadata]:
+    """카탈로그의 Dataset. include_auto=False면 자동 후보(사람 검토 전 외부 API 출처)를 뺀다."""
+    rows = conn.execute(
+        sql.SQL("SELECT d.metadata FROM catalog.dataset d WHERE {} ORDER BY d.dataset_id").format(
+            _auto_clause(None if include_auto else False)
+        ),
+        {"auto_category": AUTO_PUBLIC_API_CATEGORY},
+    ).fetchall()
     return [DatasetMetadata.model_validate(row[0]) for row in rows]
+
+
+def find_dataset(conn: psycopg.Connection, dataset_id: str) -> DatasetMetadata | None:
+    row = conn.execute("SELECT metadata FROM catalog.dataset WHERE dataset_id = %s", (dataset_id,)).fetchone()
+    return DatasetMetadata.model_validate(row[0]) if row else None
+
+
+def delete_auto_datasets(conn: psycopg.Connection, keep: set[str]) -> list[str]:
+    """keep에 없는 자동 후보를 카탈로그에서 지운다 (검색 임베딩도 함께 지워진다). 이미 받은 데이터 테이블은 남긴다."""
+    rows = conn.execute(
+        "DELETE FROM catalog.dataset d WHERE d.metadata->>'category' = %(auto_category)s "
+        "AND NOT (d.dataset_id = ANY(%(keep)s)) RETURNING d.dataset_id",
+        {"auto_category": AUTO_PUBLIC_API_CATEGORY, "keep": sorted(keep)},
+    ).fetchall()
+    return sorted(row[0] for row in rows)
 
 
 def list_boundary_regions(conn: psycopg.Connection) -> list[RegionRef]:
@@ -48,14 +79,20 @@ def list_boundary_regions(conn: psycopg.Connection) -> list[RegionRef]:
     return regions
 
 
-def embedding_sources(conn: psycopg.Connection) -> list[tuple[DatasetMetadata, str | None, str | None]]:
-    """모든 Dataset과, 저장된 임베딩의 모델·원문 (임베딩이 없으면 None)."""
+def embedding_sources(
+    conn: psycopg.Connection, *, include_auto: bool = True
+) -> list[tuple[DatasetMetadata, str | None, str | None]]:
+    """Dataset과, 저장된 임베딩의 모델·원문 (임베딩이 없으면 None). include_auto=False면 자동 후보를 뺀다."""
     rows = conn.execute(
-        """
-        SELECT d.metadata, e.model, e.source_text
-        FROM catalog.dataset d LEFT JOIN catalog.dataset_embedding e USING (dataset_id)
-        ORDER BY d.dataset_id
-        """
+        sql.SQL(
+            """
+            SELECT d.metadata, e.model, e.source_text
+            FROM catalog.dataset d LEFT JOIN catalog.dataset_embedding e USING (dataset_id)
+            WHERE {}
+            ORDER BY d.dataset_id
+            """
+        ).format(_auto_clause(None if include_auto else False)),
+        {"auto_category": AUTO_PUBLIC_API_CATEGORY},
     ).fetchall()
     return [(DatasetMetadata.model_validate(metadata), model, source_text) for metadata, model, source_text in rows]
 
@@ -76,17 +113,23 @@ def upsert_embedding(
 
 
 def nearest_datasets(
-    conn: psycopg.Connection, embedding: list[float], limit: int
+    conn: psycopg.Connection, embedding: list[float], limit: int, *, auto: bool | None = None, model: str | None = None
 ) -> list[tuple[DatasetMetadata, float]]:
-    """코사인 거리(<=>)가 가까운 순서로 Dataset과 유사도(1 - 거리)를 반환한다."""
+    """코사인 거리(<=>)가 가까운 순서로 Dataset과 유사도(1 - 거리)를 반환한다.
+
+    auto: None이면 모두, True면 자동 후보만, False면 자동 후보를 뺀다. model을 주면 그 모델의 임베딩만 본다.
+    """
     rows = conn.execute(
-        """
-        SELECT d.metadata, 1 - (e.embedding <=> %(query)s::vector)
-        FROM catalog.dataset_embedding e JOIN catalog.dataset d USING (dataset_id)
-        ORDER BY e.embedding <=> %(query)s::vector
-        LIMIT %(limit)s
-        """,
-        {"query": _vector(embedding), "limit": limit},
+        sql.SQL(
+            """
+            SELECT d.metadata, 1 - (e.embedding <=> %(query)s::vector)
+            FROM catalog.dataset_embedding e JOIN catalog.dataset d USING (dataset_id)
+            WHERE {} AND (%(model)s::text IS NULL OR e.model = %(model)s)
+            ORDER BY e.embedding <=> %(query)s::vector
+            LIMIT %(limit)s
+            """
+        ).format(_auto_clause(auto)),
+        {"query": _vector(embedding), "limit": limit, "auto_category": AUTO_PUBLIC_API_CATEGORY, "model": model},
     ).fetchall()
     return [(DatasetMetadata.model_validate(metadata), float(similarity)) for metadata, similarity in rows]
 

@@ -1,4 +1,5 @@
 from datetime import date
+from typing import Any
 
 from pydantic import Field
 
@@ -7,6 +8,8 @@ from app.domain.enums import DataType, GeometryType, SemanticType, SpatialLevel
 
 AUTO_DISCOVERED_CATEGORY = "auto_discovered"  # CSV 자동 발견으로 등록한 Dataset의 category
 PUBLIC_API_CATEGORY = "public_api"  # 등록 파일로 승인한 외부 API 출처에서 받아 적재하는 Dataset의 category
+# 등록 파일 없이 포털의 목록·컬럼 정보로 자동 등록한 외부 API 출처의 category (사람이 검토하기 전)
+AUTO_PUBLIC_API_CATEGORY = "auto_public_api"
 
 
 class SourceAcquisition(StrictModel):
@@ -19,6 +22,8 @@ class SourceAcquisition(StrictModel):
     refresh_days: int
     fetched_at: date | None = None  # None이면 아직 받지 않은 등록 출처
     rows: int | None = None
+    # 자동 후보만: 포털 정보로 만든 등록 내용(SourceDeclaration JSON). 등록 파일이 있는 출처는 비운다.
+    declaration: dict[str, Any] | None = None
 
     def is_due(self, today: date, fingerprint: str) -> bool:
         """아직 받지 않았거나, 다시 받을 주기가 지났거나, 등록 파일이 바뀌었으면 받아야 한다."""

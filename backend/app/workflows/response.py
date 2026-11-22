@@ -4,7 +4,7 @@ import statistics
 from collections.abc import Mapping
 from typing import Any
 
-from app.domain.catalog import AUTO_DISCOVERED_CATEGORY, DatasetMetadata
+from app.domain.catalog import AUTO_DISCOVERED_CATEGORY, AUTO_PUBLIC_API_CATEGORY, DatasetMetadata
 from app.domain.enums import SortOrder
 from app.domain.filters import describe_filter
 from app.domain.operations import (
@@ -15,7 +15,7 @@ from app.domain.operations import (
     RankOperation,
 )
 from app.domain.plan import AnalysisPlan
-from app.domain.policies import AUTO_DATASET_LIMITATIONS, POLICIES
+from app.domain.policies import AUTO_DATASET_LIMITATIONS, AUTO_SOURCE_LIMITATIONS, POLICIES
 from app.domain.results import (
     DatasetUsage,
     ExecutionResult,
@@ -69,6 +69,7 @@ def compose_response(
                 source=d.source,
                 license=d.license,
                 reference_date=d.temporal.reference_date,
+                reviewed=d.category != AUTO_PUBLIC_API_CATEGORY,
             )
             for d in used
         ],
@@ -77,6 +78,7 @@ def compose_response(
             [
                 *policy.limitations,
                 *(AUTO_DATASET_LIMITATIONS if any(d.category == AUTO_DISCOVERED_CATEGORY for d in used) else []),
+                *(AUTO_SOURCE_LIMITATIONS if any(d.category == AUTO_PUBLIC_API_CATEGORY for d in used) else []),
                 *_temporal_note(used),
                 *(f"[{d.title}] {note}" for d in used for note in d.quality_notes),
                 *(issue.message for issue in result_validation.warnings),

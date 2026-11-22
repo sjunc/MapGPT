@@ -92,3 +92,26 @@ def test_acquisition_is_due_when_missing_stale_or_redeclared(fetched_at, fingerp
     )
 
     assert acquisition.is_due(date(2026, 11, 14), fingerprint) is due
+
+
+def test_declaration_rows_to_keep_must_name_a_declared_source_column():
+    keep = {"column": "TRDSTATENM", "values": ["영업/정상"]}
+
+    with pytest.raises(ValidationError, match="TRDSTATENM"):
+        SourceDeclaration.model_validate(_declaration(keep_rows=keep))
+    columns = [
+        *_declaration()["columns"],
+        {"source": "TRDSTATENM", "name": "영업상태", "semantic": "category", "description": "-"},
+    ]
+    assert SourceDeclaration.model_validate(_declaration(keep_rows=keep, columns=columns)).keep_rows.values == [
+        "영업/정상"
+    ]
+
+
+def test_registered_files_default_to_reviewed_wgs84_and_candidates_may_leave_the_crs_open():
+    reviewed = SourceDeclaration.model_validate(_declaration())
+    candidate = SourceDeclaration.model_validate(_declaration(reviewed=False, crs=None))
+
+    assert (reviewed.reviewed, reviewed.crs) == (True, "EPSG:4326")
+    assert (candidate.reviewed, candidate.crs) == (False, None)
+    assert reviewed.fingerprint != candidate.fingerprint

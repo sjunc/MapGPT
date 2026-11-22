@@ -169,6 +169,7 @@ class DatasetUsage(StrictModel):
     source: str
     license: str | None
     reference_date: date | None
+    reviewed: bool = True  # 포털 정보로 자동 등록한 출처(자동 후보)면 False
 
 
 class FinalResponse(StrictModel):

@@ -114,6 +114,8 @@ export interface DatasetUsage {
   source: string;
   license: string | null;
   reference_date: string | null;
+  /** 포털 정보로 자동 등록한 출처(사람 검토 전)면 false. 데모 데이터에는 없다 */
+  reviewed?: boolean;
 }
 
 export interface FinalResponse {

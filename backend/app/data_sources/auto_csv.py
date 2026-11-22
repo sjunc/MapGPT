@@ -303,11 +303,13 @@ def load_table(
     code_sets: dict[SpatialLevel, set[str]] | None = None,
     coordinates: tuple[str, str] | None = None,
     region: RegionRef | None = None,
+    srid: int = 4326,
 ) -> LoadedTable:
     """profile의 파일을 datasets.<table_name>으로 교체 적재한다. 호출하는 쪽의 트랜잭션 안에서 실행한다.
 
     - code_sets가 있으면 행정구역 코드 컬럼을 찾아 unit_key로 정규화한다 (자동 발견).
     - coordinates가 없으면 컬럼 이름과 값으로 위경도를 찾는다. 주면 그 컬럼을 쓴다 (등록 출처).
+      srid가 4326이 아니면 (Y, X) 평면좌표로 보고 EPSG:4326으로 바꿔 위치를 만든다.
     - region을 주면 그 시도 경계 밖에 떨어진 좌표는 위치를 만들지 않고, 범위는 그 시도로 둔다.
     """
     # 표본으로 추론한 타입은 미리보기용이다. 표본 뒤의 값 때문에 적재가 멈추지 않도록 모든 행으로 확정한다.
@@ -346,13 +348,30 @@ def load_table(
         latitude, longitude = map(sql.Identifier, coordinates)
         conn.execute(sql.SQL("ALTER TABLE {} ADD COLUMN geom geometry(Point, 4326)").format(loading))
         # 좌표 판정은 표본으로 했으므로, 모든 행에 대해 한국 범위 안인 좌표만 위치로 만든다.
-        conn.execute(
-            sql.SQL(
-                "UPDATE {table} SET geom = ST_SetSRID(ST_MakePoint({lon}, {lat}), 4326) "
-                "WHERE {lon} BETWEEN %s AND %s AND {lat} BETWEEN %s AND %s"
-            ).format(table=loading, lon=longitude, lat=latitude),
-            (*_LONGITUDE_RANGE, *_LATITUDE_RANGE),
-        )
+        if srid == 4326:
+            conn.execute(
+                sql.SQL(
+                    "UPDATE {table} SET geom = ST_SetSRID(ST_MakePoint({lon}, {lat}), 4326) "
+                    "WHERE {lon} BETWEEN %s AND %s AND {lat} BETWEEN %s AND %s"
+                ).format(table=loading, lon=longitude, lat=latitude),
+                (*_LONGITUDE_RANGE, *_LATITUDE_RANGE),
+            )
+        else:
+            # 평면좌표(X=경도 자리, Y=위도 자리)를 바꾼 뒤 한국 범위 밖이면 위치를 지운다. 터무니없는 값은 바꾸지 않는다.
+            conn.execute(
+                sql.SQL(
+                    "UPDATE {table} SET geom = ST_Transform(ST_SetSRID(ST_MakePoint({lon}, {lat}), %s), 4326) "
+                    "WHERE abs({lon}) BETWEEN 1 AND 1e7 AND abs({lat}) BETWEEN 1 AND 1e7"
+                ).format(table=loading, lon=longitude, lat=latitude),
+                (srid,),
+            )
+            conn.execute(
+                sql.SQL(
+                    "UPDATE {table} SET geom = NULL WHERE geom IS NOT NULL "
+                    "AND NOT (ST_X(geom) BETWEEN %s AND %s AND ST_Y(geom) BETWEEN %s AND %s)"
+                ).format(table=loading),
+                (*_LONGITUDE_RANGE, *_LATITUDE_RANGE),
+            )
     conn.execute(sql.SQL("DROP TABLE IF EXISTS {}").format(table))
     conn.execute(sql.SQL("ALTER TABLE {} RENAME TO {}").format(loading, sql.Identifier(table_name)))
     if coordinates:

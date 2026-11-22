@@ -21,6 +21,11 @@ export function ResultDetails({ result }: { result: FinalResponse }) {
             <li key={d.dataset_id}>
               <div>
                 <strong>{d.title}</strong> <code>{d.dataset_id}</code>
+                {d.reviewed === false && (
+                  <span className="badge-auto" title="포털 정보로 자동 등록해 사람이 검토하지 않은 데이터입니다">
+                    자동 수집·검토 전
+                  </span>
+                )}
               </div>
               <div className="muted">
                 기준 {d.reference_date ?? "미상"} · {d.provider}

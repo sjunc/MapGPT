@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     analysis_time_budget_seconds: float = 180
 
     seoul_open_api_key: SecretStr | None = None
+    # 자동 후보(등록 파일 없이 포털 정보로 등록한 출처)는 위치가 대상 지역 안에 있는 행이 이 비율 이상일 때만 쓴다.
+    auto_source_min_located_ratio: float = 0.9
     raw_data_dir: Path = PROJECT_ROOT / "data" / "raw"
     sources_dir: Path = PROJECT_ROOT / "sources"  # 외부 출처 등록 파일 (*.yaml)
 

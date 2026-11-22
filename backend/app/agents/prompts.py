@@ -3,7 +3,7 @@
 import json
 from typing import Any
 
-from app.domain.catalog import DatasetMetadata, RegionRef
+from app.domain.catalog import AUTO_PUBLIC_API_CATEGORY, DatasetMetadata, RegionRef
 from app.domain.enums import SPATIAL_LEVEL_NAMES, SpatialLevel
 from app.domain.policies import POLICIES
 from app.domain.results import ValidationIssue
@@ -67,7 +67,7 @@ def interpret_prompt(
 
 
 def _dataset_summary(d: DatasetMetadata) -> dict[str, Any]:
-    return {
+    summary = {
         "dataset_id": d.dataset_id,
         "title": d.title,
         "description": d.description,
@@ -77,6 +77,9 @@ def _dataset_summary(d: DatasetMetadata) -> dict[str, Any]:
         "temporal": d.temporal.model_dump(mode="json"),
         "columns": {c.name: c.description for c in d.columns},
     }
+    if d.category == AUTO_PUBLIC_API_CATEGORY:
+        summary["reviewed"] = False  # 선택 규칙 5
+    return summary
 
 
 def select_prompt(interpreted: dict[str, Any], candidates: list[DatasetMetadata]) -> tuple[str, str]:
@@ -88,7 +91,8 @@ def select_prompt(interpreted: dict[str, Any], candidates: list[DatasetMetadata]
    - 후보의 컬럼이나 필터로 만들 수 있으면 그 Dataset이 주는 데이터다 (예: 0~5세 인구 → 연령별 인구 Dataset).
    - 어느 후보로도 만들 수 없을 때만 dataset_id를 null로 둔다. 비슷해 보이는 다른 Dataset으로 대신하지 않는다.
 3. datasets에는 분석 단위 경계와 required_data의 Dataset을 빠짐없이 넣고, 필요 없는 Dataset은 넣지 않는다.
-4. rationale에 각 Dataset을 고른 이유를 짧게 쓴다."""
+4. rationale에 각 Dataset을 고른 이유를 짧게 쓴다.
+5. reviewed가 false인 후보는 포털 정보로 자동 등록되어 사람이 검토하지 않은 데이터다. reviewed가 없는 후보로 같은 데이터를 만들 수 있으면 그 후보를 쓴다."""
     user = f"[해석된 질문]\n{_json(interpreted)}\n\n[후보 Dataset]\n{_json([_dataset_summary(d) for d in candidates])}"
     return system, user
 

@@ -242,7 +242,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def read_suggestions(pool: Pool, scope: AnalysisScope = AnalysisScope.SEOUL) -> list[str]:
         """화면 빈 상태의 예시 질문. 필요한 Dataset이 모두 등록된 질문만 돌려준다."""
         with pool.connection() as conn:
-            registered = {d.dataset_id for d in list_datasets(conn)}
+            registered = {d.dataset_id for d in list_datasets(conn, include_auto=False)}
         return suggested_questions(scope, registered)
 
     @app.get("/api/health")

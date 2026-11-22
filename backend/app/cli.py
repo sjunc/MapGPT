@@ -13,9 +13,11 @@ from psycopg_pool import ConnectionPool
 from app.catalog.catalog import sync_catalog_embeddings
 from app.config import Settings, get_settings
 from app.data_sources import ingest
-from app.data_sources.acquisition import AcquisitionError, DataAcquirer, register_sources
+from app.data_sources.acquisition import AcquisitionError, DataAcquirer, promote_source, register_sources
 from app.data_sources.auto_csv import AutoCsvError, discover_csv_groups, ingest_discovered_csvs
 from app.data_sources.adapters import admdongkor, mois_population, seoul_childcare
+from app.data_sources.seoul_catalog import COLUMNS_SERVICE, LIST_SERVICE, sync_seoul_catalog
+from app.data_sources.seoul_openapi import SeoulApiError, fetch_service
 from app.data_sources.sources import SourceError, load_sources
 from app.db import connect, init_schema
 from app.domain.catalog import DatasetMetadata
@@ -78,7 +80,8 @@ def _print_run(state: AgentState) -> None:
 def _sync_embeddings(conn: psycopg.Connection, settings: Settings, refresh: bool) -> None:
     embedder = create_embedder(settings)
     updated = sync_catalog_embeddings(conn, embedder, refresh)
-    print(f"카탈로그 임베딩({embedder.model}) 갱신: {', '.join(updated) if updated else '변경 없음'}")
+    listed = ", ".join(updated[:10]) + (f" 외 {len(updated) - 10}개" if len(updated) > 10 else "")
+    print(f"카탈로그 임베딩({embedder.model}) 갱신: {listed or '변경 없음'}")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -92,8 +95,16 @@ def main(argv: list[str] | None = None) -> None:
     commands.add_parser("inspect-files", help="data/raw CSV를 표본 검사하고 동일 스키마 파일을 그룹화")
     commands.add_parser("ingest-files", help="data/raw의 대용량 CSV를 자동 발견해 PostGIS와 카탈로그에 적재")
     commands.add_parser("register-sources", help="출처 등록 파일(sources/*.yaml)을 카탈로그에 '받기 전' 항목으로 등록")
-    fetch_parser = commands.add_parser("fetch-source", help="등록 출처를 지금 새로 받아 적재 (행 수 한도 없음)")
+    fetch_parser = commands.add_parser(
+        "fetch-source", help="등록 출처·자동 후보를 지금 새로 받아 적재 (행 수 한도 없음)"
+    )
     fetch_parser.add_argument("source_id")
+    sync_parser = commands.add_parser(
+        "sync-seoul-catalog", help="서울 열린데이터광장 OpenAPI 목록으로 자동 후보(사람 검토 전)를 카탈로그와 맞춤"
+    )
+    sync_parser.add_argument("--refresh", action="store_true", help="저장해 둔 서비스별 입출력 인자를 다시 받음")
+    promote_parser = commands.add_parser("promote-source", help="자동 후보를 등록 파일(sources/<id>.yaml)로 내보냄")
+    promote_parser.add_argument("dataset_id")
     embed_parser = commands.add_parser("embed-catalog", help="Dataset 검색용 카탈로그 임베딩 갱신 (pgvector)")
     embed_parser.add_argument("--refresh", action="store_true", help="변경 여부와 관계없이 모두 다시 임베딩")
     analyze_parser = commands.add_parser("analyze", help="자연어 질문을 분석 워크플로로 실행")
@@ -156,6 +167,40 @@ def main(argv: list[str] | None = None) -> None:
                 _sync_embeddings(conn, settings, args.refresh)
             except EmbeddingError as error:
                 raise SystemExit(str(error)) from error
+        elif args.command == "sync-seoul-catalog":
+            if settings.seoul_open_api_key is None:
+                raise SystemExit("SEOUL_OPEN_API_KEY가 설정되지 않았습니다 (.env)")
+            key = settings.seoul_open_api_key.get_secret_value()
+            try:
+                report = sync_seoul_catalog(
+                    conn,
+                    fetch_list=lambda: fetch_service(key, LIST_SERVICE),
+                    fetch_columns=lambda inf_id: fetch_service(key, COLUMNS_SERVICE, params=(inf_id,)),
+                    sources_dir=settings.sources_dir,
+                    cache_dir=raw / "sources" / "seoul_catalog",
+                    refresh=args.refresh,
+                    pause=0.05,
+                    log=print,
+                )
+            except (SeoulApiError, OSError, SourceError, AcquisitionError) as error:
+                raise SystemExit(str(error)) from error
+            conn.commit()
+            print(f"OpenAPI {report.services:,}개 중 자동 후보 {len(report.candidates):,}개")
+            print(f"  새로 올리거나 바뀐 후보 {len(report.registered):,}개, 지운 후보 {len(report.removed):,}개")
+            for reason, count in report.skipped.most_common():
+                print(f"  제외 {count:,}개: {reason}")
+            try:
+                _sync_embeddings(conn, settings, refresh=False)
+            except EmbeddingError as error:
+                print(f"카탈로그 임베딩을 갱신하지 못했습니다: {error}")
+                print("  자동 후보는 임베딩이 생길 때까지 검색에 걸리지 않습니다. python -m app.cli embed-catalog")
+        elif args.command == "promote-source":
+            try:
+                path = promote_source(conn, args.dataset_id, settings.sources_dir)
+            except SourceError as error:
+                raise SystemExit(str(error)) from error
+            print(f"등록 파일을 만들었습니다: {path}")
+            print("  내용을 원본 화면과 대조해 고친 뒤 커밋하고 python -m app.cli register-sources 를 실행하세요")
         elif args.command == "register-sources":
             try:
                 registered = register_sources(conn, load_sources(settings.sources_dir))

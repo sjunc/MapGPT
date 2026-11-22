@@ -5,15 +5,17 @@ from datetime import date
 import pytest
 
 from app.catalog.catalog import sync_catalog_embeddings
-from app.data_sources.acquisition import AcquisitionError, DataAcquirer, register_sources
+from app.data_sources.acquisition import AcquisitionError, DataAcquirer, promote_source, register_sources
 from app.data_sources.ingest import ingest_boundary
 from app.data_sources.seoul_openapi import SeoulApiError
-from app.data_sources.sources import SourceDeclaration
-from app.domain.catalog import AUTO_DISCOVERED_CATEGORY
+from app.data_sources.seoul_portal import PortalPage
+from app.data_sources.sources import SourceDeclaration, SourceError, load_sources
+from app.domain.catalog import AUTO_DISCOVERED_CATEGORY, AUTO_PUBLIC_API_CATEGORY
+from app.domain.policies import AUTO_SOURCE_LIMITATIONS
 from app.domain.enums import RunStatus, SemanticType, WorkflowStep
 from app.domain.plan import AnalysisPlan
-from app.domain.state import DatasetSelection
-from app.repositories.catalog_repository import list_datasets
+from app.domain.state import DatasetSelection, RequiredData
+from app.repositories.catalog_repository import find_dataset, list_datasets
 from app.workflows.analysis_workflow import AnalysisWorkflow
 from tests.fakes import FakeEmbedder, daycare_llm, interpreted
 from tests.support import FIXTURES
@@ -121,18 +123,18 @@ def test_acquire_failures_explain_how_to_prefetch(pool, conn, boundary, tmp_path
         _acquirer(pool, tmp_path, fetch).acquire("test_points")
 
 
-def _count_plan() -> AnalysisPlan:
+def _count_plan(dataset_id: str = "test_points") -> AnalysisPlan:
     return AnalysisPlan.model_validate(
         {
             "intent": "regional_summary",
             "region": {"name": "서울특별시", "level": "sido"},
             "analysis_unit": "sigungu",
-            "datasets": ["test_points", "sigungu_boundary"],
+            "datasets": [dataset_id, "sigungu_boundary"],
             "filters": [],
             "operations": [
                 {
                     "type": "aggregate_by_area",
-                    "input": "test_points",
+                    "input": dataset_id,
                     "boundary": "sigungu_boundary",
                     "aggregation": "count",
                     "output": "facility_count",
@@ -156,7 +158,7 @@ def _registered(conn) -> None:
     sync_catalog_embeddings(conn, FakeEmbedder())
 
 
-def _count_llm():
+def _count_llm(dataset_id: str = "test_points", selection: DatasetSelection | None = None):
     return daycare_llm(
         interpreted=[
             interpreted(
@@ -168,8 +170,11 @@ def _count_llm():
                 assumptions=[],
             )
         ],
-        selection=[DatasetSelection(datasets=["test_points", "sigungu_boundary"], rationale="시설 위치와 자치구 경계")],
-        plans=[_count_plan()],
+        selection=[
+            selection
+            or DatasetSelection(datasets=[dataset_id, "sigungu_boundary"], rationale="시설 위치와 자치구 경계")
+        ],
+        plans=[_count_plan(dataset_id)],
     )
 
 
@@ -200,3 +205,209 @@ def test_pending_source_without_an_acquirer_stops_with_a_clear_error(pool, conn,
     state = AnalysisWorkflow(_count_llm(), pool, FakeEmbedder()).run("서울 자치구별 시험 시설 수")
 
     assert (state.errors[0].step, state.errors[0].code) == (WorkflowStep.ACQUIRE_DATA, "DATA_ACQUISITION_UNAVAILABLE")
+
+
+# ── 자동 후보 (등록 파일 없이 포털 정보로 만든 등록 내용, 사람 검토 전) ─────────────────────────────
+
+AUTO = SourceDeclaration.model_validate(
+    {**SOURCE.model_dump(mode="json"), "source_id": "auto_points", "license": None, "crs": None, "reviewed": False}
+)
+PAGE = PortalPage(
+    description="시험 시설 위치입니다. ※ 좌표계 : WGS84",
+    keywords=["시설"],
+    license="공공누리 제1유형",
+    update_cycle="매일",
+)
+INSIDE = ROWS[:4]  # 모두 서울(가가구·나나구) 안
+
+
+def _auto_acquirer(pool, tmp_path, fetch=None, page=PAGE) -> DataAcquirer:
+    # 등록 파일이 없다: 자동 후보의 등록 내용은 카탈로그에서 읽는다.
+    return DataAcquirer(
+        pool, {}, fetch or FakeFetch(INSIDE), tmp_path / "raw", FakeEmbedder(), read_page=lambda url: page
+    )
+
+
+def _register(conn, *declarations) -> None:
+    register_sources(conn, {declaration.source_id: declaration for declaration in declarations})
+    conn.commit()
+
+
+def _plane(**overrides) -> SourceDeclaration:
+    """미터 좌표(X·Y)와 영업상태가 있는 인허가형 자동 후보."""
+    data = {
+        **AUTO.model_dump(mode="json"),
+        "source_id": "auto_licenses",
+        "columns": [
+            {"source": "BPLCNM", "name": "사업장명", "semantic": "facility_name", "description": "사업장명"},
+            {"source": "TRDSTATENM", "name": "영업상태명", "semantic": "category", "description": "영업상태명"},
+            {"source": "Y", "name": "좌표정보Y", "semantic": "latitude", "description": "좌표정보(Y)"},
+            {"source": "X", "name": "좌표정보X", "semantic": "longitude", "description": "좌표정보(X)"},
+        ],
+        "crs": "EPSG:5174",
+        "keep_rows": {"column": "TRDSTATENM", "values": ["영업/정상"]},
+    }
+    return SourceDeclaration.model_validate({**data, **overrides})
+
+
+def _tm_rows(conn) -> list[dict]:
+    """가가구 가동 안의 두 곳(영업 중)과 한 곳(폐업)을 EPSG:5174 미터 좌표로, 원본처럼 뒤에 공백을 붙여 만든다."""
+    rows = []
+    places = (("가", "영업/정상", 126.95, 37.55), ("나", "영업/정상", 126.96, 37.56), ("다", "폐업", 126.97, 37.57))
+    for name, state, lon, lat in places:
+        x, y = conn.execute(
+            "SELECT ST_X(p), ST_Y(p) FROM ST_Transform(ST_SetSRID(ST_MakePoint(%s, %s), 4326), 5174) p", (lon, lat)
+        ).fetchone()
+        rows.append({"BPLCNM": name, "TRDSTATENM": state, "X": f"{x}     ", "Y": f"{y}    "})
+    return rows
+
+
+def test_auto_candidate_keeps_its_declaration_in_the_catalog(conn, boundary):
+    _register(conn, AUTO)
+
+    entry = find_dataset(conn, "auto_points")
+
+    assert entry.category == AUTO_PUBLIC_API_CATEGORY and entry.acquisition.fetched_at is None
+    assert entry.acquisition.declaration["reviewed"] is False
+    assert "아직 받지 않은 자동 후보" in entry.quality_notes[0]
+
+
+def test_auto_candidate_is_acquired_from_its_catalog_declaration(pool, conn, boundary, tmp_path):
+    _register(conn, AUTO)
+
+    metadata, record = _auto_acquirer(pool, tmp_path).acquire("auto_points")
+
+    assert (record.rows, record.located) == (4, 4)
+    assert metadata.category == AUTO_PUBLIC_API_CATEGORY
+    # 자동 수집 안내는 응답의 한계 문구 하나로 두고 품질 노트에는 되풀이하지 않는다.
+    assert metadata.quality_notes[0] == f"서울 열린데이터광장 OpenAPI(TestPoints)에서 {date.today()} 수집, 4행"
+    assert "좌표계: 받은 값으로 판정한 위경도(EPSG:4326)" in metadata.quality_notes
+    # 상세 화면에서 읽은 이용 조건·갱신주기·설명·키워드를 남긴다. 등록 내용(지문)은 그대로다.
+    assert (metadata.license, metadata.temporal.update_cycle) == ("공공누리 제1유형", "매일")
+    assert "포털 설명: 시험 시설 위치입니다" in metadata.description and "시설" in metadata.semantic_tags
+    assert metadata.acquisition.fingerprint == AUTO.fingerprint and metadata.acquisition.declaration is not None
+
+
+def test_auto_candidate_with_too_few_rows_inside_the_region_is_refused(pool, conn, boundary, tmp_path):
+    _register(conn, AUTO)
+
+    with pytest.raises(AcquisitionError, match=r"4/6행\(67%\)뿐이라 쓰지 않습니다 \(자동 후보 기준 90%\)"):
+        _auto_acquirer(pool, tmp_path, FakeFetch(ROWS)).acquire("auto_points")
+    # 등록 파일로 검토한 출처는 같은 데이터도 그대로 쓴다 (사람이 확인했으므로).
+    assert _acquirer(pool, tmp_path).acquire("test_points")[1].located == 4
+
+
+def test_plane_coordinates_use_the_family_crs_and_keep_only_open_businesses(pool, conn, boundary, tmp_path):
+    _register(conn, _plane())
+
+    metadata, record = _auto_acquirer(pool, tmp_path, FakeFetch(_tm_rows(conn))).acquire("auto_licenses")
+
+    assert (record.rows, record.located) == (2, 2)  # 폐업 1곳은 적재하지 않는다
+    assert "'TRDSTATENM'이 영업/정상인 행만 적재 (1행 제외)" in metadata.quality_notes
+    assert "좌표계: EPSG:5174 (계열 규칙)" in metadata.quality_notes
+    assert metadata.spatial.bbox == pytest.approx([126.95, 37.55, 126.96, 37.56], abs=1e-6)
+    assert conn.execute("SELECT count(*) FROM datasets.auto_licenses WHERE 영업상태명 = '폐업'").fetchone() == (0,)
+
+
+def test_plane_coordinates_need_a_known_crs(pool, conn, boundary, tmp_path):
+    _register(conn, _plane(source_id="auto_open_crs", crs=None))
+    rows = _tm_rows(conn)
+
+    with pytest.raises(AcquisitionError, match="미터 단위인데 좌표계를 확인할 수 없어"):
+        _auto_acquirer(pool, tmp_path, FakeFetch(rows), page=None).acquire("auto_open_crs")
+    noted = PortalPage(description="* 좌표안내 : 중부원점TM(EPSG:5174)", keywords=[], license=None, update_cycle=None)
+    metadata, _ = _auto_acquirer(pool, tmp_path, FakeFetch(rows), page=noted).acquire("auto_open_crs")
+    assert "좌표계: EPSG:5174 (상세 화면 안내)" in metadata.quality_notes
+
+
+def test_family_crs_must_match_the_values(pool, conn, boundary, tmp_path):
+    wgs84_rows = [{"BPLCNM": "가", "TRDSTATENM": "영업/정상", "X": "126.95", "Y": "37.55"}] * 3
+    _register(conn, _plane())
+
+    with pytest.raises(AcquisitionError, match="계열 규칙의 좌표계는 EPSG:5174인데 받은 좌표는 위경도"):
+        _auto_acquirer(pool, tmp_path, FakeFetch(wgs84_rows)).acquire("auto_licenses")
+
+
+def test_swapped_latitude_and_longitude_are_fixed_for_auto_candidates(pool, conn, boundary, tmp_path):
+    _register(conn, AUTO)
+    swapped = [{**row, "LAT": row["LNT"], "LNT": row["LAT"]} for row in INSIDE]
+
+    metadata, record = _auto_acquirer(pool, tmp_path, FakeFetch(swapped)).acquire("auto_points")
+
+    assert record.located == 4
+    assert any("뒤바뀌어 바꿔 적용" in note for note in metadata.quality_notes)
+    assert metadata.column("위도").semantic_type == SemanticType.LONGITUDE  # 'LAT' 자리에 경도가 왔다
+    assert metadata.acquisition.fingerprint == AUTO.fingerprint  # 등록 내용은 바꾸지 않는다
+
+
+def test_promote_source_writes_a_reviewed_registration_file(pool, conn, boundary, tmp_path):
+    _register(conn, AUTO)
+    _auto_acquirer(pool, tmp_path).acquire("auto_points")
+
+    path = promote_source(conn, "auto_points", tmp_path / "sources")
+
+    promoted = load_sources(tmp_path / "sources")["auto_points"]
+    assert promoted.reviewed is True and promoted.crs is None  # 좌표계는 사람이 확인해 적는다
+    assert (promoted.license, promoted.update_cycle) == ("공공누리 제1유형", "매일")
+    assert path.read_text(encoding="utf-8").startswith("# 시험 시설 위치: 자동 후보에서 내보낸 등록 파일")
+    with pytest.raises(SourceError, match="이미 있습니다"):
+        promote_source(conn, "auto_points", tmp_path / "sources")
+    with pytest.raises(SourceError, match="자동 후보가 아닙니다"):
+        promote_source(conn, "test_points", tmp_path / "sources")
+
+
+def test_auto_candidate_is_acquired_before_planning_and_marked_in_the_response(pool, conn, boundary, tmp_path):
+    _register(conn, AUTO)
+    sync_catalog_embeddings(conn, FakeEmbedder())
+    conn.commit()
+    workflow = AnalysisWorkflow(
+        _count_llm("auto_points"), pool, FakeEmbedder(), acquirer=_auto_acquirer(pool, tmp_path)
+    )
+
+    state = workflow.run("서울 자치구별 시험 시설 수")
+
+    assert state.status == RunStatus.SUCCEEDED, state.errors
+    usage = {item.dataset_id: item for item in state.final_response.datasets}
+    assert usage["auto_points"].reviewed is False and usage["sigungu_boundary"].reviewed is True
+    assert usage["auto_points"].license == "공공누리 제1유형"
+    assert AUTO_SOURCE_LIMITATIONS[0] in state.final_response.limitations
+
+
+def test_auto_candidate_failing_the_checks_is_answered_as_no_data(pool, conn, boundary, tmp_path):
+    _register(conn, AUTO)
+    sync_catalog_embeddings(conn, FakeEmbedder())
+    conn.commit()
+    acquirer = _auto_acquirer(pool, tmp_path, FakeFetch(ROWS))  # 6행 중 4행만 서울 안: 기준 90% 미달
+
+    state = AnalysisWorkflow(_count_llm("auto_points"), pool, FakeEmbedder(), acquirer=acquirer).run(
+        "서울 자치구별 시험 시설 수"
+    )
+
+    [error] = state.errors
+    assert (error.step, error.code) == (WorkflowStep.ACQUIRE_DATA, "DATA_NOT_AVAILABLE")
+    assert error.message.startswith("'시험 시설 위치' 데이터로 고른 자동 수집 후보를 쓸 수 없어 분석할 수 없습니다")
+    assert "자동 후보 기준 90%" in error.message
+
+
+def test_auto_candidate_whose_name_shares_no_word_with_the_data_is_not_used(pool, conn, boundary, tmp_path):
+    _register(conn, AUTO)
+    sync_catalog_embeddings(conn, FakeEmbedder())
+    conn.commit()
+    fetch = FakeFetch(INSIDE)
+    substituted = DatasetSelection(
+        required_data=[RequiredData(concept="평균 소득", dataset_id="auto_points")],
+        datasets=["auto_points", "sigungu_boundary"],
+        rationale="소득 대신 시설 위치",
+    )
+    llm = _count_llm("auto_points", selection=substituted)
+
+    state = AnalysisWorkflow(llm, pool, FakeEmbedder(), acquirer=_auto_acquirer(pool, tmp_path, fetch)).run(
+        "서울 자치구별 평균 소득"
+    )
+
+    [error] = state.errors
+    assert (error.step, error.code) == (WorkflowStep.SELECT_DATASETS, "DATA_NOT_AVAILABLE")
+    assert error.message.startswith(
+        "'평균 소득' 데이터가 없어 분석할 수 없습니다 (자동 수집 후보 '시험 시설 위치'는 이름이 맞지 않아 쓰지 않음)"
+    )
+    assert fetch.calls == 0  # 받기 전에 멈춘다

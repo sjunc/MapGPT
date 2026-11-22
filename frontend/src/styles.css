@@ -82,6 +82,10 @@ details.card summary { font-weight: 600; font-size: 15px; cursor: pointer; }
 .metric { margin-top: 8px !important; }
 .datasets { list-style: none; padding: 0 !important; }
 .source { word-break: break-all; }
+.badge-auto {
+  display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid currentColor; border-radius: 4px;
+  color: var(--critical); font-size: 11px; font-weight: 600; line-height: 18px; vertical-align: 1px;
+}
 .provenance { font-size: 12px; padding: 0 4px; }
 
 .progress { display: flex; gap: 12px; align-items: center; }

@@ -9,6 +9,7 @@ interpret_query → select_datasets → build_analysis_plan ⇄ validate_plan (�
 """
 
 import logging
+import re
 import threading
 import time
 import uuid
@@ -25,8 +26,8 @@ from psycopg_pool import ConnectionPool
 
 from app.agents import steps
 from app.catalog.catalog import CatalogIndexError, DatasetCatalog
-from app.data_sources.acquisition import AcquisitionError, DataAcquirer
-from app.domain.catalog import DatasetMetadata, RegionRef
+from app.data_sources.acquisition import AcquisitionError, AutoSourceRejected, DataAcquirer
+from app.domain.catalog import AUTO_PUBLIC_API_CATEGORY, DatasetMetadata, RegionRef
 from app.domain.enums import (
     ANALYSIS_SCOPE_NAMES,
     SPATIAL_LEVEL_NAMES,
@@ -58,6 +59,7 @@ from app.domain.state import (
     AgentState,
     DatasetHit,
     DatasetSearch,
+    DatasetSelection,
     InterpretedQuery,
     PlanAttempt,
     StepTiming,
@@ -232,7 +234,7 @@ def _stop_reason(
 
 
 def _interpret_query(state: AgentState, ctx: _RunContext, update: Update) -> None:
-    datasets = ctx.catalog.list_all()
+    datasets = ctx.catalog.list_all(include_auto=False)  # 자동 후보는 경계가 아니고 범위도 서울로 같다
     registered = ctx.catalog.list_regions()
     # 해석에는 분석 범위 안의 지역만 보여 준다. 서울 범위면 서울과 그 안의 구만 남아 프롬프트가 짧아지고 '중구'도 하나로 정해진다.
     regions = [region for region in registered if in_scope(region, state.scope)]
@@ -335,11 +337,15 @@ def _select_datasets(state: AgentState, ctx: _RunContext, update: Update) -> Non
     candidate_ids = {d.dataset_id for d in candidates}
     # 출처가 없거나 후보에 없는 ID(지어낸 ID)인 데이터는 이 후보들로 만들 수 없다.
     missing = [need.concept for need in selection.required_data if need.dataset_id not in candidate_ids]
+    # 사람이 검토하지 않은 자동 후보는 이름이 질문의 데이터와 한 낱말도 겹치지 않으면 다른 데이터로 대신한 것으로 본다.
+    ungrounded = _ungrounded_auto(selection, {d.dataset_id: d for d in candidates}, interpreted.key_concepts)
+    missing += [concept for concept, _ in ungrounded]
     if missing:
         concepts = ", ".join(f"'{concept}'" for concept in dict.fromkeys(missing))
+        refused = "".join(f" (자동 수집 후보 '{title}'는 이름이 맞지 않아 쓰지 않음)" for _, title in ungrounded)
         raise WorkflowFailure(
             "DATA_NOT_AVAILABLE",
-            f"{concepts} 데이터가 없어 분석할 수 없습니다. 분석할 수 있는 관련 데이터: {_available_data(candidates)}",
+            f"{concepts} 데이터가 없어 분석할 수 없습니다{refused}. 분석할 수 있는 관련 데이터: {_available_data(candidates)}",
         )
     unknown = [d for d in selection.datasets if d not in candidate_ids]
     if unknown or not selection.datasets:
@@ -370,6 +376,67 @@ def _select_datasets(state: AgentState, ctx: _RunContext, update: Update) -> Non
     update["selected_datasets"] = selected
 
 
+# 자동 후보 이름 대조에서 빼는 낱말: 지역·흔한 말과, 데이터의 대상이 아닌 통계 낱말(예: '평균 소득'이 '평균기온'과
+# '평균'만 겹쳐 통과하지 않게).
+_GROUNDING_STOPWORDS = frozenset(
+    {
+        "서울",
+        "서울시",
+        "서울특별시",
+        "정보",
+        "현황",
+        "데이터",
+        "위치",
+        "목록",
+        "조회",
+        "서비스",
+        "자치구별",
+        "행정동별",
+        "구별",
+        "동별",
+        "평균",
+        "합계",
+        "총합",
+        "비율",
+        "비중",
+        "대비",
+        "개수",
+        "건수",
+        "분포",
+        "밀도",
+        "최대",
+        "최소",
+        "증감",
+        "추이",
+    }
+)
+
+
+def _ungrounded_auto(
+    selection: DatasetSelection, candidates: dict[str, DatasetMetadata], key_concepts: list[str]
+) -> list[tuple[str, str]]:
+    """고른 자동 후보 중 그 후보로 만들 데이터 이름(required_data, 없으면 핵심 개념)과 낱말이 하나도 겹치지 않는 것.
+
+    (데이터 이름, 후보 제목) 목록. 낱말은 두 글자 이상이고, 후보 제목이나 태그에 들어 있으면 겹친다고 본다.
+    """
+    ungrounded = []
+    for dataset_id in dict.fromkeys(selection.datasets):
+        dataset = candidates.get(dataset_id)
+        if dataset is None or dataset.category != AUTO_PUBLIC_API_CATEGORY:
+            continue
+        concepts = [need.concept for need in selection.required_data if need.dataset_id == dataset_id] or key_concepts
+        names = " ".join([dataset.title, *dataset.semantic_tags])
+        words = {
+            word
+            for concept in concepts
+            for word in re.findall(r"[가-힣A-Za-z0-9]{2,}", concept)
+            if word not in _GROUNDING_STOPWORDS
+        }
+        if not any(word in names for word in words):
+            ungrounded.append((concepts[0] if concepts else dataset.title, dataset.title))
+    return ungrounded
+
+
 def _available_data(candidates: list[DatasetMetadata]) -> str:
     """데이터가 없다고 안내할 때 함께 보여줄 검색 후보 (분석 단위 경계는 뺀다)."""
     return ", ".join(_dataset_label(d) for d in candidates if not d.is_polygon) or "없음"
@@ -397,6 +464,14 @@ def _acquire_data(state: AgentState, ctx: _RunContext, update: Update) -> None:
     for dataset_id in due:
         try:
             metadata, record = ctx.acquirer.acquire(dataset_id)
+        except AutoSourceRejected as error:
+            # 자동 후보가 코드 검사(좌표 모양·좌표계·지역 안 비율)를 통과하지 못하면 쓸 수 있는 데이터가 없다는 답이다.
+            need = next((n for n in state.dataset_selection.required_data if n.dataset_id == dataset_id), None)
+            concept = need.concept if need else candidates[dataset_id].title
+            raise WorkflowFailure(
+                "DATA_NOT_AVAILABLE",
+                f"'{concept}' 데이터로 고른 자동 수집 후보를 쓸 수 없어 분석할 수 없습니다: {error}",
+            ) from error
         except AcquisitionError as error:
             raise WorkflowFailure("DATA_ACQUISITION_FAILED", str(error)) from error
         candidates[dataset_id] = metadata
