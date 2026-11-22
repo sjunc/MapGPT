@@ -1,12 +1,4 @@
 /* P5: 클릭으로 선택한 지역은 hover와 별개로 유지한다. */
-.p5-selected-row td {
-  background: var(--hover-row);
-}
-
-.ranking tbody tr {
-  cursor: pointer;
-}
-
 .p5-region-button {
   background: none;
   border: 0;

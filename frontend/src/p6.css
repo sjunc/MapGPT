@@ -159,27 +159,16 @@
     display: none;
   }
 
-  /* 표 자체만 가로 스크롤하고 결과 패널 전체 폭은 유지한다. */
-  .analysis-result .table-wrap {
-    max-width: 100%;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .analysis-result .ranking {
-    min-width: 490px;
-  }
-
-  .analysis-result .ranking th,
-  .analysis-result .ranking td {
-    padding: 10px 8px;
+  /* 순위 막대 행은 손가락으로 누르기 쉬운 높이로 */
+  .analysis-result .rank-row {
+    min-height: 40px;
   }
 
   .analysis-result .p5-region-button {
     min-height: 36px;
   }
 
-  .analysis-result .table-scroll {
+  .analysis-result .rank-bars-all {
     max-height: min(44dvh, 390px);
   }
 

@@ -91,16 +91,6 @@ details.card summary { font-weight: 600; font-size: 15px; cursor: pointer; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.table-wrap { overflow-x: auto; }
-.table-scroll { max-height: 420px; overflow-y: auto; }
-table.ranking { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-.ranking th, .ranking td { padding: 5px 6px; border-bottom: 1px solid var(--gridline); text-align: left; }
-.ranking th { color: var(--text-secondary); font-weight: 500; vertical-align: bottom; position: sticky; top: 0; background: var(--surface-1); }
-.ranking .num { text-align: right; font-variant-numeric: tabular-nums; }
-.ranking td.num, .ranking td.place { white-space: nowrap; }
-.ranking .strong { font-weight: 600; }
-.ranking tr.hovered td { background: var(--hover-row); }
-
 .legend {
   position: absolute; left: 12px; bottom: 28px; padding: 10px 12px; font-size: 12px;
   background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; color: var(--text-primary);
