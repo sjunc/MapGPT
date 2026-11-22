@@ -334,16 +334,10 @@ details.card summary { font-weight: 600; font-size: 15px; cursor: pointer; }
   box-shadow: 0 8px 35px rgba(0, 0, 0, 0.18);
 }
 
-.prompt-icon {
-  padding-left: 12px;
-  font-size: 21px;
-  color: var(--accent);
-}
-
 .prompt-shell input {
   flex: 1;
   min-width: 0;
-  padding: 12px 4px;
+  padding: 12px 4px 12px 14px;
   border: 0;
   outline: 0;
   background: transparent;

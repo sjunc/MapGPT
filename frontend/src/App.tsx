@@ -710,7 +710,6 @@ export function App() {
 
       <form className="prompt-dock" onSubmit={submit} aria-label="공간 분석 질문 입력">
         <div className="prompt-shell">
-          <span className="prompt-icon" aria-hidden="true">✦</span>
             <input
               aria-label="공간 분석 질문"
               value={question}
