@@ -104,7 +104,7 @@ state = AnalysisWorkflow(llm, pool, embedder).run(question)  # -> AgentState
 | [app/db/schema.sql](../app/db/schema.sql), [app/db/\_\_init\_\_.py](../app/db/__init__.py) | DDL과 적용 함수 |
 | [app/repositories/run_repository.py](../app/repositories/run_repository.py) | 실행 기록 저장·조회 |
 | [app/workflows/analysis_workflow.py](../app/workflows/analysis_workflow.py) | LangGraph 그래프와 실행기 |
-| [app/cli.py](../app/cli.py) | 운영 CLI (`init-db`, `download`, `ingest`, `embed-catalog`, `analyze`) |
+| [app/cli.py](../app/cli.py) | 운영 CLI (`init-db`, `download`, `ingest`, `ingest-files`, `register-sources`, `fetch-source`, `sync-seoul-catalog`, `promote-source`, `embed-catalog`, `analyze`) |
 | [docker-compose.yml](../docker-compose.yml), [docker/postgres/Dockerfile](../docker/postgres/Dockerfile) | DB 컨테이너 (PostGIS 이미지에 pgvector 추가) |
 | [pyproject.toml](../pyproject.toml) | Python 의존성 (하한만 지정) |
 | [.env.example](../.env.example) | 설정 예시 |
@@ -144,7 +144,8 @@ pydantic-settings가 저장소 루트의 `.env`를 읽고, 같은 이름의 환�
 | `OPENAI_MODEL` | `gpt-6.1-sol` | OpenAI LLM 모델 |
 | `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | 검색 임베딩 모델 |
 | `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_REASONING_EFFORT` | `http://localhost:11434/v1`, 없음, 없음 | 로컬 LLM |
-| `SEOUL_OPEN_API_KEY` | 없음 | 어린이집 수집. 적재 CLI에서만 쓴다 |
+| `SEOUL_OPEN_API_KEY` | 없음 | 어린이집 수집, 등록 출처·자동 후보 받기(분석 중 API 서버도 쓴다), `sync-seoul-catalog` |
+| `AUTO_SOURCE_MIN_LOCATED_RATIO` | `0.9` | 자동 후보는 위치가 대상 지역 안에 있는 행이 이 비율 이상일 때만 쓴다 |
 | `RAW_DATA_DIR` | `data/raw` | 원본 파일 위치. 적재 CLI에서만 쓴다 |
 | `LLM_TIMEOUT_SECONDS`, `LLM_MAX_RETRIES` | `60`, `1` | LLM·임베딩 호출 하나의 타임아웃(초)과 SDK 재시도 횟수 |
 | `ANALYSIS_RATE_LIMIT` | `5/minute` | `POST /api/analyses`의 클라이언트 IP별 제한(slowapi 형식). 비우거나 `0`이면 끈다 |
@@ -374,6 +375,7 @@ GET  /api/analyses/{run_id}/events → 단계 이벤트 (SSE, 선택)
 
 - 지금 적재와 임베딩 동기화는 사람이 CLI로 실행한다. 데이터 담당이 갱신 주기와 도구를 정하면, 백엔드가 스케줄 실행 환경과 키 관리를 제공한다.
 - 메타데이터를 바꾼 뒤 `embed-catalog`를 하지 않으면 분석이 `CATALOG_INDEX_STALE`로 멈춘다. 그래서 임베딩 동기화를 적재 작업의 마지막 단계로 묶는다. 지금도 `ingest`가 끝에 자동으로 실행한다.
+- 자동 후보(2026-11-22): `sync-seoul-catalog`를 주기적으로(예: 주 1회) 돌려 서울 OpenAPI 목록과 맞춘다. 서비스별 입출력 인자는 `data/raw/sources/seoul_catalog/`에 남겨 다시 받지 않는다(`--refresh`면 새로 받음). 목록에서 사라진 후보는 카탈로그에서 지우되, 이미 받은 데이터 테이블은 남긴다. 입출력 인자를 받지 못한 서비스의 기존 후보는 지우지 않는다. 자동 후보는 임베딩이 빠져도 분석을 멈추지 않고 검색에서만 빠진다.
 
 ### 8.9 바로 개선할 수 있는 것
 

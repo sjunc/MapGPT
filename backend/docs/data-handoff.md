@@ -150,7 +150,8 @@ Dataset 테이블끼리는 외래키가 없다. 표 데이터는 경계와 같�
 | 어린이집 | 서울 열린데이터광장 OpenAPI `ChildCareInfo` (OA-20300) | 캐시가 없거나 `--refresh`일 때 API 호출 (1,000건씩 페이지) | `seoul_childcare_YYYYMMDD.json` (수집일별 캐시, 원본 62개 컬럼) | 행별 `DATASTDRDT`의 최댓값 | 공공누리 제4유형 (출처표시, 상업적 이용금지, 변경금지) |
 
 - `data/`는 용량과 라이선스 때문에 git에서 제외되어 있다.
-- 인증키는 `.env`에 둔다. `SEOUL_OPEN_API_KEY`는 어린이집 수집에, `OPENAI_API_KEY`는 검색 임베딩에 쓴다.
+- 인증키는 `.env`에 둔다. `SEOUL_OPEN_API_KEY`는 어린이집 수집과 등록 출처·자동 후보 받기에, `OPENAI_API_KEY`는 검색 임베딩에 쓴다.
+- 자동 후보(2026-11-22): 위 표 밖의 서울 OpenAPI도 `sync-seoul-catalog`가 목록·입출력 인자로 '받기 전·사람 검토 전' 후보로 올리고, 분석에 처음 쓰일 때 받는다(5.3 (7)·(8)).
 - 원본 위치는 `RAW_DATA_DIR`로 바꿀 수 있다 (기본값 `data/raw`).
 
 ### 3.2 적재 절차
@@ -400,9 +401,13 @@ metadata:                            # 포털 메타데이터로 채울 수 없�
 
 현재 구현(2026-11-14): 서울 OpenAPI 커넥터(`app/data_sources/seoul_openapi.py`, 1회 1,000건 페이지 처리)와 등록 출처 수집(`app/data_sources/acquisition.py`). 서울 일반 인증키 하나로 일반 OpenAPI를 모두 부를 수 있어(어린이집·공공와이파이·지하철역 서비스로 확인) 등록 파일만 추가하면 된다. 공공데이터포털 API는 API마다 활용신청이 필요해 다음 단계로 둔다.
 
+2026-11-22: 등록 파일 없이 목록(OA-2191 `SearchOpenAPIService`, 서비스 5,918개)과 서비스별 입출력 인자(OA-2192 `SearchOpenAPIIOValueService`)로 등록 내용을 만드는 `sync-seoul-catalog`(`app/data_sources/seoul_catalog.py`)를 더했다. 서울 전체 범위(자치구 이름·자치구 호스트 제외)이고 좌표 컬럼 한 쌍이 있는 서비스만 후보로 올린다. 서울 포털에는 데이터셋 설명을 모은 파일이 없어, 설명·이용 조건·좌표계 안내는 후보를 받을 때 그 상세 화면 하나만 읽는다(`app/data_sources/seoul_portal.py`, 공식 API가 아님). 공공데이터포털은 목록조회서비스(15077093)가 설명(desc)과 OpenAPI 응답 변수 이름을 목록째로 주므로, 전국으로 넓힐 때는 그쪽이 더 쉽다(서비스키 필요).
+
 #### (8) 신뢰 단계를 둔다
 
 Dataset은 후보 → 값 검사 → 매핑 초안 → 검토 → 신뢰 순서로 올라가고, Agent는 신뢰 단계의 Dataset만 본다. 처음 발견한 데이터를 검증 없이 분석에 쓰지 않는다는 개발 전달 문서 36번의 원칙과 같다.
+
+2026-11-22 현재: 자동 후보(`auto_public_api`)는 '값 검사'를 코드로 마친 뒤(좌표 모양, 좌표계, 지역 안 비율 90%) 분석에 쓰고, 결과에 '자동 수집·검토 전'으로 표시한다. 사람의 검토는 서비스마다가 아니라 같은 형식의 서비스 묶음(계열)마다 한 번 한다(`backend/sources/families/*.yaml`. 인허가 LOCALDATA는 좌표계 EPSG:5174, 영업 중인 사업장만). 자주 쓰이는 후보는 `promote-source`로 등록 파일을 만들어 검토·커밋하면 검토된 출처가 된다.
 
 #### (9) 도구
 

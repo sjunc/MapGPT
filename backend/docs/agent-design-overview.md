@@ -139,7 +139,7 @@ sequenceDiagram
     W->>DB: 카탈로그 조회 (지역·분석 가능 단위)
     W->>L: 질문 해석 → InterpretedQuery
     W->>E: 검색어 임베딩
-    W->>DB: pgvector 상위 10개 후보
+    W->>DB: pgvector 검토된 후보 10개 + 자동 후보 5개
     W->>L: Dataset 선택 → DatasetSelection
     W->>L: 분석 계획 → AnalysisPlan
     W->>W: Plan Validator (오류면 피드백 후 1회 재생성)
@@ -250,7 +250,7 @@ pgvector는 후보를 찾고, LLM은 최종 선택을 하고, Validator는 실�
 
 1. 검색어 = `restated_question` + `key_concepts`
 2. 카탈로그 임베딩이 최신인지 확인합니다. 임베딩이 없거나, 모델이 다르거나, 임베딩한 문서가 현재 메타데이터로 만든 문서와 다르면 `CATALOG_INDEX_STALE`로 멈춥니다. 임베딩이 빠진 Dataset이 후보에서 조용히 사라지는 것을 막기 위해서입니다.
-3. 검색어를 임베딩하고 pgvector 코사인 거리로 상위 10개를 고릅니다(`SEARCH_LIMIT = 10`). 지금은 등록된 Dataset이 10개 이하라 모두 후보가 되고, 유사도는 순서만 정합니다.
+3. 검색어를 임베딩하고 pgvector 코사인 거리로 검토된 Dataset 상위 10개(`SEARCH_LIMIT`)와 자동 후보 상위 5개(`AUTO_SEARCH_LIMIT`)를 따로 골라 이 순서로 합칩니다. 자동 후보가 수천 개여도 검토된 Dataset이 후보에서 밀려나지 않게 하기 위해서입니다. 검토된 Dataset은 지금 10개 이하라 모두 후보가 되고, 유사도는 순서만 정합니다. 선택 프롬프트는 자동 후보에 `reviewed: false`를 붙이고, 검토된 후보로 같은 데이터를 만들 수 있으면 그 후보를 쓰게 합니다(선택 규칙 5). 검토된 Dataset은 임베딩이 하나라도 오래되면 `CATALOG_INDEX_STALE`로 멈추지만, 자동 후보는 같은 임베딩 모델의 것만 찾고 빠져도 멈추지 않습니다.
 4. LLM에 후보 요약(제목, 설명, 분류, 태그, 공간·시간 정보, 컬럼 설명)을 주고 `DatasetSelection{required_data, datasets, rationale}`을 받습니다.
    - `required_data`에는 질문의 지표·조건에 필요한 데이터마다 그 데이터를 주는 후보 Dataset을 적게 합니다. 예: `{"concept": "0~5세 인구", "dataset_id": "population_by_age"}`
    - 컬럼·필터로 만들 수 있으면 그 Dataset이 주는 데이터로 봅니다. 어느 후보로도 만들 수 없을 때만 `dataset_id`를 null로 두고, 비슷해 보이는 Dataset으로 대신하지 않습니다.
@@ -275,6 +275,15 @@ pgvector는 후보를 찾고, LLM은 최종 선택을 하고, Validator는 실�
 DB에 없는 데이터라도 출처 등록 파일(`backend/sources/*.yaml`)로 미리 승인해 둔 서울 OpenAPI 출처라면 질문을 처리하면서 받아 씁니다(전달 문서 36번의 첫 단계).
 
 - 등록 출처는 `register-sources`로 카탈로그에 "받기 전" 항목으로 올라가 있어서 ② 검색 후보에 그대로 나옵니다. LLM 출력 형식은 같습니다.
+- **자동 후보 (2026-11-22):** 등록 파일이 없어도 `sync-seoul-catalog`가 서울 열린데이터광장의 목록(OA-2191)과 입출력 인자(OA-2192)로 만든 자동 후보(분류 `auto_public_api`, 사람 검토 전)도 같은 방식으로 받습니다. 등록 내용은 카탈로그의 `acquisition.declaration`에 있습니다. 사람 대신 코드가 확인합니다.
+  1. 좌표 모양을 받은 값으로 판정합니다(위경도, 위도·경도가 뒤바뀐 위경도, 미터 단위 평면좌표). 이름은 믿지 않습니다(공공와이파이 `LAT`의 한글 이름이 'Y좌표').
+  2. 미터 좌표의 좌표계는 계열 규칙(`backend/sources/families/*.yaml`)이나 상세 화면 설명의 좌표계 안내(예: '중부원점TM(EPSG:5174)')로 정합니다. 둘 다 없으면 쓰지 않습니다.
+  3. 계열 규칙의 `keep_rows`에 맞는 행만 적재합니다(인허가는 영업상태 '영업/정상'만. 서울 동물병원 2,246건 중 1,242건이 폐업).
+  4. 위치가 대상 지역 안에 있는 행이 90%(`AUTO_SOURCE_MIN_LOCATED_RATIO`) 미만이면 `DATA_ACQUISITION_FAILED`로 멈춥니다.
+  5. 받을 때 그 데이터의 상세 화면 하나를 읽어 설명·키워드·이용 조건·갱신주기를 메타데이터에 남깁니다(읽지 못해도 계속합니다).
+  6. 선택 단계에서, 고른 자동 후보의 제목·태그가 그 후보로 만들 데이터 이름(`required_data`, 없으면 핵심 개념)과 두 글자 이상 낱말을 하나도 나누지 않으면 다른 데이터로 대신한 것으로 보고 `DATA_NOT_AVAILABLE`로 멈춥니다. 지역·흔한 말과 데이터의 대상이 아닌 통계 낱말(평균·합계·비율·대비 등)은 대조에서 뺍니다('평균 소득'이 '평균기온'과 '평균'만 겹쳐 통과하지 않게). gpt-4o-mini가 '평균 소득'을 'TOE 환산량' 통계로 대신한 사례가 있었습니다.
+  7. 자동 후보가 1~4의 검사에서 떨어지면 수집 실패(`DATA_ACQUISITION_FAILED`)가 아니라 '쓸 수 있는 데이터가 없다'(`DATA_NOT_AVAILABLE`)로 답합니다. 받기 자체가 실패하면(API 오류 등) 그대로 `DATA_ACQUISITION_FAILED`입니다.
+  결과의 사용 데이터에는 `reviewed: false`가 붙고(화면 배지 '자동 수집·검토 전'), 한계에 자동 수집 문구가 붙습니다.
 - 선택한 Dataset 중 아직 받지 않았거나, 다시 받을 주기(`refresh_days`, 기본 30일)가 지났거나, 등록 파일이 바뀐 출처만 받습니다. 주기 안의 원본 사본(`data/raw/sources/`)이 있으면 API를 부르지 않습니다.
 - 받은 행에 등록 파일의 컬럼 매핑을 적용하고 자동 적재기로 검증·적재합니다(모든 행으로 타입 확정, 한국 범위 밖 좌표 제외, 대상 지역 경계 밖 좌표 제외). 컬럼 의미·제목·제공기관·라이선스는 추론하지 않고 등록 파일 값을 씁니다.
 - 질문 처리 중에는 `max_rows`(기본 10만 행) 이하만 받습니다. 더 크면 `DATA_ACQUISITION_FAILED`로 멈추고 `fetch-source`로 미리 받아 두라고 안내합니다.

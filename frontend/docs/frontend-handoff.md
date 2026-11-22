@@ -140,6 +140,7 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
    - React는 기본으로 이스케이프하고, 지도 툴팁(HTML 문자열)은 `escapeHtml`을 거친다.
    - 이 문자열을 `dangerouslySetInnerHTML`이나 HTML 조립에 그대로 넣지 않는다.
 4. **출처·라이선스 표시:** 사용 데이터 카드에 각 데이터의 라이선스를 보여준다.
+   - 포털 정보로 자동 등록한 출처(`datasets[].reviewed === false`)는 제목 옆에 '자동 수집·검토 전' 배지를 단다 (2026-11-22). 데모 데이터에는 이 필드가 없으므로 `false`일 때만 단다.
    - 어린이집 데이터는 **공공누리 제4유형(출처표시, 상업적 이용금지, 변경금지)**이라 출처 표시가 필요하다.
    - 지도 하단의 배경지도 표기(OpenMapTiles, OpenStreetMap)와 "경계: 통계청 SGIS"를 없애지 않는다.
 5. **색:**
@@ -316,7 +317,7 @@ Vite가 "500KB를 넘는 청크" 경고를 낸다.
 
 ### 5.4 오류 안내 (2026-11-22 반영)
 
-- `ErrorPanel`이 자주 나는 코드(`REGION_OUT_OF_SCOPE`, `REGION_NOT_SUPPORTED`, `UNIT_NOT_SUPPORTED`, `UNSUPPORTED_QUESTION`, `INCOMPLETE_INTERPRETATION`, `DATA_NOT_AVAILABLE`, `NO_MATCHING_DATA`, `PLAN_INVALID`, `LLM_FAILED`, 서버 문제 코드)에 사용자 안내 문장을 먼저 보이고, 서버 메시지와 issues, 단계·원래 코드(작은 글씨)를 그 아래에 둔다. 안내 문구는 `ERROR_HINTS`에 있다.
+- `ErrorPanel`이 자주 나는 코드(`REGION_OUT_OF_SCOPE`, `REGION_NOT_SUPPORTED`, `UNIT_NOT_SUPPORTED`, `UNSUPPORTED_QUESTION`, `INCOMPLETE_INTERPRETATION`, `DATA_NOT_AVAILABLE`, `NO_MATCHING_DATA`, `DATA_ACQUISITION_FAILED`, `PLAN_INVALID`, `LLM_FAILED`, 서버 문제 코드)에 사용자 안내 문장을 먼저 보이고, 서버 메시지와 issues, 단계·원래 코드(작은 글씨)를 그 아래에 둔다. 안내 문구는 `ERROR_HINTS`에 있다.
 - 서울 범위에서 `REGION_OUT_OF_SCOPE`면 "전국 범위로 바꿔 다시 분석" 버튼이 범위 토글을 전국으로 바꾸고 같은 질문을 다시 보낸다.
 - 예시 질문은 환영 카드와 실패 패널 아래에 보인다.
 - 코드별 의미는 [개요 문서 3.7절](../../backend/docs/agent-design-overview.md#37-실패-코드-모음-workflowerrorcode)과 [10.2절](../../backend/docs/agent-design-overview.md#102-자주-보는-오류)에 있다. 코드가 늘면 `ERROR_HINTS`도 함께 본다.
