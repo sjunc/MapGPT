@@ -250,7 +250,7 @@ pgvector는 후보를 찾고, LLM은 최종 선택을 하고, Validator는 실�
 
 1. 검색어 = `restated_question` + `key_concepts`
 2. 카탈로그 임베딩이 최신인지 확인합니다. 임베딩이 없거나, 모델이 다르거나, 임베딩한 문서가 현재 메타데이터로 만든 문서와 다르면 `CATALOG_INDEX_STALE`로 멈춥니다. 임베딩이 빠진 Dataset이 후보에서 조용히 사라지는 것을 막기 위해서입니다.
-3. 검색어를 임베딩하고 pgvector 코사인 거리로 검토된 Dataset 상위 10개(`SEARCH_LIMIT`)와 자동 후보 상위 5개(`AUTO_SEARCH_LIMIT`)를 따로 골라 이 순서로 합칩니다. 자동 후보가 수천 개여도 검토된 Dataset이 후보에서 밀려나지 않게 하기 위해서입니다. 검토된 Dataset은 지금 10개 이하라 모두 후보가 되고, 유사도는 순서만 정합니다. 선택 프롬프트는 자동 후보에 `reviewed: false`를 붙이고, 검토된 후보로 같은 데이터를 만들 수 있으면 그 후보를 쓰게 합니다(선택 규칙 5). 검토된 Dataset은 임베딩이 하나라도 오래되면 `CATALOG_INDEX_STALE`로 멈추지만, 자동 후보는 같은 임베딩 모델의 것만 찾고 빠져도 멈추지 않습니다.
+3. 검색어를 임베딩하고 pgvector 코사인 거리로 검토된 Dataset 상위 10개(`SEARCH_LIMIT`)와 자동 후보 상위 5개(`AUTO_SEARCH_LIMIT`)를 따로 골라 이 순서로 합칩니다. 자동 후보가 수천 개여도 검토된 Dataset이 후보에서 밀려나지 않게 하기 위해서입니다. 두 검색 모두 조건으로 먼저 거른 뒤 정확한 거리로 정렬합니다. HNSW 근사 스캔이 뽑은 이웃을 나중에 거르면, 이웃이 모두 자동 후보일 때 검토된 Dataset이 빠지기 때문입니다. 검토된 Dataset은 지금 10개 이하라 모두 후보가 되고, 유사도는 순서만 정합니다. 선택 프롬프트는 자동 후보에 `reviewed: false`를 붙이고, 검토된 후보로 같은 데이터를 만들 수 있으면 그 후보를 쓰게 합니다(선택 규칙 5). 검토된 Dataset은 임베딩이 하나라도 오래되면 `CATALOG_INDEX_STALE`로 멈추지만, 자동 후보는 같은 임베딩 모델의 것만 찾고 빠져도 멈추지 않습니다.
 4. LLM에 후보 요약(제목, 설명, 분류, 태그, 공간·시간 정보, 컬럼 설명)을 주고 `DatasetSelection{required_data, datasets, rationale}`을 받습니다.
    - `required_data`에는 질문의 지표·조건에 필요한 데이터마다 그 데이터를 주는 후보 Dataset을 적게 합니다. 예: `{"concept": "0~5세 인구", "dataset_id": "population_by_age"}`
    - 컬럼·필터로 만들 수 있으면 그 Dataset이 주는 데이터로 봅니다. 어느 후보로도 만들 수 없을 때만 `dataset_id`를 null로 두고, 비슷해 보이는 Dataset으로 대신하지 않습니다.
