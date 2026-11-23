@@ -337,7 +337,8 @@ def _select_datasets(state: AgentState, ctx: _RunContext, update: Update) -> Non
     candidate_ids = {d.dataset_id for d in candidates}
     # 출처가 없거나 후보에 없는 ID(지어낸 ID)인 데이터는 이 후보들로 만들 수 없다.
     missing = [need.concept for need in selection.required_data if need.dataset_id not in candidate_ids]
-    # 사람이 검토하지 않은 자동 후보는 이름이 질문의 데이터와 한 낱말도 겹치지 않으면 다른 데이터로 대신한 것으로 본다.
+    # 사람이 검토하지 않은 자동 후보는 이름이 질문의 핵심 개념이나 그 데이터 이름과 한 낱말도 겹치지 않으면
+    # 다른 데이터로 대신한 것으로 본다.
     ungrounded = _ungrounded_auto(selection, {d.dataset_id: d for d in candidates}, interpreted.key_concepts)
     missing += [concept for concept, _ in ungrounded]
     if missing:
@@ -383,6 +384,9 @@ _GROUNDING_STOPWORDS = frozenset(
         "서울",
         "서울시",
         "서울특별시",
+        "지역",
+        "동네",
+        "시설",
         "정보",
         "현황",
         "데이터",
@@ -408,6 +412,8 @@ _GROUNDING_STOPWORDS = frozenset(
         "최소",
         "증감",
         "추이",
+        "통계",
+        "발생",
     }
 )
 
@@ -415,26 +421,35 @@ _GROUNDING_STOPWORDS = frozenset(
 def _ungrounded_auto(
     selection: DatasetSelection, candidates: dict[str, DatasetMetadata], key_concepts: list[str]
 ) -> list[tuple[str, str]]:
-    """고른 자동 후보 중 그 후보로 만들 데이터 이름(required_data, 없으면 핵심 개념)과 낱말이 하나도 겹치지 않는 것.
+    """고른 자동 후보 중 이름이 질문의 핵심 개념이나 그 후보로 만들 데이터 이름(required_data)과 낱말이 하나도 겹치지 않는 것.
 
-    (데이터 이름, 후보 제목) 목록. 낱말은 두 글자 이상이고, 후보 제목이나 태그에 들어 있으면 겹친다고 본다.
+    핵심 개념은 해석 단계가 자동 후보를 보기 전에 질문에서 뽑은 것이다. 데이터 이름만 보면 LLM이 그 이름을 후보에 맞춰
+    적었을 때(범죄 → '불법주정차 신고') 걸러지지 않아 둘 다 본다. (데이터 이름, 후보 제목) 목록. 낱말은 두 글자
+    이상이고, 후보 제목이나 태그에 들어 있으면 겹친다고 본다.
     """
+    asked = [concept for concept in key_concepts if _subject_words([concept])]
     ungrounded = []
     for dataset_id in dict.fromkeys(selection.datasets):
         dataset = candidates.get(dataset_id)
         if dataset is None or dataset.category != AUTO_PUBLIC_API_CATEGORY:
             continue
-        concepts = [need.concept for need in selection.required_data if need.dataset_id == dataset_id] or key_concepts
         names = " ".join([dataset.title, *dataset.semantic_tags])
-        words = {
-            word
-            for concept in concepts
-            for word in re.findall(r"[가-힣A-Za-z0-9]{2,}", concept)
-            if word not in _GROUNDING_STOPWORDS
-        }
-        if not any(word in names for word in words):
-            ungrounded.append((concepts[0] if concepts else dataset.title, dataset.title))
+        needs = [need.concept for need in selection.required_data if need.dataset_id == dataset_id] or asked
+        for concepts in (asked, needs):
+            if not any(word in names for word in _subject_words(concepts)):
+                ungrounded.append(((concepts or key_concepts or [dataset.title])[0], dataset.title))
+                break
     return ungrounded
+
+
+def _subject_words(concepts: list[str]) -> set[str]:
+    """이름 대조에 쓰는 낱말: 두 글자 이상이고 대조에서 빼는 낱말이 아닌 것."""
+    return {
+        word
+        for concept in concepts
+        for word in re.findall(r"[가-힣A-Za-z0-9]{2,}", concept)
+        if word not in _GROUNDING_STOPWORDS
+    }
 
 
 def _available_data(candidates: list[DatasetMetadata]) -> str:
