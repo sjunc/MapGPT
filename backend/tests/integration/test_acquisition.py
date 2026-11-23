@@ -7,7 +7,7 @@ import pytest
 from app.catalog.catalog import sync_catalog_embeddings
 from app.data_sources.acquisition import AcquisitionError, DataAcquirer, promote_source, register_sources
 from app.data_sources.ingest import ingest_boundary
-from app.data_sources.seoul_openapi import SeoulApiError
+from app.data_sources.seoul_openapi import SeoulApiError, SeoulRowLimitError
 from app.data_sources.seoul_portal import PortalPage
 from app.data_sources.sources import SourceDeclaration, SourceError, load_sources
 from app.domain.catalog import AUTO_DISCOVERED_CATEGORY, AUTO_PUBLIC_API_CATEGORY
@@ -205,6 +205,44 @@ def test_pending_source_without_an_acquirer_stops_with_a_clear_error(pool, conn,
     state = AnalysisWorkflow(_count_llm(), pool, FakeEmbedder()).run("서울 자치구별 시험 시설 수")
 
     assert (state.errors[0].step, state.errors[0].code) == (WorkflowStep.ACQUIRE_DATA, "DATA_ACQUISITION_UNAVAILABLE")
+
+
+OVER_LIMIT = SeoulRowLimitError("TestPoints 전체 200,000건이 한도 100,000건보다 많습니다")
+
+
+def test_prefetched_source_over_the_row_limit_is_used_when_it_is_due_again(pool, conn, boundary, tmp_path):
+    # fetch-source(한도 없음)로 미리 받아 둔 큰 출처는 다시 받을 때가 지나도 질문 처리 중에는 한도에 걸린다.
+    _registered(conn)
+    _acquirer(pool, tmp_path).acquire("test_points", limit_rows=False, refresh=True)
+    for copy in (tmp_path / "raw" / "sources").glob("test_points_*.json"):
+        copy.unlink()  # 다시 받을 주기 안의 원본 사본도 없다
+    conn.execute(
+        "UPDATE catalog.dataset SET metadata = jsonb_set(metadata, '{acquisition,fetched_at}', '\"2000-01-01\"') "
+        "WHERE dataset_id = 'test_points'"
+    )
+    conn.commit()
+    fetch = FakeFetch(error=OVER_LIMIT)
+
+    state = AnalysisWorkflow(_count_llm(), pool, FakeEmbedder(), acquirer=_acquirer(pool, tmp_path, fetch)).run(
+        "서울 자치구별 시험 시설 수"
+    )
+
+    assert state.status == RunStatus.SUCCEEDED, state.errors
+    assert (fetch.calls, state.data_acquisitions) == (1, [])
+    ranking = [(item.rank, item.unit_name, item.value) for item in state.final_response.ranking]
+    assert ranking == [(1, "가가구", 3), (2, "나나구", 1)]
+
+
+def test_source_over_the_row_limit_that_was_never_fetched_says_how_to_prefetch(pool, conn, boundary, tmp_path):
+    _registered(conn)
+    fetch = FakeFetch(error=OVER_LIMIT)
+
+    state = AnalysisWorkflow(_count_llm(), pool, FakeEmbedder(), acquirer=_acquirer(pool, tmp_path, fetch)).run(
+        "서울 자치구별 시험 시설 수"
+    )
+
+    assert (state.errors[0].step, state.errors[0].code) == (WorkflowStep.ACQUIRE_DATA, "DATA_ACQUISITION_FAILED")
+    assert "fetch-source test_points" in state.errors[0].message
 
 
 # ── 자동 후보 (등록 파일 없이 포털 정보로 만든 등록 내용, 사람 검토 전) ─────────────────────────────

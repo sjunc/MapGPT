@@ -4,7 +4,7 @@ import json
 import pytest
 
 from app.data_sources import seoul_openapi
-from app.data_sources.seoul_openapi import SeoulApiError, fetch_service
+from app.data_sources.seoul_openapi import SeoulApiError, SeoulRowLimitError, fetch_service
 
 
 class _FakeOpener:
@@ -37,7 +37,7 @@ def test_fetch_service_stops_before_paging_when_over_the_row_limit(monkeypatch):
     monkeypatch.setattr(seoul_openapi.urllib.request, "urlopen", opener)
     monkeypatch.setattr(seoul_openapi, "PAGE_SIZE", 2)
 
-    with pytest.raises(SeoulApiError, match="한도"):
+    with pytest.raises(SeoulRowLimitError, match="한도"):
         fetch_service("secret-key", "TestPoints", max_rows=4)
     assert len(opener.urls) == 1
 

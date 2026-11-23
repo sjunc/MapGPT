@@ -26,7 +26,7 @@ from psycopg_pool import ConnectionPool
 from app.catalog.catalog import sync_catalog_embeddings
 from app.config import Settings
 from app.data_sources.auto_csv import AutoCsvError, LoadedTable, load_table, profile_file
-from app.data_sources.seoul_openapi import SeoulApiError, fetch_service
+from app.data_sources.seoul_openapi import SeoulApiError, SeoulRowLimitError, fetch_service
 from app.data_sources.seoul_portal import PortalPage, fetch_portal_page
 from app.data_sources.sources import SourceColumn, SourceDeclaration, SourceError, load_sources
 from app.domain.catalog import (
@@ -61,6 +61,10 @@ class AcquisitionError(RuntimeError):
 
 class AutoSourceRejected(AcquisitionError):
     """자동 후보가 코드 검사(좌표 모양·좌표계·지역 안 비율·걸러 낸 행)를 통과하지 못했다."""
+
+
+class RowLimitExceeded(AcquisitionError):
+    """출처의 행이 질문 처리 중에 받는 한도(max_rows)보다 많다. fetch-source(한도 없음)로 미리 받아야 한다."""
 
 
 def seoul_fetcher(api_key: str | None) -> Fetch:
@@ -175,7 +179,7 @@ class DataAcquirer:
         try:
             rows = self._fetch(source, source.max_rows if limit_rows else None)
         except (SeoulApiError, OSError, ValueError) as error:
-            raise AcquisitionError(
+            raise (RowLimitExceeded if isinstance(error, SeoulRowLimitError) else AcquisitionError)(
                 f"'{source.title}'을(를) 받지 못했습니다: {error}. "
                 f"행이 많으면 python -m app.cli fetch-source {source.source_id} 로 미리 받아 두세요"
             ) from error

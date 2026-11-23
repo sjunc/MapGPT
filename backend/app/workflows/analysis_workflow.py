@@ -26,7 +26,7 @@ from psycopg_pool import ConnectionPool
 
 from app.agents import steps
 from app.catalog.catalog import CatalogIndexError, DatasetCatalog
-from app.data_sources.acquisition import AcquisitionError, AutoSourceRejected, DataAcquirer
+from app.data_sources.acquisition import AcquisitionError, AutoSourceRejected, DataAcquirer, RowLimitExceeded
 from app.domain.catalog import AUTO_PUBLIC_API_CATEGORY, DatasetMetadata, RegionRef
 from app.domain.enums import (
     ANALYSIS_SCOPE_NAMES,
@@ -466,6 +466,7 @@ def _acquire_data(state: AgentState, ctx: _RunContext, update: Update) -> None:
     """선택한 Dataset 중 아직 받지 않았거나 다시 받을 때가 된 등록 출처를 계획 전에 받아 적재한다.
 
     계획·검증·실행은 실제로 적재한 메타데이터(건수·범위·타입)를 보도록 후보 메타데이터를 바꾼다.
+    다시 받을 때가 됐어도 행이 한도보다 많아 받지 못하면(fetch-source로 미리 받아 둔 출처) 받아 둔 데이터를 쓴다.
     """
     candidates = _candidates(state)
     due = [dataset_id for dataset_id in state.selected_datasets if _needs_acquisition(candidates[dataset_id], ctx)]
@@ -487,6 +488,10 @@ def _acquire_data(state: AgentState, ctx: _RunContext, update: Update) -> None:
                 "DATA_NOT_AVAILABLE",
                 f"'{concept}' 데이터로 고른 자동 수집 후보를 쓸 수 없어 분석할 수 없습니다: {error}",
             ) from error
+        except RowLimitExceeded as error:
+            if candidates[dataset_id].acquisition.fetched_at is None:
+                raise WorkflowFailure("DATA_ACQUISITION_FAILED", str(error)) from error
+            continue  # 새로 받기는 fetch-source로 한다 (사용 데이터의 기준일이 받은 날짜다)
         except AcquisitionError as error:
             raise WorkflowFailure("DATA_ACQUISITION_FAILED", str(error)) from error
         candidates[dataset_id] = metadata

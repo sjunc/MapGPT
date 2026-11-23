@@ -15,6 +15,10 @@ class SeoulApiError(RuntimeError):
     pass
 
 
+class SeoulRowLimitError(SeoulApiError):
+    """행이 받을 수 있는 한도(max_rows)보다 많다."""
+
+
 def fetch_service(
     api_key: str, service: str, max_rows: int | None = None, timeout: float = 30.0, params: tuple[str, ...] = ()
 ) -> list[dict[str, Any]]:
@@ -40,7 +44,7 @@ def fetch_service(
             raise SeoulApiError(f"서울 OpenAPI 오류 {body['RESULT']['CODE']}: {body['RESULT']['MESSAGE']}")
         total = int(body["list_total_count"])
         if max_rows is not None and total > max_rows:
-            raise SeoulApiError(f"{service} 전체 {total:,}건이 한도 {max_rows:,}건보다 많습니다")
+            raise SeoulRowLimitError(f"{service} 전체 {total:,}건이 한도 {max_rows:,}건보다 많습니다")
         rows.extend(body["row"])
         start = end + 1
     if len(rows) != total:
