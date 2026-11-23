@@ -118,14 +118,20 @@ def nearest_datasets(
     """코사인 거리(<=>)가 가까운 순서로 Dataset과 유사도(1 - 거리)를 반환한다.
 
     auto: None이면 모두, True면 자동 후보만, False면 자동 후보를 뺀다. model을 주면 그 모델의 임베딩만 본다.
+    조건으로 먼저 거른 뒤 정확한 거리로 정렬한다. HNSW 근사 스캔이 뽑은 이웃(ef_search개)을 나중에 거르면, 이웃이
+    모두 다른 쪽(예: 자동 후보)일 때 결과가 빈다. 카탈로그는 수백~수천 개라 정확한 비교도 빠르다.
     """
     rows = conn.execute(
         sql.SQL(
             """
-            SELECT d.metadata, 1 - (e.embedding <=> %(query)s::vector)
-            FROM catalog.dataset_embedding e JOIN catalog.dataset d USING (dataset_id)
-            WHERE {} AND (%(model)s::text IS NULL OR e.model = %(model)s)
-            ORDER BY e.embedding <=> %(query)s::vector
+            WITH candidates AS MATERIALIZED (
+                SELECT d.metadata, e.embedding
+                FROM catalog.dataset_embedding e JOIN catalog.dataset d USING (dataset_id)
+                WHERE {} AND (%(model)s::text IS NULL OR e.model = %(model)s)
+            )
+            SELECT metadata, 1 - (embedding <=> %(query)s::vector)
+            FROM candidates
+            ORDER BY embedding <=> %(query)s::vector
             LIMIT %(limit)s
             """
         ).format(_auto_clause(auto)),

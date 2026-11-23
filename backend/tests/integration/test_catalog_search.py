@@ -3,7 +3,7 @@ import pytest
 from app.catalog.catalog import CatalogIndexError, DatasetCatalog, sync_catalog_embeddings
 from app.catalog.definitions import TRUSTED_DATASETS
 from app.domain.catalog import AUTO_PUBLIC_API_CATEGORY
-from app.repositories.catalog_repository import upsert_dataset
+from app.repositories.catalog_repository import nearest_datasets, upsert_dataset
 from tests.fakes import FakeEmbedder
 
 pytestmark = pytest.mark.integration
@@ -113,3 +113,19 @@ def test_region_and_boundary_lookups_skip_auto_candidates(pool, conn, catalog):
 
     assert sorted(d.dataset_id for d in catalog_api.list_all(include_auto=False)) == ALL_DATASETS
     assert len(catalog_api.list_all()) == len(ALL_DATASETS) + 2
+
+
+def test_filtered_search_stays_exact_on_the_approximate_index_path(conn, catalog):
+    """HNSW 근사 스캔이 뽑은 이웃만 거르면, 이웃이 모두 자동 후보일 때 검토된 Dataset이 빠진다 (2026-11-23 개발 DB)."""
+    _auto_copies(conn, 12)
+    # 근사 인덱스 경로를 쓰게 하고, 그 경로가 이웃을 하나만 뽑게 한다.
+    conn.execute("SET enable_seqscan = off")
+    conn.execute("SET enable_sort = off")
+    conn.execute("SET hnsw.ef_search = 1")
+    [vector] = FakeEmbedder().embed(["어린이집 위치"])
+
+    reviewed = nearest_datasets(conn, vector, 10, auto=False)
+    auto = nearest_datasets(conn, vector, 5, auto=True)
+
+    assert sorted(metadata.dataset_id for metadata, _ in reviewed) == ALL_DATASETS
+    assert len(auto) == 5
