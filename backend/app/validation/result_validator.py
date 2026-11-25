@@ -18,6 +18,7 @@ _NULL_REASONS = {
     "denominator_missing": "분모 자료 없음",
     "numerator_missing": "분자 자료 없음",
     "no_matching_records": "자료 없음",
+    "all_values_null": "관측값 없음",
     "input_null": "입력 값 없음",
 }
 
@@ -74,11 +75,26 @@ def validate_result(
 
     metric = plan.output.metric
     missing = [row for row in rows if row.values.get(metric) is None]
+    producer = next(op for op in plan.operations if op.output == metric)
+    spatial_measure = (
+        isinstance(producer, AggregateByAreaOperation) and producer.aggregation != AggregationFunction.COUNT
+    )
     if len(missing) / len(rows) > MAX_NULL_RATE:
-        error(
-            "HIGH_NULL_RATE",
-            f"'{metric}' 값이 없는 단위가 {len(missing)}/{len(rows)}개로 너무 많습니다 (데이터 결합 실패 가능성)",
-        )
+        if (
+            spatial_measure
+            and len(missing) < len(rows)
+            and all(row.null_reasons.get(metric) in {"no_matching_records", "all_values_null"} for row in missing)
+        ):
+            warning(
+                "SPARSE_OBSERVATIONS",
+                f"유효한 관측값이 없는 지역 {len(missing)}/{len(rows)}개는 순위에서 제외했습니다. "
+                "관측값이 있는 지역만 비교하며 전체 지역의 순위로 해석할 수 없습니다",
+            )
+        else:
+            error(
+                "HIGH_NULL_RATE",
+                f"'{metric}' 값이 없는 단위가 {len(missing)}/{len(rows)}개로 너무 많습니다 (데이터 결합 실패 가능성)",
+            )
     elif missing:
         examples = ", ".join(
             f"{row.name}({_NULL_REASONS.get(row.null_reasons.get(metric), '사유 미상')})" for row in missing[:_EXAMPLES]
@@ -156,7 +172,11 @@ def _count_like_metrics(plan: AnalysisPlan, datasets: Mapping[str, DatasetMetada
     names = []
     for op in plan.operations:
         if isinstance(op, AggregateByAreaOperation):
-            names.append(op.output)
+            column = datasets[op.input].column(op.field) if op.field else None
+            if op.aggregation == AggregationFunction.COUNT or (
+                column is not None and column.semantic_type == SemanticType.POPULATION
+            ):
+                names.append(op.output)
         elif isinstance(op, AggregateOperation):
             column = datasets[op.input].column(op.aggregation.field)
             if op.aggregation.function == AggregationFunction.COUNT or (

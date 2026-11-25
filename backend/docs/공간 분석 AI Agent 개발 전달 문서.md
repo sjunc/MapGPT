@@ -872,6 +872,13 @@ type: Literal["calculate_ratio"]
 
 Point 데이터를 Polygon 단위로 집계한다.
 
+2026-11-24 확장: `aggregation`은 `count`, `sum`, `avg`를 지원한다. `sum`·`avg`는
+숫자 컬럼을 `field`로 지정하고, `count`는 `field`를 생략하거나 null로 둔다.
+AI는 좌표만 있는 OpenAPI 관측 자료도 경계 Dataset과 연결하는 계획을 만들 수 있다.
+연산 실행은 메타데이터로 컬럼을 검증한 GIS Tool이 맡으며 SQL을 AI가 생성하지 않는다.
+영하 기온 등 음수 관측값을 허용하고, 유효 관측값이 없는 지역은 null로 두며 순위에서 제외한다.
+공간 평균은 관측값의 산술평균이다. 미관측 지역의 값을 보간하거나 지역 전체의 면적 평균으로 해석하지 않는다.
+
 ---
 
 ## AggregateOperation

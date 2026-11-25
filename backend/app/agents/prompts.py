@@ -116,7 +116,7 @@ def plan_prompt(
 {_policy_text()}
 
 [Operation 의미]
-- aggregate_by_area: Geometry가 Point인 Dataset(input)만 Polygon 경계 Dataset(boundary)의 각 단위 안에 있는 개수로 센다 (aggregation=count). Geometry가 없거나 Polygon인 Dataset에는 절대 쓰지 않는다.
+- aggregate_by_area: Geometry가 Point인 Dataset(input)을 좌표로 Polygon 경계 Dataset(boundary)에 연결해 집계한다. 행정코드나 join_keys가 없어도 쓸 수 있다. 개수는 aggregation=count, field=null이다. 숫자 컬럼의 합계·평균은 aggregation=sum·avg와 field=실제 숫자 컬럼명을 쓴다. 예: 관측점의 기온을 지역별로 비교할 때 aggregation=avg, field=기온 컬럼으로 집계한 뒤 rank로 순위를 매긴다. 관측점 개수를 기온 대신 쓰지 않는다. Geometry가 없거나 Polygon인 Dataset에는 쓰지 않는다. 관측값이 없는 지역은 null이며 추정하지 않는다.
 - aggregate: Dataset(input)을 group_by 키(분석 단위 경계와 결합되는 join key 1개)별로 aggregation.field를 합계(sum), 평균(avg), 개수(count)로 집계한다. 행정코드가 있고 Geometry가 없는 Dataset은 이 operation을 쓴다. 주민등록 인구수는 population 컬럼을 sum하며 행 개수를 count하지 않는다.
 - calculate_ratio: numerator ÷ denominator × scale. numerator와 denominator는 앞에서 만든 output 이름이다.
 - rank: input(앞에서 만든 output)에 order 방향으로 순위를 매긴다.
@@ -125,11 +125,11 @@ def plan_prompt(
 1. intent, region, analysis_unit은 해석 결과를 그대로 쓴다.
 2. datasets에는 operation과 filter에서 쓰는 Dataset ID를 모두 넣는다. 주어진 Dataset만 쓴다.
 3. 질문이나 분석 정책이 요구하는 행 조건만 filters에 Dataset별로 둔다 (예: 정책이 정의한 연령대). 기준일·유형 전체 나열처럼 요구되지 않은 조건은 추가하지 않는다 — Dataset은 이미 기준 시점의 데이터다. field는 그 Dataset의 컬럼명이고 값의 타입은 컬럼 data_type과 맞아야 한다. 분석 단위 경계 Dataset에는 filter를 두지 않는다 (지역은 region으로 정해진다).
-4. operations는 실행 순서대로 쓰고, 뒤의 operation은 앞에서 만든 output만 참조한다.
+4. operations는 적어도 하나의 집계 연산을 포함해 실행 순서대로 쓰고, 뒤의 operation은 앞에서 만든 output만 참조한다. 빈 목록을 반환하지 않는다.
 5. output 이름은 snake_case 영문으로 서로 겹치지 않고 Dataset ID·컬럼명과도 겹치지 않는다. label은 짧은 한국어 이름이다.
 6. output.metric에는 지도에 색으로 표시할 지표 값의 output 이름을 쓴다 (예: calculate_ratio의 output). rank의 output(순위)은 output.metric이 될 수 없다.
 7. ranking.enabled가 true면 output.metric을 input으로 하는 rank operation이 있어야 한다.
-8. regional_summary의 rank order는 질문이 적은·낮은 쪽부터(가장 적은 곳, 낮은 순 등)를 묻지 않는 한 desc다. 순위 방향을 말하지 않은 '순위'·'~별 개수' 질문도 desc다.
+8. regional_summary의 rank order는 질문이 적은·낮은 쪽부터(가장 적은 곳, 낮은 순 등)를 묻지 않는 한 desc다. 기온이 추운 순은 asc, 더운·따뜻한 순은 desc다. 순위 방향을 말하지 않은 '순위'·'~별 개수' 질문도 desc다.
 9. regional_summary에서는 질문이 비율('~당', '대비', '비율')을 묻지 않으면 calculate_ratio를 쓰지 않고, 질문이 말하지 않은 연령 조건을 더하지 않는다. 다른 분석 유형의 정의(예: 어린이 인구)는 질문이 그 개념을 말할 때만 쓴다."""
     user = f"[해석된 질문]\n{_json(interpreted)}\n\n[사용할 Dataset]\n{_json([_dataset_detail(d) for d in datasets])}"
     if feedback is not None:

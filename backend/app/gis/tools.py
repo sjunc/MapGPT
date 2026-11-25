@@ -253,14 +253,28 @@ def aggregate_by_area(
     boundary: BoundaryView,
     aggregation: str,
     name: str,
+    field_name: str | None = None,
 ) -> MetricValues:
     """Point를 경계 Polygon 단위로 집계한다. 경계선 위 점은 단위 키가 작은 Polygon 하나에만 배정한다.
 
     CRS 정책: 위상 연산이므로 Point를 경계 Dataset의 CRS로 변환해서 비교한다.
     """
-    if aggregation != AggregationFunction.COUNT:
+    if aggregation not in _SQL_AGGREGATES:
         raise GisToolError("UNSUPPORTED_AGGREGATION", f"aggregate_by_area는 '{aggregation}' 집계를 지원하지 않습니다")
     metadata = view.metadata
+    if aggregation == AggregationFunction.COUNT:
+        if field_name is not None:
+            raise GisToolError("FIELD_UNEXPECTED", "count는 컬럼이 아니라 점의 개수를 셉니다")
+        value = sql.NULL
+        aggregate_sql = sql.SQL("count(a.point_id)")
+    else:
+        column = metadata.column(field_name) if field_name is not None else None
+        if column is None:
+            raise GisToolError("FIELD_UNKNOWN", f"'{metadata.dataset_id}'에 '{field_name}' 숫자 컬럼이 없습니다")
+        if column.data_type not in (DataType.INTEGER, DataType.FLOAT):
+            raise GisToolError("FIELD_NOT_NUMERIC", f"'{field_name}'은 숫자 컬럼이 아닙니다")
+        value = sql.Identifier(column.name)
+        aggregate_sql = sql.SQL("{}(a.value)").format(sql.SQL(_SQL_AGGREGATES[aggregation]))
     geometry_column = metadata.geometry_column
     if geometry_column is None:
         raise GisToolError("NO_GEOMETRY", f"'{metadata.dataset_id}'에 Geometry가 없습니다")
@@ -276,14 +290,15 @@ def aggregate_by_area(
             SELECT {key}::text AS unit_key, {boundary_geom} AS geom FROM {boundary_table} WHERE {boundary_where}
         ),
         points AS NOT MATERIALIZED (
-            SELECT ctid AS point_id, {point_geom} AS geom FROM {point_table} WHERE {point_where}
+            SELECT ctid AS point_id, {point_geom} AS geom, {value} AS value FROM {point_table} WHERE {point_where}
         ),
         assigned AS (
-            SELECT DISTINCT ON (p.point_id) p.point_id, u.unit_key
+            SELECT DISTINCT ON (p.point_id) p.point_id, p.value, u.unit_key
             FROM points p JOIN units u ON ST_Covers(u.geom, p.geom)
             ORDER BY p.point_id, u.unit_key
         )
-        SELECT u.unit_key, count(a.point_id) FROM units u LEFT JOIN assigned a USING (unit_key) GROUP BY u.unit_key
+        SELECT u.unit_key, {aggregate}, count(a.point_id)
+        FROM units u LEFT JOIN assigned a USING (unit_key) GROUP BY u.unit_key
         """
     ).format(
         key=sql.Identifier(boundary.key_field),
@@ -293,9 +308,12 @@ def aggregate_by_area(
         point_geom=point_geom,
         point_table=view.table,
         point_where=point_where,
+        value=value,
+        aggregate=aggregate_sql,
     )
-    values = dict(conn.execute(query, boundary_params + point_params).fetchall())
-    assigned = sum(values.values())
+    rows = conn.execute(query, boundary_params + point_params).fetchall()
+    values = {key: _number(value) for key, value, _ in rows}
+    assigned = sum(count for _, _, count in rows)
     # 위치(geom)가 없는 행은 경계 밖 점이 아니다. 왜 위치가 없는지는 적재할 때 품질 노트로 남긴다.
     located = conn.execute(
         sql.SQL("SELECT count(*) FROM {} WHERE ({}) AND {} IS NOT NULL").format(
@@ -306,6 +324,11 @@ def aggregate_by_area(
     return MetricValues(
         name=name,
         values=values,
+        null_reasons={
+            key: "no_matching_records" if count == 0 else "all_values_null"
+            for key, value, count in rows
+            if value is None
+        },
         stats={
             "input_points": view.row_count,
             "points_without_location": view.row_count - located,

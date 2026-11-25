@@ -339,7 +339,7 @@ DB에 없는 데이터라도 출처 등록 파일(`backend/sources/*.yaml`)로 �
 
 | Operation | GIS Tool | 계산 | 결측·특수 처리 |
 |---|---|---|---|
-| `aggregate_by_area` | `aggregate_by_area` | Point를 경계 Polygon 안에서 셈(`ST_Covers`) | 시설이 없으면 0. 경계선 위 점은 코드가 가장 작은 단위 하나에만 배정. 지역 밖 점은 `unassigned_points`로 기록 |
+| `aggregate_by_area` | `aggregate_by_area` | Point를 경계 Polygon에 연결(`ST_Covers`)해 개수·숫자 컬럼의 합계·평균 집계 | count는 점이 없으면 0. sum·avg는 유효 관측값이 없으면 null. 경계선 위 점은 코드가 가장 작은 단위 하나에만 배정. 지역 밖 점은 `unassigned_points`로 기록 |
 | `aggregate` | `aggregate` | 그룹 키(join key 1개)별 `sum` 또는 `count` | 행이 없는 단위는 null(`no_matching_records`) |
 | `calculate_ratio` | `calculate_ratio` | `numerator ÷ denominator × scale` | 분모 0은 null(`denominator_zero`), 분모 없음은 null(`denominator_missing`). 0으로 대체하지 않음 |
 | `rank` | `rank` | 표준 경쟁 순위(1, 2, 2, 4) | null은 순위에서 제외(`input_null`) |
@@ -456,7 +456,7 @@ output 이름과 라벨은 LLM이 정하므로 실행마다 다를 수 있습니
 
 | type | 주요 필드 | 의미 |
 |---|---|---|
-| `aggregate_by_area` | `input`(Point Dataset), `boundary`(Polygon Dataset), `aggregation: "count"` | 경계 단위별 점 개수 |
+| `aggregate_by_area` | `input`(Point Dataset), `boundary`(Polygon Dataset), `aggregation: "count" / "sum" / "avg"`, `field`(sum·avg의 숫자 컬럼, count는 null·생략) | 행정코드가 없는 관측점도 좌표로 경계에 연결해 개수·합계·평균 계산 |
 | `aggregate` | `input`, `group_by`(join key 1개), `aggregation{field, function: sum\|count}` | 속성 그룹 집계 |
 | `calculate_ratio` | `numerator`, `denominator`(앞선 output), `scale`(> 0) | 비율 |
 | `rank` | `input`(앞선 output), `order: asc\|desc` | 순위 |
@@ -521,6 +521,10 @@ LLM 출력은 세 겹으로 검사합니다.
 | 워크플로가 추가 | `PLAN_REPAIRED`(경고: 계획 보정이 고친 내용), `FILTER_NOT_IN_QUESTION`(질문에 근거가 없는 범주 값·어린이 나이 조건), `PLAN_SCHEMA_INVALID`(스키마 불일치), `PLAN_INTERPRETATION_MISMATCH`(해석과 다른 intent·지역·단위) |
 
 **Result Validator 규칙**
+
+공간 숫자 집계(`aggregate_by_area` sum·avg)의 음수는 허용한다. 관측값 없음이 명확하고 일부 지역에
+유효값이 있으면 결측률이 20%를 넘어도 `SPARSE_OBSERVATIONS` 경고로 알리고 관측 지역만 순위화한다.
+모든 지역이 결측이면 실패한다. 평균 지도는 단계 구분도이며, 관측점 개수 지도와 구분한다.
 
 | 구분 | 코드 |
 |---|---|

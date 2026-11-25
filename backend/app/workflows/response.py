@@ -80,6 +80,15 @@ def compose_response(
                 *(AUTO_DATASET_LIMITATIONS if any(d.category == AUTO_DISCOVERED_CATEGORY for d in used) else []),
                 *(AUTO_SOURCE_LIMITATIONS if any(d.category == AUTO_PUBLIC_API_CATEGORY for d in used) else []),
                 *_temporal_note(used),
+                *(
+                    [
+                        "공간 평균은 각 지역 안에 있는 유효한 관측값의 산술평균입니다. 지역 전체의 면적 평균이나 미관측 지역의 추정값이 아닙니다."
+                    ]
+                    if any(
+                        isinstance(op, AggregateByAreaOperation) and op.aggregation == "avg" for op in plan.operations
+                    )
+                    else []
+                ),
                 *(f"[{d.title}] {note}" for d in used for note in d.quality_notes),
                 *(issue.message for issue in result_validation.warnings),
             ]
@@ -159,10 +168,17 @@ def _method(plan: AnalysisPlan, datasets: Mapping[str, DatasetMetadata], result:
     steps += [f"필터 — {title(f.dataset)}: {describe_filter(f.where)}" for f in plan.filters]
     for op in plan.operations:
         if isinstance(op, AggregateByAreaOperation):
+            aggregation = (
+                "개수" if op.aggregation == "count" else f"{op.field} {'평균' if op.aggregation == 'avg' else '합계'}"
+            )
             steps.append(
                 f"{op.label}({op.output}): {title(op.input)}의 위치를 {title(op.boundary)}와 공간 결합(점이 경계 안에 "
-                "포함되는지 판정)해 단위별 개수를 셈. 경계선 위의 점은 한 단위에만 배정"
+                f"포함되는지 판정)해 단위별 {aggregation} 집계. 경계선 위의 점은 한 단위에만 배정"
             )
+            if op.aggregation != "count":
+                steps.append(
+                    "숫자 값이 없는 관측은 집계에서 제외. 유효한 관측값이 없는 지역은 null로 두고 순위에서 제외"
+                )
         elif isinstance(op, AggregateOperation):
             kind = {"sum": "합계", "avg": "평균", "count": "개수"}[op.aggregation.function]
             steps.append(
