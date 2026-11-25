@@ -82,7 +82,9 @@ def _dataset_summary(d: DatasetMetadata) -> dict[str, Any]:
     return summary
 
 
-def select_prompt(interpreted: dict[str, Any], candidates: list[DatasetMetadata]) -> tuple[str, str]:
+def select_prompt(
+    interpreted: dict[str, Any], candidates: list[DatasetMetadata], retry_reason: str | None = None
+) -> tuple[str, str]:
     system = """너는 공간 분석에 필요한 Dataset을 고르는 선택기다. 해석된 분석 질문과 후보 Dataset 메타데이터를 보고 분석에 필요한 Dataset ID만 고른다.
 
 [규칙]
@@ -94,6 +96,13 @@ def select_prompt(interpreted: dict[str, Any], candidates: list[DatasetMetadata]
 4. rationale에 각 Dataset을 고른 이유를 짧게 쓴다.
 5. reviewed가 false인 후보는 포털 정보로 자동 등록되어 사람이 검토하지 않은 데이터다. reviewed가 없는 후보로 같은 데이터를 만들 수 있으면 그 후보를 쓴다."""
     user = f"[해석된 질문]\n{_json(interpreted)}\n\n[후보 Dataset]\n{_json([_dataset_summary(d) for d in candidates])}"
+    if retry_reason:
+        user += (
+            f"\n\n[CSV 사용 실패 — 대체 출처 재선택]\n{retry_reason}\n"
+            "사용할 수 없는 CSV는 후보에서 제외했다. 같은 질문에 필요한 동일 개념의 데이터를 제공하는 OpenAPI 후보로 "
+            "다시 선택하라. 이미 사용 가능한 다른 데이터는 유지할 수 있다. 관련 없는 데이터로 대신하지 말고, "
+            "적합한 대체 출처가 없으면 required_data의 dataset_id를 null로 둬라."
+        )
     return system, user
 
 

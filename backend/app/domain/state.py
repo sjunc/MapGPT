@@ -126,6 +126,7 @@ class AgentState(StrictModel):
     dataset_search: DatasetSearch | None = None
     dataset_candidates: list[DatasetMetadata] = []
     dataset_selection: DatasetSelection | None = None  # LLM 선택 원본 (근거 포함)
+    dataset_selection_history: list[DatasetSelection] = []  # CSV 사용 실패 후 OpenAPI 재선택도 기록
     selected_datasets: list[str] = []  # 검사를 통과한 선택 (중복 제거)
     data_acquisitions: list[DataAcquisition] = []  # 선택 뒤 등록 출처에서 받아 적재한 기록
     analysis_plan: AnalysisPlan | None = None

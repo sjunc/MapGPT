@@ -22,9 +22,12 @@ def interpret_query(
 
 
 def select_datasets(
-    llm: StructuredLLM, interpreted: InterpretedQuery, candidates: list[DatasetMetadata]
+    llm: StructuredLLM,
+    interpreted: InterpretedQuery,
+    candidates: list[DatasetMetadata],
+    retry_reason: str | None = None,
 ) -> DatasetSelection:
-    system, user = prompts.select_prompt(interpreted.model_dump(mode="json"), candidates)
+    system, user = prompts.select_prompt(interpreted.model_dump(mode="json"), candidates, retry_reason)
     return llm.generate(system=system, user=user, output_type=DatasetSelection)
 
 

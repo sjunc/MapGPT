@@ -86,6 +86,9 @@ export function ExecutionTrace({ provenance, runId, loading, error, demo, onRefr
           {provenance.dataset_selection && (
             <details>
               <summary>3. 데이터 선택</summary>
+              {(provenance.dataset_selection_history?.length ?? 0) > 1 && (
+                <p>CSV를 사용할 수 없어 OpenAPI 후보에서 데이터를 다시 선택했습니다.</p>
+              )}
               <p>선택: {(provenance.dataset_selection.datasets ?? []).join(", ") || "정보 없음"}</p>
               {(provenance.dataset_selection.required_data ?? []).length > 0 && (
                 <p>

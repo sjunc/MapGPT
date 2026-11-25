@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import psycopg
+from psycopg import sql
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
@@ -27,7 +28,7 @@ from psycopg_pool import ConnectionPool
 from app.agents import steps
 from app.catalog.catalog import CatalogIndexError, DatasetCatalog
 from app.data_sources.acquisition import AcquisitionError, AutoSourceRejected, DataAcquirer, RowLimitExceeded
-from app.domain.catalog import AUTO_PUBLIC_API_CATEGORY, DatasetMetadata, RegionRef
+from app.domain.catalog import AUTO_DISCOVERED_CATEGORY, AUTO_PUBLIC_API_CATEGORY, DatasetMetadata, RegionRef
 from app.domain.enums import (
     ANALYSIS_SCOPE_NAMES,
     SPATIAL_LEVEL_NAMES,
@@ -66,7 +67,7 @@ from app.domain.state import (
     WorkflowError,
 )
 from app.executor.operation_executor import ExecutionContext, execute_operations, prepare_context
-from app.gis.tools import GisToolError, bivariate_spec, create_map_layer, hex_bins, point_locations
+from app.gis.tools import GisToolError, bivariate_spec, create_map_layer, get_dataset, hex_bins, point_locations
 from app.llm.base import LLMError, LLMOutputError, StructuredLLM
 from app.llm.embeddings import Embedder, EmbeddingError
 from app.repositories.run_repository import save_run
@@ -117,6 +118,7 @@ class _RunContext:
     llm: StructuredLLM
     catalog: DatasetCatalog
     gis: _GisSession
+    pool: ConnectionPool
     acquirer: DataAcquirer | None = None  # 없으면 아직 받지 않은 등록 출처를 쓸 수 없다
 
 
@@ -173,7 +175,9 @@ class AnalysisWorkflow:
         timings: list[StepTiming] = []
         stop: WorkflowError | None = None
         try:
-            context = _RunContext(llm=self._llm, catalog=self._catalog, gis=gis, acquirer=self._acquirer)
+            context = _RunContext(
+                llm=self._llm, catalog=self._catalog, gis=gis, pool=self._pool, acquirer=self._acquirer
+            )
             # stream_mode="values"는 단계(노드)가 끝날 때마다 전체 상태를 내보낸다. 첫 값은 입력 상태다.
             for index, chunk in enumerate(ANALYSIS_GRAPH.stream(initial, context=context, stream_mode="values")):
                 values = chunk
@@ -349,6 +353,35 @@ def _select_datasets(state: AgentState, ctx: _RunContext, update: Update) -> Non
     update["dataset_candidates"] = candidates
     selection = _llm_call(steps.select_datasets, ctx.llm, interpreted, candidates)
     update["dataset_selection"] = selection  # 검사 전에 기록해 잘못된 선택도 추적할 수 있게 한다
+    update["dataset_selection_history"] = [selection]
+    by_id = {d.dataset_id: d for d in candidates}
+    failed_csvs = {
+        dataset_id: reason
+        for dataset_id in selection.datasets
+        if dataset_id in by_id
+        and by_id[dataset_id].category == AUTO_DISCOVERED_CATEGORY
+        and (reason := _csv_unavailable(by_id[dataset_id], state, ctx)) is not None
+    }
+    if failed_csvs:
+        retry_candidates = [
+            d
+            for d in candidates
+            if d.dataset_id not in failed_csvs
+            and (d.is_polygon or d.dataset_id in selection.datasets or d.acquisition is not None)
+        ]
+        reasons = "; ".join(f"{by_id[d].title}: {reason}" for d, reason in failed_csvs.items())
+        if not any(
+            d.acquisition is not None and resolve_region(state.resolved_region, d.spatial.coverage)
+            for d in retry_candidates
+        ):
+            raise WorkflowFailure(
+                "DATA_NOT_AVAILABLE", f"CSV를 분석에 사용할 수 없고 대체 OpenAPI 후보가 없습니다: {reasons}"
+            )
+        selection = _llm_call(steps.select_datasets, ctx.llm, interpreted, retry_candidates, reasons)
+        update["dataset_selection"] = selection
+        update["dataset_selection_history"].append(selection)
+        # 이후 검사는 재선택에 제시한 후보만 허용한다. 다시 실패해도 반복 호출하지 않는다.
+        candidates = retry_candidates
     candidate_ids = {d.dataset_id for d in candidates}
     # 출처가 없거나 후보에 없는 ID(지어낸 ID)인 데이터는 이 후보들로 만들 수 없다.
     missing = [need.concept for need in selection.required_data if need.dataset_id not in candidate_ids]
@@ -390,6 +423,44 @@ def _select_datasets(state: AgentState, ctx: _RunContext, update: Update) -> Non
             "DATA_NOT_AVAILABLE", f"{listed}에는 '{state.resolved_region.name}' 지역이 없어 분석할 수 없습니다"
         )
     update["selected_datasets"] = selected
+
+
+def _csv_unavailable(metadata: DatasetMetadata, state: AgentState, ctx: _RunContext) -> str | None:
+    """CSV를 다시 적재하지 않고, 공간 분석에 쓸 수 있는 메타데이터·테이블인지 확인한다."""
+    if metadata.spatial.coverage is None:
+        return "좌표·행정코드로 확인된 지역 범위가 없습니다"
+    if resolve_region(state.resolved_region, metadata.spatial.coverage) is None:
+        return f"분석 지역 '{state.resolved_region.name}'을 포함하지 않습니다"
+    point = metadata.geometry_column is not None and metadata.spatial.geometry_type == GeometryType.POINT
+    boundaries = [
+        d
+        for d in ctx.catalog.list_all(include_auto=False)
+        if d.is_polygon
+        and d.spatial.level == state.interpreted_query.analysis_unit
+        and resolve_region(state.resolved_region, d.spatial.coverage)
+    ]
+    keyed = metadata.spatial.level == state.interpreted_query.analysis_unit and any(
+        key.semantic_type == other.semantic_type and key.code_system == other.code_system
+        for key in metadata.join_keys
+        for boundary in boundaries
+        for other in boundary.join_keys
+    )
+    if not point and not keyed:
+        return "분석 단위에 연결할 좌표 또는 행정코드가 없습니다"
+    try:
+        with ctx.pool.connection() as conn:
+            conn.execute("SET TRANSACTION READ ONLY")
+            view = get_dataset(conn, metadata)
+            conn.execute(
+                sql.SQL("SELECT {} FROM {} LIMIT 0").format(
+                    sql.SQL(", ").join(sql.Identifier(c.name) for c in metadata.columns), view.table
+                )
+            )
+    except GisToolError as error:
+        return str(error)
+    except (psycopg.errors.UndefinedTable, psycopg.errors.UndefinedColumn):
+        return "적재된 테이블·컬럼이 카탈로그와 일치하지 않습니다"
+    return None
 
 
 # 자동 후보 이름 대조에서 빼는 낱말: 지역·흔한 말과, 데이터의 대상이 아닌 통계 낱말(예: '평균 소득'이 '평균기온'과

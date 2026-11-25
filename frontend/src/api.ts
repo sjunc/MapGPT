@@ -59,6 +59,7 @@ export interface RunProvenance {
     datasets?: string[];
     rationale?: string;
   } | null;
+  dataset_selection_history?: NonNullable<RunProvenance["dataset_selection"]>[];
   analysis_plan?: {
     intent?: string;
     analysis_unit?: string;
