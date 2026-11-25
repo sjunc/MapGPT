@@ -370,7 +370,8 @@ def test_unspecified_unit_uses_finest_available_boundary(pool, catalog):
     assert state.analysis_plan.analysis_unit == "emd"
 
 
-def test_dataset_selection_adds_boundary_matching_analysis_unit(pool, catalog):
+@pytest.mark.parametrize("boundary_in_search", [True, False])
+def test_dataset_selection_adds_boundary_matching_analysis_unit(pool, catalog, monkeypatch, boundary_in_search):
     llm = daycare_llm(
         selection=[
             DatasetSelection(
@@ -380,10 +381,19 @@ def test_dataset_selection_adds_boundary_matching_analysis_unit(pool, catalog):
         ]
     )
 
-    state = AnalysisWorkflow(llm, pool, FakeEmbedder()).run(QUESTION)
+    workflow = AnalysisWorkflow(llm, pool, FakeEmbedder())
+    if not boundary_in_search:
+        search = workflow._catalog.search
+        monkeypatch.setattr(
+            workflow._catalog, "search", lambda query: [hit for hit in search(query) if not hit.metadata.is_polygon]
+        )
+    state = workflow.run(QUESTION)
 
     assert state.status == RunStatus.SUCCEEDED, state.errors
     assert state.selected_datasets == ["population_by_age", "daycare_facility", "emd_boundary"]
+    assert "emd_boundary" in llm.prompts_for(DatasetSelection)[0]
+    if not boundary_in_search:
+        assert "emd_boundary" not in [hit.dataset_id for hit in state.dataset_search.hits]
 
 
 class FailingEmbedder(FakeEmbedder):

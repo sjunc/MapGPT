@@ -31,7 +31,7 @@ class ExecutionContext:
 
 
 def _run_aggregate_by_area(op: AggregateByAreaOperation, ctx: ExecutionContext) -> MetricValues:
-    return tools.aggregate_by_area(ctx.conn, ctx.views[op.input], ctx.boundary, op.aggregation, op.output)
+    return tools.aggregate_by_area(ctx.conn, ctx.views[op.input], ctx.boundary, op.aggregation, op.output, op.field)
 
 
 def _run_aggregate(op: AggregateOperation, ctx: ExecutionContext) -> MetricValues:

@@ -19,7 +19,8 @@ class AggregateByAreaOperation(StrictModel):
     label: Label
     input: str = Field(description="집계할 Point Dataset ID")
     boundary: str = Field(description="집계 단위 Polygon Dataset ID")
-    aggregation: Literal["count"]
+    aggregation: AggregationFunction
+    field: str | None = Field(default=None, description="sum·avg로 집계할 숫자 컬럼. count는 null")
     output: MetricName
 
 

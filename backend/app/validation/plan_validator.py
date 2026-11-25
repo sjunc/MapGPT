@@ -204,6 +204,17 @@ class _PlanChecker:
         points = self.known(op.input, f"{path}.input")
         boundary = self.known(op.boundary, f"{path}.boundary")
         if points is not None:
+            if op.aggregation == AggregationFunction.COUNT:
+                if op.field is not None:
+                    self.error("FIELD_UNEXPECTED", "count는 컬럼이 아니라 점의 개수를 셉니다", f"{path}.field")
+            else:
+                column = points.column(op.field) if op.field is not None else None
+                if column is None:
+                    self.error("FIELD_UNKNOWN", f"'{op.input}'에 '{op.field}' 숫자 컬럼이 없습니다", f"{path}.field")
+                elif column.data_type not in _NUMERIC:
+                    self.error("FIELD_NOT_NUMERIC", f"'{op.field}'은 숫자 컬럼이 아닙니다", f"{path}.field")
+                elif column.semantic_type == SemanticType.POPULATION and op.aggregation != AggregationFunction.SUM:
+                    self.error("POPULATION_NOT_SUMMED", "인구 수는 합계(sum)로 집계합니다", f"{path}.aggregation")
             if points.geometry_column is None:
                 self.error(
                     "GEOMETRY_REQUIRED", f"'{op.input}'에 Geometry가 없어 공간 집계할 수 없습니다", f"{path}.input"
@@ -440,7 +451,12 @@ def _same_computation(first: object, second: object) -> bool:
     if isinstance(first, AggregateOperation) and isinstance(second, AggregateOperation):
         return (first.input, first.group_by, first.aggregation) == (second.input, second.group_by, second.aggregation)
     if isinstance(first, AggregateByAreaOperation) and isinstance(second, AggregateByAreaOperation):
-        return (first.input, first.boundary) == (second.input, second.boundary)
+        return (first.input, first.boundary, first.aggregation, first.field) == (
+            second.input,
+            second.boundary,
+            second.aggregation,
+            second.field,
+        )
     return False
 
 

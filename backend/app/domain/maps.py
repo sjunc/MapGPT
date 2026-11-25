@@ -46,7 +46,11 @@ def metric_operation(plan: AnalysisPlan) -> Operation:
 def point_count_operation(plan: AnalysisPlan) -> AggregateByAreaOperation | None:
     """지도 지표가 Point 개수면 그 Operation. 센 점의 위치와 육각 격자를 함께 보낼 수 있다."""
     operation = metric_operation(plan)
-    return operation if isinstance(operation, AggregateByAreaOperation) else None
+    return (
+        operation
+        if isinstance(operation, AggregateByAreaOperation) and operation.aggregation == AggregationFunction.COUNT
+        else None
+    )
 
 
 def ratio_operation(plan: AnalysisPlan) -> CalculateRatioOperation | None:
@@ -61,6 +65,8 @@ def metric_kind(plan: AnalysisPlan) -> MetricKind:
     if isinstance(operation, CalculateRatioOperation):
         return MetricKind.RATE
     if isinstance(operation, AggregateOperation) and operation.aggregation.function == AggregationFunction.AVG:
+        return MetricKind.AVERAGE
+    if isinstance(operation, AggregateByAreaOperation) and operation.aggregation == AggregationFunction.AVG:
         return MetricKind.AVERAGE
     return MetricKind.TOTAL
 

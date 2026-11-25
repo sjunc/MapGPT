@@ -177,7 +177,7 @@ def _aggregate_without_geometry(
     인구 표의 행은 나이 구간이라 지역별로 셀 대상은 사람 수뿐이다. 인구 컬럼이 없는 표는 행이 무엇인지(시설 하나,
     연도별 통계 등) 알 수 없어 고치지 않고 다시 만들게 둔다.
     """
-    if not isinstance(op, AggregateByAreaOperation) or boundary is None:
+    if not isinstance(op, AggregateByAreaOperation) or op.aggregation != AggregationFunction.COUNT or boundary is None:
         return op
     source = datasets.get(op.input)
     if source is None or source.geometry_column is not None:
@@ -231,7 +231,14 @@ def _rank_order_of_question(
     gpt-4o-mini가 '가장 많은 곳'이나 방향을 말하지 않은 '자치구별 어린이집 수'를 asc로 계획해, 가장 적은 곳을
     1위로 보여 주고 설명이 그곳을 '가장 많다'고 말했다.
     """
+    # 기온의 추운 순은 낮은 값부터다. '추운 날 수' 같은 개수 질문에는 적용하지 않는다.
+    producer = next((op for op in operations if op.output == metric), None)
+    is_average = (
+        isinstance(producer, AggregateByAreaOperation) and producer.aggregation == AggregationFunction.AVG
+    ) or (isinstance(producer, AggregateOperation) and producer.aggregation.function == AggregationFunction.AVG)
     wanted = question_rank_order(question)
+    if is_average and re.search(r"추운|추위|춥", question) and not re.search(r"더운|더위|덥|따뜻", question):
+        wanted = SortOrder.ASC
     if wanted is None:
         return operations
     repaired = []

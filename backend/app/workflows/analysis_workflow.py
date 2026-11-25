@@ -331,6 +331,21 @@ def _select_datasets(state: AgentState, ctx: _RunContext, update: Update) -> Non
         hits=[DatasetHit(dataset_id=hit.metadata.dataset_id, similarity=round(hit.similarity, 4)) for hit in hits],
     )
     candidates = [hit.metadata for hit in hits]
+    # 행정 경계는 질문과의 임베딩 유사도가 낮아 상위 검색 결과에서 빠질 수 있다.
+    # 해석 단계에서 정한 지역·분석 단위에 맞는 등록 경계를 필수 후보로 보충한다.
+    if not any(
+        d.is_polygon
+        and d.spatial.level == interpreted.analysis_unit
+        and resolve_region(state.resolved_region, d.spatial.coverage)
+        for d in candidates
+    ):
+        candidates.extend(
+            d
+            for d in ctx.catalog.list_all(include_auto=False)
+            if d.is_polygon
+            and d.spatial.level == interpreted.analysis_unit
+            and resolve_region(state.resolved_region, d.spatial.coverage)
+        )
     update["dataset_candidates"] = candidates
     selection = _llm_call(steps.select_datasets, ctx.llm, interpreted, candidates)
     update["dataset_selection"] = selection  # 검사 전에 기록해 잘못된 선택도 추적할 수 있게 한다
@@ -588,6 +603,13 @@ def _fallback_regional_summary_plan(state: AgentState, datasets: dict[str, Datas
     # 대체 계획은 필터 없이 집계하므로, LLM 계획에 데이터 조건(예: 나이 0~5세)이 있었다면 그 조건을 버린 다른 질문에
     # 답하게 된다. 경계 Dataset 필터는 지역 조건이라(지역은 region으로 정해진다) 버려도 답이 바뀌지 않는다.
     attempted = [attempt.plan for attempt in state.plan_history if attempt.plan is not None]
+    # 공간 평균·합계를 점 개수로 대체하면 기온 대신 관측소 수를 답하게 된다.
+    if any(
+        op.type == "aggregate_by_area" and op.aggregation != "count"
+        for plan in [*attempted, state.analysis_plan]
+        for op in plan.operations
+    ):
+        return None
     if any(
         not (condition.dataset in datasets and datasets[condition.dataset].is_polygon)
         for plan in [*attempted, state.analysis_plan]
