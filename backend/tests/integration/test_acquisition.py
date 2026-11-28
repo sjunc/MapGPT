@@ -411,7 +411,7 @@ def test_auto_candidate_is_acquired_before_planning_and_marked_in_the_response(p
     assert AUTO_SOURCE_LIMITATIONS[0] in state.final_response.limitations
 
 
-def test_auto_candidate_failing_the_checks_is_answered_as_no_data(pool, conn, boundary, tmp_path):
+def test_auto_candidate_failing_the_checks_is_acquisition_failure(pool, conn, boundary, tmp_path):
     _register(conn, AUTO)
     sync_catalog_embeddings(conn, FakeEmbedder())
     conn.commit()
@@ -422,7 +422,7 @@ def test_auto_candidate_failing_the_checks_is_answered_as_no_data(pool, conn, bo
     )
 
     [error] = state.errors
-    assert (error.step, error.code) == (WorkflowStep.ACQUIRE_DATA, "DATA_NOT_AVAILABLE")
+    assert (error.step, error.code) == (WorkflowStep.ACQUIRE_DATA, "DATA_ACQUISITION_FAILED")
     assert error.message.startswith("'시험 시설 위치' 데이터로 고른 자동 수집 후보를 쓸 수 없어 분석할 수 없습니다")
     assert "자동 후보 기준 90%" in error.message
 

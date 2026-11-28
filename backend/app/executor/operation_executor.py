@@ -36,7 +36,13 @@ def _run_aggregate_by_area(op: AggregateByAreaOperation, ctx: ExecutionContext) 
 
 def _run_aggregate(op: AggregateOperation, ctx: ExecutionContext) -> MetricValues:
     return tools.aggregate(
-        ctx.conn, ctx.views[op.input], op.group_by, op.aggregation.field, op.aggregation.function, op.output
+        ctx.conn,
+        ctx.views[op.input],
+        op.group_by,
+        op.aggregation.field,
+        op.aggregation.function,
+        op.output,
+        ctx.boundary,
     )
 
 

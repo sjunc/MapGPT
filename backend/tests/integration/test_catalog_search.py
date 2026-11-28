@@ -93,7 +93,22 @@ def test_auto_candidates_follow_reviewed_ones_and_never_push_them_out(pool, conn
 
     ids = [hit.metadata.dataset_id for hit in hits]
     assert sorted(ids[:3]) == ALL_DATASETS and ids[0] == "daycare_facility"
-    assert len(ids[3:]) == 5 and set(ids[3:]) <= set(auto_ids)
+    assert set(ids[3:]) == set(auto_ids)  # 제목 일치 후보는 의미 검색의 5개 제한 밖에서도 보충한다.
+
+
+def test_title_match_recovers_candidate_outside_vector_limit(pool, conn, catalog):
+    base = TRUSTED_DATASETS["daycare_facility"]
+    upsert_dataset(conn, base.model_copy(update={"dataset_id": "museum", "title": "서울 박물관 위치"}))
+    conn.commit()
+    sync_catalog_embeddings(conn, FakeEmbedder())
+    conn.commit()
+    hits = DatasetCatalog(pool, FakeEmbedder()).search("박물관", limit=1)
+    assert "museum" in {hit.metadata.dataset_id for hit in hits}
+
+
+def test_population_title_matches_question_with_particles(pool, catalog):
+    hits = DatasetCatalog(pool, FakeEmbedder()).search("서울특별시의 자치구별 65세 이상 인구를 보여줘", limit=1)
+    assert "population_by_age" in {hit.metadata.dataset_id for hit in hits}
 
 
 def test_missing_or_other_model_auto_embeddings_do_not_stop_search(pool, conn, catalog):

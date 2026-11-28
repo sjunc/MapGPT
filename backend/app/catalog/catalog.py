@@ -6,11 +6,12 @@ pgvector가 관련 Dataset 후보를 찾고, 최종 선택은 LLM이, 사용 가
 """
 
 from dataclasses import dataclass
+import re
 
 import psycopg
 from psycopg_pool import ConnectionPool
 
-from app.domain.catalog import DatasetMetadata, RegionRef
+from app.domain.catalog import AUTO_PUBLIC_API_CATEGORY, DatasetMetadata, RegionRef
 from app.llm.embeddings import Embedder
 from app.repositories.catalog_repository import (
     embedding_sources,
@@ -118,4 +119,49 @@ class DatasetCatalog:
             auto = (
                 nearest_datasets(conn, vector, auto_limit, auto=True, model=self._embedder.model) if auto_limit else []
             )
-        return [ScoredDataset(metadata, similarity) for metadata, similarity in [*reviewed, *auto]]
+            # 긴 컬럼 설명의 임베딩 때문에 제목이 정확히 맞는 데이터가 상위 후보에서 빠질 수 있다.
+            tokens = set(re.findall(r"[가-힣A-Za-z0-9]{2,}", query)) - {
+                "서울",
+                "서울특별시",
+                "구별",
+                "동별",
+                "시도별",
+                "시군구별",
+                "행정동별",
+                "개수",
+                "합계",
+                "평균",
+                "비율",
+                "순위",
+                "보여줘",
+                "알려줘",
+                "지역별",
+                "전체",
+                "시설",
+                "데이터",
+                "대한민국",
+                "경계",
+            }
+            tokens = {
+                token
+                for token in tokens
+                if not token.startswith(("서울", "자치구", "행정동", "시군구", "지역", "보여", "알려"))
+            }
+            matched = [
+                (metadata, similarity)
+                for metadata, similarity in nearest_datasets(conn, vector, 10000, model=self._embedder.model)
+                if any(token in metadata.title for token in tokens)
+                or any(
+                    len(word) >= 2 and word in token
+                    for word in re.findall(r"[가-힣A-Za-z0-9]+", metadata.title)
+                    for token in tokens
+                )
+            ]
+            matched = [item for item in matched if item[0].category != AUTO_PUBLIC_API_CATEGORY][:10] + [
+                item for item in matched if item[0].category == AUTO_PUBLIC_API_CATEGORY
+            ][:10]
+        unique = {
+            metadata.dataset_id: ScoredDataset(metadata, similarity)
+            for metadata, similarity in [*reviewed, *auto, *matched]
+        }
+        return list(unique.values())

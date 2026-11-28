@@ -1225,3 +1225,10 @@ FROM analysis.run GROUP BY 1, 2, 3 ORDER BY 1, 2;
 | CRS / SRID | 좌표계 / 좌표계 번호(예: EPSG:4326 경위도, EPSG:5179 UTM-K) |
 | pgvector / 임베딩 | PostgreSQL 벡터 검색 확장 / 텍스트를 의미 벡터로 바꾼 값 |
 | null_reason | 값을 계산할 수 없는 이유(`denominator_zero`, `denominator_missing`, `numerator_missing`, `no_matching_records`, `input_null`) |
+
+
+### 2026-11-25 검증 반영
+
+행안부 코드 체계가 확인된 행정동 인구는 시군구·시도로 상위 집계한다. 의미 검색에서 빠진 제목 일치 후보를 기존 데이터·자동 API 각각 최대 10개 보충한다. 자동 API의 좌표·지역 품질 검사 실패는 데이터 부재가 아닌 수집 실패로 표시한다. 결정 근거는 설계 문서 부록 D를 참고한다.
+
+CSV 대체 재선택에서는 최초 선택에 없던 검토된 기존 Dataset도 후보로 유지한다. 실제 OpenAI 질문 31개의 실행 ID·결과·지도 및 순위 건수는 `tests/e2e/audit_results.json`, 재실행 질문은 `tests/e2e/audit_questions.json`에 있다. 실행: `python scripts/audit_questions.py tests/e2e/audit_questions.json <결과.json>` (실제 LLM 호출 비용 발생). 최종 결과는 성공 19건, 필요한 데이터 부족 8건, API 위치 품질/좌표계 검사 실패 4건이다. 브라우저 렌더링은 별도 검증이 필요하다.

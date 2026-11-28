@@ -364,10 +364,7 @@ def _select_datasets(state: AgentState, ctx: _RunContext, update: Update) -> Non
     }
     if failed_csvs:
         retry_candidates = [
-            d
-            for d in candidates
-            if d.dataset_id not in failed_csvs
-            and (d.is_polygon or d.dataset_id in selection.datasets or d.acquisition is not None)
+            d for d in candidates if d.dataset_id not in failed_csvs and d.category != AUTO_DISCOVERED_CATEGORY
         ]
         reasons = "; ".join(f"{by_id[d].title}: {reason}" for d, reason in failed_csvs.items())
         if not any(
@@ -567,11 +564,11 @@ def _acquire_data(state: AgentState, ctx: _RunContext, update: Update) -> None:
         try:
             metadata, record = ctx.acquirer.acquire(dataset_id)
         except AutoSourceRejected as error:
-            # 자동 후보가 코드 검사(좌표 모양·좌표계·지역 안 비율)를 통과하지 못하면 쓸 수 있는 데이터가 없다는 답이다.
+            # 데이터는 존재하지만 품질 검사를 통과하지 못했다. 데이터 부재로 표시하지 않는다.
             need = next((n for n in state.dataset_selection.required_data if n.dataset_id == dataset_id), None)
             concept = need.concept if need else candidates[dataset_id].title
             raise WorkflowFailure(
-                "DATA_NOT_AVAILABLE",
+                "DATA_ACQUISITION_FAILED",
                 f"'{concept}' 데이터로 고른 자동 수집 후보를 쓸 수 없어 분석할 수 없습니다: {error}",
             ) from error
         except RowLimitExceeded as error:

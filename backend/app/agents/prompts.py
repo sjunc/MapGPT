@@ -93,14 +93,15 @@ def select_prompt(
    - 후보의 컬럼이나 필터로 만들 수 있으면 그 Dataset이 주는 데이터다 (예: 0~5세 인구 → 연령별 인구 Dataset).
    - 어느 후보로도 만들 수 없을 때만 dataset_id를 null로 둔다. 비슷해 보이는 다른 Dataset으로 대신하지 않는다.
 3. datasets에는 분석 단위 경계와 required_data의 Dataset을 빠짐없이 넣고, 필요 없는 Dataset은 넣지 않는다.
+   - 행안부 행정동 코드(mois_adm_cd)는 시군구·시도 경계로 상위 집계할 수 있다. 인구 데이터가 행정동 단위여도 구별·시도별 질문에 사용할 수 있다.
 4. rationale에 각 Dataset을 고른 이유를 짧게 쓴다.
 5. reviewed가 false인 후보는 포털 정보로 자동 등록되어 사람이 검토하지 않은 데이터다. reviewed가 없는 후보로 같은 데이터를 만들 수 있으면 그 후보를 쓴다."""
     user = f"[해석된 질문]\n{_json(interpreted)}\n\n[후보 Dataset]\n{_json([_dataset_summary(d) for d in candidates])}"
     if retry_reason:
         user += (
             f"\n\n[CSV 사용 실패 — 대체 출처 재선택]\n{retry_reason}\n"
-            "사용할 수 없는 CSV는 후보에서 제외했다. 같은 질문에 필요한 동일 개념의 데이터를 제공하는 OpenAPI 후보로 "
-            "다시 선택하라. 이미 사용 가능한 다른 데이터는 유지할 수 있다. 관련 없는 데이터로 대신하지 말고, "
+            "사용할 수 없는 CSV는 후보에서 제외했다. 같은 질문에 필요한 동일 개념의 데이터를 제공하는 OpenAPI 또는 검토된 기존 Dataset으로 "
+            "다시 선택하라. 최초 선택에 없던 검토된 데이터도 사용할 수 있다. 관련 없는 데이터로 대신하지 말고, "
             "적합한 대체 출처가 없으면 required_data의 dataset_id를 null로 둬라."
         )
     return system, user
@@ -127,6 +128,7 @@ def plan_prompt(
 [Operation 의미]
 - aggregate_by_area: Geometry가 Point인 Dataset(input)을 좌표로 Polygon 경계 Dataset(boundary)에 연결해 집계한다. 행정코드나 join_keys가 없어도 쓸 수 있다. 개수는 aggregation=count, field=null이다. 숫자 컬럼의 합계·평균은 aggregation=sum·avg와 field=실제 숫자 컬럼명을 쓴다. 예: 관측점의 기온을 지역별로 비교할 때 aggregation=avg, field=기온 컬럼으로 집계한 뒤 rank로 순위를 매긴다. 관측점 개수를 기온 대신 쓰지 않는다. Geometry가 없거나 Polygon인 Dataset에는 쓰지 않는다. 관측값이 없는 지역은 null이며 추정하지 않는다.
 - aggregate: Dataset(input)을 group_by 키(분석 단위 경계와 결합되는 join key 1개)별로 aggregation.field를 합계(sum), 평균(avg), 개수(count)로 집계한다. 행정코드가 있고 Geometry가 없는 Dataset은 이 operation을 쓴다. 주민등록 인구수는 population 컬럼을 sum하며 행 개수를 count하지 않는다.
+  행안부 행정동 코드(mois_adm_cd)는 시군구(mois_sigungu_cd)·시도(mois_sido_cd)로, 시군구 코드는 시도로 상위 집계할 수 있다. group_by에는 원본 코드 컬럼(예: adm_cd)을 그대로 쓰면 실행기가 상위 코드로 집계한다. 존재하지 않는 시군구 컬럼을 만들거나 인구 비율 계산을 포기하지 않는다.
 - calculate_ratio: numerator ÷ denominator × scale. numerator와 denominator는 앞에서 만든 output 이름이다.
 - rank: input(앞에서 만든 output)에 order 방향으로 순위를 매긴다.
 

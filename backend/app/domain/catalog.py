@@ -50,6 +50,28 @@ class JoinKey(StrictModel):
     code_system: str | None = None
 
 
+def rollup_prefix_length(source: JoinKey | None, target: JoinKey | None) -> int | None:
+    """명시된 행안부 코드 체계만 상위 행정구역으로 집계한다."""
+    if source is None or target is None:
+        return None
+    systems = {
+        "mois_adm_cd": (10, SemanticType.ADMINISTRATIVE_CODE),
+        "mois_sigungu_cd": (5, SemanticType.ADMINISTRATIVE_CODE),
+        "mois_sido_cd": (2, SemanticType.ADMINISTRATIVE_CODE),
+    }
+    lower = systems.get(source.code_system)
+    upper = systems.get(target.code_system)
+    if (
+        lower
+        and upper
+        and lower[0] > upper[0]
+        and source.semantic_type == lower[1]
+        and target.semantic_type == upper[1]
+    ):
+        return upper[0]
+    return None
+
+
 class RegionRef(StrictModel):
     name: str
     level: SpatialLevel

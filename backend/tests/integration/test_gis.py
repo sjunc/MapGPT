@@ -1,8 +1,9 @@
 from collections import Counter
+from dataclasses import replace
 
 import pytest
 
-from app.catalog.definitions import DAYCARE_FACILITY, EMD_BOUNDARY, POPULATION_BY_AGE, SEOUL
+from app.catalog.definitions import DAYCARE_FACILITY, EMD_BOUNDARY, POPULATION_BY_AGE, SEOUL, SIGUNGU_BOUNDARY
 from app.domain.enums import AggregationFunction
 from app.domain.filters import FilterCondition
 from app.domain.maps import map_style
@@ -15,6 +16,14 @@ from tests.support import load_plan
 pytestmark = pytest.mark.integration
 
 CHILDREN = FilterCondition(field="age", operator="between", value=[0, 5])
+
+
+def test_population_rollup_sums_children_across_dongs(conn, datasets):
+    population = tools.filter_dataset(conn, tools.get_dataset(conn, POPULATION_BY_AGE), CHILDREN)
+    boundary = replace(tools.get_boundary(conn, EMD_BOUNDARY, SEOUL), metadata=SIGUNGU_BOUNDARY, key_field="sigungu_cd")
+    result = tools.aggregate(conn, population, ["adm_cd"], "population", AggregationFunction.SUM, "children", boundary)
+    assert result.values["11110"] == 500
+    assert "1111000100" not in result.values
 
 
 @pytest.fixture

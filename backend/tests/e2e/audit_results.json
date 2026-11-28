@@ -1,0 +1,435 @@
+[
+  {
+    "question": "서울 구별 인구 대비 어린이집이 부족한 곳을 보여줘",
+    "run_id": "7b09ac19-af82-475d-a98e-df5330a85588",
+    "status": "succeeded",
+    "datasets": [
+      "daycare_facility",
+      "population_by_age",
+      "sigungu_boundary"
+    ],
+    "errors": [],
+    "map_features": 25,
+    "ranking_rows": 25
+  },
+  {
+    "question": "서울 구별 버스정류장 수를 보여줘",
+    "run_id": "ea017343-5ced-4f82-a71c-fe64ce0a9ac4",
+    "status": "succeeded",
+    "datasets": [
+      "auto_0e47bf30779d",
+      "sigungu_boundary"
+    ],
+    "errors": [],
+    "map_features": 25,
+    "ranking_rows": 25
+  },
+  {
+    "question": "서울 구별 병원 수를 보여줘",
+    "run_id": "857377a3-f2fe-48fd-81a1-8b0d48549256",
+    "status": "succeeded",
+    "datasets": [
+      "seoul_localdata_010101",
+      "sigungu_boundary"
+    ],
+    "errors": [],
+    "map_features": 25,
+    "ranking_rows": 25
+  },
+  {
+    "question": "서울 구별 약국 수를 보여줘",
+    "run_id": "3f559dca-1cfe-44a2-8377-df03eda29051",
+    "status": "succeeded",
+    "datasets": [
+      "seoul_localdata_010106",
+      "sigungu_boundary"
+    ],
+    "errors": [],
+    "map_features": 25,
+    "ranking_rows": 25
+  },
+  {
+    "question": "서울 구별 공공도서관 수를 보여줘",
+    "run_id": "9017d2b9-5ed0-4bb1-b896-a634337dbad9",
+    "status": "succeeded",
+    "datasets": [
+      "seoul_seoulpubliclibraryinfo",
+      "sigungu_boundary"
+    ],
+    "errors": [],
+    "map_features": 25,
+    "ranking_rows": 25
+  },
+  {
+    "question": "서울 구별 공공와이파이 수를 보여줘",
+    "run_id": "4adadc0c-62dd-40c6-918b-ffeb06c042c6",
+    "status": "succeeded",
+    "datasets": [
+      "seoul_public_wifi",
+      "sigungu_boundary"
+    ],
+    "errors": [],
+    "map_features": 25,
+    "ranking_rows": 25
+  },
+  {
+    "question": "서울 구별 어린이집 수를 보여줘",
+    "run_id": "394a96fe-bcb6-46a5-90ad-3c96a1e95195",
+    "status": "succeeded",
+    "datasets": [
+      "daycare_facility",
+      "sigungu_boundary"
+    ],
+    "errors": [],
+    "map_features": 25,
+    "ranking_rows": 25
+  },
+  {
+    "question": "서울 구별 경로당 수를 보여줘",
+    "run_id": "cb1f7062-4295-4a5f-90b7-4a762a93261f",
+    "status": "succeeded",
+    "datasets": [
+      "auto_26acc7222025",
+      "sigungu_boundary"
+    ],
+    "errors": [],
+    "map_features": 25,
+    "ranking_rows": 25
+  },
+  {
+    "question": "서울 구별 공영주차장 수를 보여줘",
+    "run_id": "ce018523-1d91-4ded-972e-cb6bd723640b",
+    "status": "failed",
+    "datasets": [
+      "seoul_getparkinfo",
+      "sigungu_boundary"
+    ],
+    "errors": [
+      {
+        "step": "acquire_data",
+        "code": "DATA_ACQUISITION_FAILED",
+        "message": "'공영주차장 위치와 식별 코드' 데이터로 고른 자동 수집 후보를 쓸 수 없어 분석할 수 없습니다: '서울시 공영주차장 안내 정보'에서 위치가 서울특별시 안에 있는 행이 1,478/2,244행(66%)뿐이라 쓰지 않습니다 (자동 후보 기준 90%)",
+        "issues": []
+      }
+    ],
+    "map_features": 0,
+    "ranking_rows": 0
+  },
+  {
+    "question": "서울 구별 전기차 충전소 수를 보여줘",
+    "run_id": "b0758ece-bf4e-470b-93f9-13d04dc10fab",
+    "status": "failed",
+    "datasets": [
+      "seoul_aievcharging",
+      "sigungu_boundary"
+    ],
+    "errors": [
+      {
+        "step": "acquire_data",
+        "code": "DATA_ACQUISITION_FAILED",
+        "message": "'전기차 충전소' 데이터로 고른 자동 수집 후보를 쓸 수 없어 분석할 수 없습니다: '서울시 공공 전기차 충전소 정보'의 좌표가 미터 단위인데 좌표계를 확인할 수 없어 쓰지 않습니다 (계열 규칙·상세 화면 안내 없음)",
+        "issues": []
+      }
+    ],
+    "map_features": 0,
+    "ranking_rows": 0
+  },
+  {
+    "question": "서울 구별 공중화장실 수를 보여줘",
+    "run_id": "f9bead2d-3507-431f-b607-3297fd65c766",
+    "status": "succeeded",
+    "datasets": [
+      "seoul_mgistoiletpoi",
+      "sigungu_boundary"
+    ],
+    "errors": [],
+    "map_features": 25,
+    "ranking_rows": 25
+  },
+  {
+    "question": "서울 구별 도시공원 수를 보여줘",
+    "run_id": "0f04fdd0-8038-4f01-ae83-e4df3c362eb1",
+    "status": "failed",
+    "datasets": [],
+    "errors": [
+      {
+        "step": "select_datasets",
+        "code": "DATA_NOT_AVAILABLE",
+        "message": "'도시공원 현황' 데이터가 없어 분석할 수 없습니다. 분석할 수 있는 관련 데이터: 서울특별시 서대문구_의류수거함 현황_20260401(서울특별시 범위), 서울특별시 동작구_의류수거함 위치 데이터_20260108(서울특별시 범위), 서울특별시 관악구_의류수거함위치_20210121(서울특별시 범위), 서울특별시 광진구_의류수거함위치_20260304(서울특별시 범위), 서울시 공공와이파이 위치(서울특별시 범위), 서울특별시 어린이집 위치(서울특별시 범위), 경찰청_범죄 발생 지역별 통계_20251231(범위 정보 없음), 서울특별시 구로구_의류수거함_20250601(범위 정보 없음), 서울시 공원 및 사유지수목 위치정보 (좌표계: WGS1984)(서울특별시 범위), 서울시 생활권계획 시설(공원) 공간정보(서울특별시 범위), 서울어린이대공원 시설물 위치정보(서울특별시 범위), 서울시 공원음수대 정보 조회(서울특별시 범위), 서울시 공원 및 사유지수목 위치정보 (좌표계: ITRF2000)(서울특별시 범위)",
+        "issues": []
+      }
+    ],
+    "map_features": 0,
+    "ranking_rows": 0
+  },
+  {
+    "question": "서울 구별 소방서 수를 보여줘",
+    "run_id": "e64aaf21-d40c-4381-97c3-c04037ac5dc8",
+    "status": "failed",
+    "datasets": [
+      "seoul_tbgiwardp",
+      "sigungu_boundary"
+    ],
+    "errors": [
+      {
+        "step": "acquire_data",
+        "code": "DATA_ACQUISITION_FAILED",
+        "message": "'소방서 위치' 데이터로 고른 자동 수집 후보를 쓸 수 없어 분석할 수 없습니다: '서울시 소방서 안전센터 구조대 위치정보'의 좌표가 미터 단위인데 좌표계를 확인할 수 없어 쓰지 않습니다 (계열 규칙·상세 화면 안내 없음)",
+        "issues": []
+      }
+    ],
+    "map_features": 0,
+    "ranking_rows": 0
+  },
+  {
+    "question": "서울 구별 경찰서 수를 보여줘",
+    "run_id": "fde57c1b-8ee0-4632-9ba0-919d36f361cb",
+    "status": "failed",
+    "datasets": [],
+    "errors": [
+      {
+        "step": "select_datasets",
+        "code": "DATA_NOT_AVAILABLE",
+        "message": "'경찰서 위치' 데이터가 없어 분석할 수 없습니다. 분석할 수 있는 관련 데이터: 서울특별시 동작구_의류수거함 위치 데이터_20260108(서울특별시 범위), 서울특별시 관악구_의류수거함위치_20210121(서울특별시 범위), 서울특별시 광진구_의류수거함위치_20260304(서울특별시 범위), 서울특별시 서대문구_의류수거함 현황_20260401(서울특별시 범위), 경찰청 인천광역시경찰청_관서별 5대범죄 112신고건수 현황_20251231(범위 정보 없음), 경찰청_음주운전 시간대별 단속 현황_20201031(범위 정보 없음), 경찰청_범죄 발생 지역별 통계_20251231(범위 정보 없음), 서울특별시 구로구_의류수거함_20250601(범위 정보 없음), 서울특별시 자치구 횡단보도 정보(서울특별시 범위), 서울시 상권분석서비스(영역-서울시)(서울특별시 범위), 서울시 소방자동차전용구역 현황(서울특별시 범위), 서울시 안전표지 관련 정보(서울특별시 범위), 서울시 보행자작동신호기 관련 정보(서울특별시 범위), 서울시 생활권계획 생활권경계 공간정보(서울특별시 범위), 서울시 도로굴착 관리구경계 위치정보 (좌표계: WGS1984)(서울특별시 범위), 서울시 도로굴착 관리구경계 위치정보 (좌표계: ITRF2000)(서울특별시 범위)",
+        "issues": []
+      }
+    ],
+    "map_features": 0,
+    "ranking_rows": 0
+  },
+  {
+    "question": "서울 구별 지하철역 수를 보여줘",
+    "run_id": "a7398afa-e089-47fb-9f41-6e88cb66a9e0",
+    "status": "failed",
+    "datasets": [],
+    "errors": [
+      {
+        "step": "select_datasets",
+        "code": "DATA_NOT_AVAILABLE",
+        "message": "'지하철역 목록 및 위치' 데이터가 없어 분석할 수 없습니다. 분석할 수 있는 관련 데이터: 경찰청_범죄 발생 지역별 통계_20251231(범위 정보 없음), 서울특별시 서대문구_의류수거함 현황_20260401(서울특별시 범위), 서울특별시 어린이집 위치(서울특별시 범위), 서울특별시 동작구_의류수거함 위치 데이터_20260108(서울특별시 범위), 서울특별시 광진구_의류수거함위치_20260304(서울특별시 범위), 서울시 공공와이파이 위치(서울특별시 범위), 서울교통공사_지하철혼잡도정보_20260930(범위 정보 없음), 서울특별시 자치구 횡단보도 정보(서울특별시 범위), 서울시 소방자동차전용구역 현황(서울특별시 범위), 서울시 교통공사 지하철역 편의시설위치정보 환승주차장 현황(서울특별시 범위), 서울시 도로굴착 제한구역 위치정보 (좌표계: WGS1984)(서울특별시 범위), 서울시 도로굴착 제한구역 위치정보 (좌표계: ITRF2000)(서울특별시 범위), 서울시 교통공사 지하철역 편의시설위치정보 물품보관함 현황(서울특별시 범위), 서울시 생활권계획 생활권경계 공간정보(서울특별시 범위), 서울시 도로굴착 관리구경계 위치정보 (좌표계: ITRF2000)(서울특별시 범위), 서울시 도로굴착 관리구경계 위치정보 (좌표계: WGS1984)(서울특별시 범위)",
+        "issues": []
+      }
+    ],
+    "map_features": 0,
+    "ranking_rows": 0
+  },
+  {
+    "question": "서울 구별 박물관 수를 보여줘",
+    "run_id": "c7e03a31-c7cd-4ef0-b83b-da693fe15c2c",
+    "status": "failed",
+    "datasets": [],
+    "errors": [
+      {
+        "step": "select_datasets",
+        "code": "DATA_NOT_AVAILABLE",
+        "message": "'박물관 현황' 데이터가 없어 분석할 수 없습니다. 분석할 수 있는 관련 데이터: 서울특별시 관악구_의류수거함위치_20210121(서울특별시 범위), 서울특별시 서대문구_의류수거함 현황_20260401(서울특별시 범위), 서울특별시 동작구_의류수거함 위치 데이터_20260108(서울특별시 범위), 서울특별시 어린이집 위치(서울특별시 범위), 서울특별시 광진구_의류수거함위치_20260304(서울특별시 범위), 서울시 공공와이파이 위치(서울특별시 범위), 서울특별시 구로구_의류수거함_20250601(범위 정보 없음), 경찰청_범죄 발생 지역별 통계_20251231(범위 정보 없음), 서울시 공공도서관 현황정보(서울특별시 범위), 서울시 소방서관할 위치정보 (좌표계: WGS1984)(2015년)(서울특별시 범위), 서울특별시 자치구 횡단보도 정보(서울특별시 범위), 서울시 포유류개별종분포 공간정보(서울특별시 범위), 서울시 조류개별종분포 공간정보(서울특별시 범위), 서울시 생활권계획 생활권경계 공간정보(서울특별시 범위), 서울시 도로굴착 관리구경계 위치정보 (좌표계: WGS1984)(서울특별시 범위), 서울시 도로굴착 관리구경계 위치정보 (좌표계: ITRF2000)(서울특별시 범위)",
+        "issues": []
+      }
+    ],
+    "map_features": 0,
+    "ranking_rows": 0
+  },
+  {
+    "question": "서울 구별 미술관 수를 보여줘",
+    "run_id": "c32d32db-150a-4556-942f-8d8792558a38",
+    "status": "failed",
+    "datasets": [],
+    "errors": [
+      {
+        "step": "select_datasets",
+        "code": "DATA_NOT_AVAILABLE",
+        "message": "'미술관 위치' 데이터가 없어 분석할 수 없습니다. 분석할 수 있는 관련 데이터: 서울특별시 어린이집 위치(서울특별시 범위), 서울특별시 관악구_의류수거함위치_20210121(서울특별시 범위), 서울특별시 광진구_의류수거함위치_20260304(서울특별시 범위), 서울특별시 서대문구_의류수거함 현황_20260401(서울특별시 범위), 서울시 공공와이파이 위치(서울특별시 범위), 서울특별시 동작구_의류수거함 위치 데이터_20260108(서울특별시 범위), 경찰청_범죄 발생 지역별 통계_20251231(범위 정보 없음), 서울특별시 구로구_의류수거함_20250601(범위 정보 없음), 서울시 공공도서관 현황정보(서울특별시 범위), 서울시 작은도서관 현황정보(서울특별시 범위), 서울시 영화상영관 인허가 정보(서울특별시 범위), 서울시 소방서관할 위치정보 (좌표계: WGS1984)(2015년)(서울특별시 범위), 서울시 문화재 관리 현황(서울특별시 범위), 서울특별시 자치구 횡단보도 정보(서울특별시 범위), 서울시 생활권계획 생활권경계 공간정보(서울특별시 범위), 서울시 도로굴착 관리구경계 위치정보 (좌표계: WGS1984)(서울특별시 범위), 서울시 도로굴착 관리구경계 위치정보 (좌표계: ITRF2000)(서울특별시 범위)",
+        "issues": []
+      }
+    ],
+    "map_features": 0,
+    "ranking_rows": 0
+  },
+  {
+    "question": "서울 구별 지역아동센터 수를 보여줘",
+    "run_id": "87bd541c-7836-4d51-82c9-64b64698f3b4",
+    "status": "succeeded",
+    "datasets": [
+      "seoul_tnfcltysttusinfo1003",
+      "sigungu_boundary"
+    ],
+    "errors": [],
+    "map_features": 25,
+    "ranking_rows": 25
+  },
+  {
+    "question": "서울 구별 키즈카페 수를 보여줘",
+    "run_id": "4f9c0c07-d253-4f22-952b-1bef4175320e",
+    "status": "succeeded",
+    "datasets": [
+      "seoul_tnfcltysttusinfo1011",
+      "sigungu_boundary"
+    ],
+    "errors": [],
+    "map_features": 25,
+    "ranking_rows": 25
+  },
+  {
+    "question": "서울 구별 체육시설 수를 보여줘",
+    "run_id": "ae2f2d03-7a74-4fbe-9a9b-70f16ecfd0bd",
+    "status": "failed",
+    "datasets": [],
+    "errors": [
+      {
+        "step": "select_datasets",
+        "code": "DATA_NOT_AVAILABLE",
+        "message": "'서울시 전체 체육시설 현황' 데이터가 없어 분석할 수 없습니다. 분석할 수 있는 관련 데이터: 서울특별시 어린이집 위치(서울특별시 범위), 서울특별시 서대문구_의류수거함 현황_20260401(서울특별시 범위), 서울특별시 동작구_의류수거함 위치 데이터_20260108(서울특별시 범위), 서울특별시 광진구_의류수거함위치_20260304(서울특별시 범위), 서울특별시 관악구_의류수거함위치_20210121(서울특별시 범위), 경찰청_범죄 발생 지역별 통계_20251231(범위 정보 없음), 서울시 공공와이파이 위치(서울특별시 범위), 한국환경공단_공공하수처리시설 현황_20251231(범위 정보 없음), 서울시 체육시설 공공서비스예약 정보(서울특별시 범위), 서울특별시 자치구 횡단보도 정보(서울특별시 범위), 서울시 공원 및 사유지수목 위치정보 (좌표계: WGS1984)(서울특별시 범위), 서울시 생활권계획 시설(공원) 공간정보(서울특별시 범위), 서울시 체육도장업 인허가 정보(서울특별시 범위), 서울시 생활권계획 생활권경계 공간정보(서울특별시 범위), 서울시 종합체육시설업 인허가 정보(서울특별시 범위), 서울시 도로굴착 관리구경계 위치정보 (좌표계: WGS1984)(서울특별시 범위), 서울시 도로굴착 관리구경계 위치정보 (좌표계: ITRF2000)(서울특별시 범위)",
+        "issues": []
+      }
+    ],
+    "map_features": 0,
+    "ranking_rows": 0
+  },
+  {
+    "question": "서울 구별 전통시장 수를 보여줘",
+    "run_id": "33a739b1-40b3-41c6-b7a0-9af3e01cdb2f",
+    "status": "failed",
+    "datasets": [
+      "seoul_ailisttraditionalmarket",
+      "sigungu_boundary"
+    ],
+    "errors": [
+      {
+        "step": "acquire_data",
+        "code": "DATA_ACQUISITION_FAILED",
+        "message": "'전통시장 수' 데이터로 고른 자동 수집 후보를 쓸 수 없어 분석할 수 없습니다: '서울시 전통시장 현황'의 좌표가 미터 단위인데 좌표계를 확인할 수 없어 쓰지 않습니다 (계열 규칙·상세 화면 안내 없음)",
+        "issues": []
+      }
+    ],
+    "map_features": 0,
+    "ranking_rows": 0
+  },
+  {
+    "question": "서울 구별 전체 인구를 보여줘",
+    "run_id": "75af734e-e524-405a-baab-a25c12364398",
+    "status": "succeeded",
+    "datasets": [
+      "population_by_age",
+      "sigungu_boundary"
+    ],
+    "errors": [],
+    "map_features": 25,
+    "ranking_rows": 0
+  },
+  {
+    "question": "서울 구별 65세 이상 인구를 보여줘",
+    "run_id": "d60ab4c3-8486-40aa-9556-3b60c0e585da",
+    "status": "succeeded",
+    "datasets": [
+      "population_by_age",
+      "sigungu_boundary"
+    ],
+    "errors": [],
+    "map_features": 25,
+    "ranking_rows": 25
+  },
+  {
+    "question": "서울 구별 0~5세 인구를 보여줘",
+    "run_id": "b57fe63b-6ac7-4f16-89ae-249a1c62a4c5",
+    "status": "succeeded",
+    "datasets": [
+      "population_by_age",
+      "sigungu_boundary"
+    ],
+    "errors": [],
+    "map_features": 25,
+    "ranking_rows": 0
+  },
+  {
+    "question": "강남구 동별 어린이집 수를 보여줘",
+    "run_id": "993e6412-0bc1-4f30-9c68-2fd0c90e4885",
+    "status": "succeeded",
+    "datasets": [
+      "daycare_facility",
+      "national_emd_boundary"
+    ],
+    "errors": [],
+    "map_features": 22,
+    "ranking_rows": 22
+  },
+  {
+    "question": "강남구 동별 약국 수를 보여줘",
+    "run_id": "2ff0be11-db7c-41aa-a2c4-043e62b58b9d",
+    "status": "succeeded",
+    "datasets": [
+      "seoul_localdata_010106",
+      "emd_boundary"
+    ],
+    "errors": [],
+    "map_features": 22,
+    "ranking_rows": 22
+  },
+  {
+    "question": "서울 구별 국공립 어린이집 수를 보여줘",
+    "run_id": "d16d5110-75ea-4df5-a92a-459b20035fd1",
+    "status": "succeeded",
+    "datasets": [
+      "daycare_facility",
+      "sigungu_boundary"
+    ],
+    "errors": [],
+    "map_features": 25,
+    "ranking_rows": 25
+  },
+  {
+    "question": "서울 구별 어린이집 정원 합계를 보여줘",
+    "run_id": "73b08abb-3f9a-4c71-8fb2-252ecc8c95c8",
+    "status": "failed",
+    "datasets": [],
+    "errors": [
+      {
+        "step": "select_datasets",
+        "code": "DATA_NOT_AVAILABLE",
+        "message": "'어린이집 정원' 데이터가 없어 분석할 수 없습니다. 분석할 수 있는 관련 데이터: 서울특별시 어린이집 위치(서울특별시 범위), 서울특별시 광진구_의류수거함위치_20260304(서울특별시 범위), 서울특별시 관악구_의류수거함위치_20210121(서울특별시 범위), 서울특별시 동작구_의류수거함 위치 데이터_20260108(서울특별시 범위), 서울특별시 서대문구_의류수거함 현황_20260401(서울특별시 범위), 서울시 공공와이파이 위치(서울특별시 범위), 서울특별시 구로구_의류수거함_20250601(범위 정보 없음), 경찰청_범죄 발생 지역별 통계_20251231(범위 정보 없음), 한국환경공단_공공하수처리시설 현황_20251231(범위 정보 없음), 어린이보호구역 위치도(서울특별시 범위), 서울시 아동복지시설 정보(서울특별시 범위), 서울특별시 어린이놀이시설 정보(서울특별시 범위), 서울시 지역아동센터 시설현황정보(서울특별시 범위), 서울어린이대공원 시설물 위치정보(서울특별시 범위), 서울특별시 자치구 횡단보도 정보(서울특별시 범위)",
+        "issues": []
+      }
+    ],
+    "map_features": 0,
+    "ranking_rows": 0
+  },
+  {
+    "question": "서울 구별 화성 이주민 수를 보여줘",
+    "run_id": "295fb4b0-a796-4d5b-8ba4-2508a88f43c7",
+    "status": "failed",
+    "datasets": [],
+    "errors": [
+      {
+        "step": "select_datasets",
+        "code": "DATA_NOT_AVAILABLE",
+        "message": "'전입자 수', '전출지(경기도 화성시)', '전입지(서울특별시 자치구)' 데이터가 없어 분석할 수 없습니다. 분석할 수 있는 관련 데이터: 서울특별시 관악구_의류수거함위치_20210121(서울특별시 범위), 서울특별시 광진구_의류수거함위치_20260304(서울특별시 범위), 서울특별시 동작구_의류수거함 위치 데이터_20260108(서울특별시 범위), 서울특별시 서대문구_의류수거함 현황_20260401(서울특별시 범위), 서울특별시 구로구_의류수거함_20250601(범위 정보 없음), 경찰청_범죄 발생 지역별 통계_20251231(범위 정보 없음), 서울시 공공와이파이 위치(서울특별시 범위), 서울특별시 어린이집 위치(서울특별시 범위), 서울교통공사_역별 일별 시간대별 승하차인원 정보_20241231(범위 정보 없음), 서울시 보행자 출입구 정보(서울특별시 범위), [장기외국인] 서울 체류인구(250m)(서울특별시 범위), [단기외국인] 서울 체류인구(250m)(서울특별시 범위), 서울시 차량 출입구 정보(서울특별시 범위), 서울시 외국인전용 관광기념품 판매점 정보(서울특별시 범위), 서울특별시 자치구 횡단보도 정보(서울특별시 범위)",
+        "issues": []
+      }
+    ],
+    "map_features": 0,
+    "ranking_rows": 0
+  },
+  {
+    "question": "서울 구별 공공와이파이가 적은 곳 5개를 보여줘",
+    "run_id": "949c8a80-ed06-4ba2-b0b7-38afa675fd88",
+    "status": "succeeded",
+    "datasets": [
+      "seoul_public_wifi",
+      "sigungu_boundary"
+    ],
+    "errors": [],
+    "map_features": 25,
+    "ranking_rows": 5
+  },
+  {
+    "question": "서울 구별 병원이 많은 곳 5개를 보여줘",
+    "run_id": "4438b17d-15e3-45a9-8d14-407803a30328",
+    "status": "succeeded",
+    "datasets": [
+      "seoul_localdata_010101",
+      "sigungu_boundary"
+    ],
+    "errors": [],
+    "map_features": 25,
+    "ranking_rows": 5
+  }
+]

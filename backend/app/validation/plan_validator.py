@@ -7,7 +7,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from app.domain.catalog import DatasetMetadata, RegionRef
+from app.domain.catalog import DatasetMetadata, RegionRef, rollup_prefix_length
 from app.domain.enums import (
     AggregationFunction,
     AnalysisIntent,
@@ -272,6 +272,9 @@ class _PlanChecker:
                 k.semantic_type == key.semantic_type and k.code_system == key.code_system
                 for k in self.unit_boundary.join_keys
             )
+        )
+        compatible = compatible or any(
+            rollup_prefix_length(key, target) is not None for target in self.unit_boundary.join_keys
         )
         if not compatible:
             self.error(

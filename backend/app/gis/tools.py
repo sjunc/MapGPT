@@ -12,7 +12,7 @@ from typing import Any
 import psycopg
 from psycopg import sql
 
-from app.domain.catalog import DatasetMetadata, RegionRef
+from app.domain.catalog import DatasetMetadata, RegionRef, rollup_prefix_length
 from app.domain.enums import (
     AggregationFunction,
     DataType,
@@ -345,6 +345,7 @@ def aggregate(
     field_name: str,
     function: AggregationFunction,
     name: str,
+    boundary: BoundaryView | None = None,
 ) -> MetricValues:
     """속성 Dataset을 그룹 키로 집계한다."""
     metadata = view.metadata
@@ -363,6 +364,10 @@ def aggregate(
 
     where, params = view.where()
     group = sql.Identifier(group_by[0])
+    if boundary is not None:
+        length = rollup_prefix_length(metadata.join_key(group_by[0]), boundary.metadata.join_key(boundary.key_field))
+        if length is not None:
+            group = sql.SQL("left({}::text, {})").format(group, sql.Literal(length))
     query = sql.SQL("SELECT {g}::text, {f}({v}) FROM {t} WHERE {w} GROUP BY {g}").format(
         g=group, f=sql.SQL(_SQL_AGGREGATES[function]), v=sql.Identifier(field_name), t=view.table, w=where
     )

@@ -28,6 +28,21 @@ def test_first_use_case_plan_is_valid():
     assert report.issues == []
 
 
+@pytest.mark.parametrize("unit,boundary", [("sigungu", "sigungu_boundary"), ("sido", "sido_boundary")])
+def test_population_rollup_to_parent_boundary(unit, boundary):
+    data = load_plan_dict()
+    data["analysis_unit"] = unit
+    data["datasets"] = [boundary if d == "emd_boundary" else d for d in data["datasets"]]
+    for operation in data["operations"]:
+        if operation["type"] == "aggregate_by_area":
+            operation["boundary"] = boundary
+    assert _codes(data) == []
+
+    population = TRUSTED_DATASETS["population_by_age"]
+    keys = [key.model_copy(update={"code_system": "unknown"}) for key in population.join_keys]
+    assert "JOIN_KEY_INCOMPATIBLE" in _codes(data, _with_dataset("population_by_age", join_keys=keys))
+
+
 def test_unknown_and_unselected_datasets_are_rejected():
     data = load_plan_dict()
     data["datasets"].append("subway_station")
